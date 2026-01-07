@@ -55,3 +55,12 @@ cover/
 # Workbench Project Layout
 data/scratch/*
 !data/scratch/.gitkeep
+
+# Local LLM setup
+venv/
+llama.cpp/
+models/
+*.gguf
+
+# Environment files with secrets
+variables.env
