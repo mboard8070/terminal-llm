@@ -1,3 +1,3 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-./venv/bin/python chat.py
+./venv/bin/python chat_local.py
