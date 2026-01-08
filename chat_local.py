@@ -4,16 +4,23 @@ MAUDE CODE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
 """
 
 import sys
+import os
 import time
+import json
+from pathlib import Path
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.live import Live
 from rich.align import Align
+from rich.syntax import Syntax
 import pyfiglet
 
 console = Console()
+
+# Working directory for file operations
+working_dir = Path.home()
 
 # Local llama.cpp server
 LOCAL_URL = "http://localhost:30000/v1"
@@ -25,6 +32,265 @@ show_thinking = False
 # Color palette for animation - fire gradient
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
 
+# File system tools definition
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the contents of a file. Use this to examine code, configs, or any text file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file (relative to working directory or absolute)"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file (relative to working directory or absolute)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "List files and directories in a path. Shows file sizes and types.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to list (relative to working directory or absolute). Defaults to current working directory."
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_working_directory",
+            "description": "Get the current working directory path.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "change_directory",
+            "description": "Change the current working directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to change to (relative or absolute)"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_command",
+            "description": "Execute a shell command. Use for: pip install, python scripts, git, venv setup, build tools, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    }
+]
+
+
+def resolve_path(path_str: str) -> Path:
+    """Resolve a path relative to working directory."""
+    global working_dir
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = working_dir / path
+    return path.resolve()
+
+
+def tool_read_file(path: str) -> str:
+    """Read file contents."""
+    try:
+        file_path = resolve_path(path)
+        if not file_path.exists():
+            return f"Error: File not found: {file_path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {file_path}"
+        if file_path.stat().st_size > 1_000_000:  # 1MB limit
+            return f"Error: File too large (>1MB): {file_path}"
+        content = file_path.read_text(errors='replace')
+        console.print(f"[dim cyan]  -> Read {len(content)} chars from {file_path}[/dim cyan]")
+        return content
+    except PermissionError:
+        return f"Error: Permission denied: {path}"
+    except Exception as e:
+        return f"Error reading file: {e}"
+
+
+def tool_write_file(path: str, content: str) -> str:
+    """Write content to file."""
+    try:
+        file_path = resolve_path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(content)
+        console.print(f"[dim cyan]  -> Wrote {len(content)} chars to {file_path}[/dim cyan]")
+        return f"Successfully wrote {len(content)} characters to {file_path}"
+    except PermissionError:
+        return f"Error: Permission denied: {path}"
+    except Exception as e:
+        return f"Error writing file: {e}"
+
+
+def tool_list_directory(path: str = None) -> str:
+    """List directory contents."""
+    global working_dir
+    try:
+        if path:
+            dir_path = resolve_path(path)
+        else:
+            dir_path = working_dir
+
+        if not dir_path.exists():
+            return f"Error: Directory not found: {dir_path}"
+        if not dir_path.is_dir():
+            return f"Error: Not a directory: {dir_path}"
+
+        entries = []
+        for item in sorted(dir_path.iterdir()):
+            try:
+                if item.is_dir():
+                    entries.append(f"[DIR]  {item.name}/")
+                else:
+                    size = item.stat().st_size
+                    if size < 1024:
+                        size_str = f"{size}B"
+                    elif size < 1024 * 1024:
+                        size_str = f"{size // 1024}KB"
+                    else:
+                        size_str = f"{size // (1024 * 1024)}MB"
+                    entries.append(f"[FILE] {item.name} ({size_str})")
+            except PermissionError:
+                entries.append(f"[????] {item.name} (permission denied)")
+
+        result = f"Directory: {dir_path}\n\n" + "\n".join(entries) if entries else f"Directory: {dir_path}\n\n(empty)"
+        console.print(f"[dim cyan]  -> Listed {len(entries)} items in {dir_path}[/dim cyan]")
+        return result
+    except PermissionError:
+        return f"Error: Permission denied: {path}"
+    except Exception as e:
+        return f"Error listing directory: {e}"
+
+
+def tool_get_working_directory() -> str:
+    """Get current working directory."""
+    global working_dir
+    return str(working_dir)
+
+
+def tool_change_directory(path: str) -> str:
+    """Change working directory."""
+    global working_dir
+    try:
+        new_path = resolve_path(path)
+        if not new_path.exists():
+            return f"Error: Directory not found: {new_path}"
+        if not new_path.is_dir():
+            return f"Error: Not a directory: {new_path}"
+        working_dir = new_path
+        console.print(f"[dim cyan]  -> Changed directory to {working_dir}[/dim cyan]")
+        return f"Changed working directory to: {working_dir}"
+    except Exception as e:
+        return f"Error changing directory: {e}"
+
+
+def tool_run_command(command: str) -> str:
+    """Execute a shell command."""
+    global working_dir
+    import subprocess
+    try:
+        console.print(f"[dim cyan]  $ {command}[/dim cyan]")
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(working_dir),
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        output = ""
+        if result.stdout:
+            output += result.stdout
+        if result.stderr:
+            output += ("\n" if output else "") + result.stderr
+        if result.returncode != 0:
+            output += f"\n[Exit code: {result.returncode}]"
+        if not output.strip():
+            output = "(command completed successfully)"
+        # Truncate very long output
+        if len(output) > 10000:
+            output = output[:10000] + "\n... (output truncated)"
+        return output
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out after 5 minutes"
+    except Exception as e:
+        return f"Error executing command: {e}"
+
+
+def execute_tool(name: str, arguments: dict) -> str:
+    """Execute a tool and return the result."""
+    if name == "read_file":
+        return tool_read_file(arguments.get("path", ""))
+    elif name == "write_file":
+        return tool_write_file(arguments.get("path", ""), arguments.get("content", ""))
+    elif name == "list_directory":
+        return tool_list_directory(arguments.get("path"))
+    elif name == "get_working_directory":
+        return tool_get_working_directory()
+    elif name == "change_directory":
+        return tool_change_directory(arguments.get("path", ""))
+    elif name == "run_command":
+        return tool_run_command(arguments.get("command", ""))
+    else:
+        return f"Error: Unknown tool: {name}"
 
 
 def create_client():
@@ -98,60 +364,96 @@ def print_separator():
     console.print("─" * console.width, style="dim cyan")
 
 
-def chat(client, messages: list, stream: bool = True):
-    """Send chat request to local Nemotron."""
+def chat(client, messages: list):
+    """Send chat request to local Nemotron with tool support."""
     global show_thinking
-    try:
-        if stream:
+
+    while True:
+        try:
+            # Non-streaming for tool support
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=4096,
-                stream=True
+                tools=TOOLS,
+                tool_choice="auto"
             )
 
-            full_response = ""
-            reasoning = ""
-            in_reasoning = False
-            console.print("[bold magenta]MAUDE:[/bold magenta] ", end="")
-
-            for chunk in response:
-                delta = chunk.choices[0].delta
-                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                    reasoning += delta.reasoning_content
-                    if show_thinking:
-                        if not in_reasoning:
-                            console.print("\n[dim cyan]<thinking>[/dim cyan]", end="")
-                            in_reasoning = True
-                        print(delta.reasoning_content, end="", flush=True)
-                if delta.content:
-                    if in_reasoning and show_thinking:
-                        console.print("[dim cyan]</thinking>[/dim cyan]\n", end="")
-                        in_reasoning = False
-                    print(delta.content, end="", flush=True)
-                    full_response += delta.content
-
-            if in_reasoning and show_thinking:
-                console.print("[dim cyan]</thinking>[/dim cyan]", end="")
-            print()
-            return full_response
-        else:
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=4096
-            )
             msg = response.choices[0].message
+
+            # Check for tool calls
+            if msg.tool_calls:
+                # Add assistant message with tool calls to history
+                messages.append({
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                })
+
+                # Execute each tool call
+                for tool_call in msg.tool_calls:
+                    func_name = tool_call.function.name
+                    try:
+                        func_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError:
+                        func_args = {}
+
+                    console.print(f"[dim yellow]  [{func_name}][/dim yellow]", end="")
+                    result = execute_tool(func_name, func_args)
+
+                    # Add tool result to messages
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result
+                    })
+
+                # Continue loop to get next response
+                continue
+
+            # No tool calls - print the response
             if show_thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
                 console.print(f"[dim cyan]<thinking>{msg.reasoning_content}</thinking>[/dim cyan]")
+
+            if msg.content:
+                console.print(f"[bold magenta]MAUDE:[/bold magenta] {msg.content}")
+
             return msg.content
 
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        console.print("[dim]Is the server running? Start with: ./start_server.sh[/dim]")
-        return None
+        except Exception as e:
+            error_msg = str(e)
+            # If tools aren't supported, retry without them
+            if "tool" in error_msg.lower() or "function" in error_msg.lower():
+                console.print("[dim yellow]Tools not supported, falling back to basic chat...[/dim yellow]")
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL,
+                        messages=[m for m in messages if "tool_calls" not in m and m.get("role") != "tool"],
+                        temperature=0.2,
+                        max_tokens=4096
+                    )
+                    msg = response.choices[0].message
+                    if msg.content:
+                        console.print(f"[bold magenta]MAUDE:[/bold magenta] {msg.content}")
+                    return msg.content
+                except Exception as e2:
+                    console.print(f"[red]Error: {e2}[/red]")
+                    return None
+            else:
+                console.print(f"[red]Error: {e}[/red]")
+                console.print("[dim]Is the server running? Start with: ./start_server.sh[/dim]")
+                return None
 
 
 def main():
@@ -161,8 +463,8 @@ def main():
 
     # Info panel
     console.print(Panel(
-        "[dim]Powered by Nemotron-3-Nano-30B | llama.cpp on GB10 | 8K Context[/dim]\n"
-        "[dim cyan]/quit[/dim cyan] exit  [dim cyan]/clear[/dim cyan] reset  [dim cyan]/think[/dim cyan] toggle reasoning",
+        "[dim]Nemotron-3-Nano-30B | llama.cpp on GB10 | 8K Context[/dim]\n"
+        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]| Say \"quit\" to leave[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
@@ -183,7 +485,18 @@ def main():
         "content": """You are MAUDE, an advanced AI assistant powered by NVIDIA Nemotron.
 You excel at coding, reasoning, and complex problem-solving.
 Be concise but thorough. Show your reasoning when helpful.
-You have a calm, helpful personality with subtle wit."""
+You have a calm, helpful personality with subtle wit.
+
+You have full access to the local system through these tools:
+- read_file: Read contents of any file
+- write_file: Create or overwrite files
+- list_directory: Browse directories and see file sizes
+- get_working_directory: Check your current location
+- change_directory: Navigate to different directories
+- run_command: Execute any shell command (pip, python, git, npm, etc.)
+
+Use these tools proactively. You can set up venvs, install packages, run scripts,
+build projects, and manage git repos. Confirm before destructive operations."""
     }
     messages.append(system_prompt)
 
@@ -195,31 +508,10 @@ You have a calm, helpful personality with subtle wit."""
             if not user_input:
                 continue
 
-            if user_input.lower() == "/quit":
+            # Natural exit commands
+            if user_input.lower() in ("quit", "exit", "bye", "goodbye"):
                 console.print("\n[dim magenta]MAUDE signing off. Until next time.[/dim magenta]\n")
                 break
-
-            if user_input.lower() == "/clear":
-                messages = [system_prompt]
-                console.clear()
-                animate_banner()
-                console.print(Panel(
-                    "[dim]Powered by Nemotron-3-Nano-30B | llama.cpp on GB10 | 8K Context[/dim]\n"
-                    "[dim cyan]/quit[/dim cyan] exit  [dim cyan]/clear[/dim cyan] reset  [dim cyan]/think[/dim cyan] toggle reasoning",
-                    border_style="cyan",
-                    title="[bold cyan]MAUDE CODE[/bold cyan]",
-                    title_align="center"
-                ))
-                print_separator()
-                console.print("[dim]Memory cleared.[/dim]")
-                continue
-
-            if user_input.lower() == "/think":
-                global show_thinking
-                show_thinking = not show_thinking
-                status = "[green]ON[/green]" if show_thinking else "[red]OFF[/red]"
-                console.print(f"[dim]Reasoning display: {status}[/dim]")
-                continue
 
             messages.append({"role": "user", "content": user_input})
             console.print()
@@ -229,7 +521,7 @@ You have a calm, helpful personality with subtle wit."""
                 messages.append({"role": "assistant", "content": response})
 
         except KeyboardInterrupt:
-            console.print("\n[dim]Press /quit to exit[/dim]")
+            console.print("\n[dim]Say \"quit\" to exit[/dim]")
         except EOFError:
             break
 
