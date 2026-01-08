@@ -365,47 +365,99 @@ def print_separator():
 
 
 def chat(client, messages: list):
-    """Send chat request to local Nemotron with tool support."""
+    """Send chat request to local Nemotron with tool support and live token display."""
     global show_thinking
 
     while True:
         try:
-            # Non-streaming for tool support
-            response = client.chat.completions.create(
+            # First show "thinking..." while waiting for first token
+            console.print("[bold cyan]thinking...[/bold cyan]", end="\r")
+            start_time = time.time()
+
+            # Stream the response for live token counting
+            stream = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=4096,
                 tools=TOOLS,
-                tool_choice="auto"
+                tool_choice="auto",
+                stream=True
             )
 
-            msg = response.choices[0].message
+            # Collect streamed response
+            full_content = ""
+            tool_calls_data = {}  # id -> {name, arguments}
+            token_count = 0
+            first_token = True
 
-            # Check for tool calls
-            if msg.tool_calls:
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # Handle content tokens
+                if delta.content:
+                    if first_token:
+                        # Clear "thinking..." and show header
+                        console.print(" " * 40, end="\r")  # Clear line
+                        console.print(f"[bold magenta]MAUDE:[/bold magenta] ", end="")
+                        first_token = False
+                    print(delta.content, end="", flush=True)
+                    full_content += delta.content
+                    token_count += 1
+                    # Update token count on same line (in terminal title or status)
+                    console.set_window_title(f"MAUDE - {token_count} tokens")
+
+                # Handle tool calls in stream
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        tc_id = tc.id or list(tool_calls_data.keys())[-1] if tool_calls_data else "0"
+                        if tc.id:
+                            tool_calls_data[tc.id] = {
+                                "name": tc.function.name if tc.function and tc.function.name else "",
+                                "arguments": tc.function.arguments if tc.function and tc.function.arguments else ""
+                            }
+                        elif tc.function and tc.function.arguments:
+                            # Append to existing tool call arguments
+                            last_id = list(tool_calls_data.keys())[-1]
+                            tool_calls_data[last_id]["arguments"] += tc.function.arguments
+
+            # Print newline after streaming content
+            elapsed_time = time.time() - start_time
+            if full_content:
+                print()  # Newline after streamed content
+                tokens_per_sec = token_count / elapsed_time if elapsed_time > 0 else 0
+                console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s ({tokens_per_sec:.1f} tok/s)[/dim]")
+            elif first_token:
+                # Clear "thinking..." if no content
+                console.print(" " * 40, end="\r")
+
+            # Handle tool calls
+            if tool_calls_data:
                 # Add assistant message with tool calls to history
                 messages.append({
                     "role": "assistant",
-                    "content": msg.content or "",
+                    "content": full_content or "",
                     "tool_calls": [
                         {
-                            "id": tc.id,
+                            "id": tc_id,
                             "type": "function",
                             "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments
+                                "name": tc_data["name"],
+                                "arguments": tc_data["arguments"]
                             }
                         }
-                        for tc in msg.tool_calls
+                        for tc_id, tc_data in tool_calls_data.items()
                     ]
                 })
 
                 # Execute each tool call
-                for tool_call in msg.tool_calls:
-                    func_name = tool_call.function.name
+                for tc_id, tc_data in tool_calls_data.items():
+                    func_name = tc_data["name"]
                     try:
-                        func_args = json.loads(tool_call.function.arguments)
+                        func_args = json.loads(tc_data["arguments"])
                     except json.JSONDecodeError:
                         func_args = {}
 
@@ -415,21 +467,20 @@ def chat(client, messages: list):
                     # Add tool result to messages
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tc_id,
                         "content": result
                     })
 
                 # Continue loop to get next response
                 continue
 
-            # No tool calls - print the response
-            if show_thinking and hasattr(msg, 'reasoning_content') and msg.reasoning_content:
-                console.print(f"[dim cyan]<thinking>{msg.reasoning_content}</thinking>[/dim cyan]")
+            # No tool calls - we're done
+            if show_thinking and hasattr(chunk.choices[0], 'reasoning_content'):
+                reasoning = chunk.choices[0].reasoning_content
+                if reasoning:
+                    console.print(f"[dim cyan]<thinking>{reasoning}</thinking>[/dim cyan]")
 
-            if msg.content:
-                console.print(f"[bold magenta]MAUDE:[/bold magenta] {msg.content}")
-
-            return msg.content
+            return full_content
 
         except Exception as e:
             error_msg = str(e)
