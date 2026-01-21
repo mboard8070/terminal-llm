@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
 MAUDE CODE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
+Vision support via LLaVA (Ollama) for image understanding
 """
 
 import sys
 import os
 import time
 import json
+import base64
+import io
 from pathlib import Path
 from openai import OpenAI
 from rich.console import Console
@@ -16,15 +19,20 @@ from rich.live import Live
 from rich.align import Align
 from rich.syntax import Syntax
 import pyfiglet
+from PIL import Image, ImageGrab
 
 console = Console()
 
 # Working directory for file operations
 working_dir = Path.home()
 
-# Local llama.cpp server
+# Local llama.cpp server (Nemotron)
 LOCAL_URL = "http://localhost:30000/v1"
 MODEL = "nemotron"
+
+# Ollama server (LLaVA for vision)
+OLLAMA_URL = "http://localhost:11434/v1"
+VISION_MODEL = "llava:13b"
 
 # Toggle for showing reasoning
 show_thinking = False
@@ -294,11 +302,87 @@ def execute_tool(name: str, arguments: dict) -> str:
 
 
 def create_client():
-    """Create local API client."""
+    """Create local API client for Nemotron."""
     return OpenAI(
         base_url=LOCAL_URL,
         api_key="not-needed"
     )
+
+
+def create_vision_client():
+    """Create Ollama API client for LLaVA vision."""
+    return OpenAI(
+        base_url=OLLAMA_URL,
+        api_key="ollama"
+    )
+
+
+def encode_image(image_path: str) -> tuple[str, str]:
+    """Encode an image file to base64. Returns (base64_data, media_type)."""
+    path = Path(image_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Image not found: {path}")
+
+    suffix = path.suffix.lower()
+    media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                   ".gif": "image/gif", ".webp": "image/webp"}
+    if suffix not in media_types:
+        raise ValueError(f"Unsupported format: {suffix}")
+
+    media_type = media_types[suffix]
+    with Image.open(path) as img:
+        img.verify()
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8"), media_type
+
+
+def grab_clipboard_image() -> tuple[str, str]:
+    """Grab image from clipboard. Returns (base64_data, media_type)."""
+    try:
+        img = ImageGrab.grabclipboard()
+    except Exception as e:
+        raise ValueError(f"Failed to access clipboard: {e}")
+
+    if img is None:
+        raise ValueError("No image in clipboard. Copy an image or take a screenshot first.")
+
+    if isinstance(img, list) and len(img) > 0:
+        return encode_image(img[0])
+    if not isinstance(img, Image.Image):
+        raise ValueError("Clipboard doesn't contain an image.")
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode("utf-8"), "image/png"
+
+
+def describe_image_with_llava(base64_data: str, media_type: str, prompt: str = "Describe this image in detail.") -> str:
+    """Send image to LLaVA and get a text description."""
+    try:
+        vision_client = create_vision_client()
+        console.print("[dim magenta]  [LLaVA analyzing image...][/dim magenta]")
+
+        response = vision_client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{base64_data}"}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ],
+            temperature=0.2,
+            max_tokens=1024
+        )
+
+        description = response.choices[0].message.content
+        console.print(f"[dim magenta]  [LLaVA: {len(description)} chars][/dim magenta]")
+        return description
+    except Exception as e:
+        return f"[Vision error: {e}. Is Ollama running with llava:13b?]"
 
 
 def fire_text(text: str, offset: int = 0) -> Text:
@@ -515,7 +599,7 @@ def main():
     # Info panel
     console.print(Panel(
         "[dim]Nemotron-3-Nano-30B | llama.cpp on GB10 | 8K Context[/dim]\n"
-        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]| Say \"quit\" to leave[/dim]",
+        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]|[/dim] [magenta]/paste[/magenta] [dim]or[/dim] [magenta]/image[/magenta] [dim]for vision | Say \"quit\" to leave[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
@@ -531,6 +615,8 @@ def main():
         sys.exit(1)
 
     messages = []
+    pending_image = None  # Holds (base64_data, media_type) for next message
+
     system_prompt = {
         "role": "system",
         "content": """You are MAUDE, an advanced AI assistant powered by NVIDIA Nemotron.
@@ -546,6 +632,10 @@ You have full access to the local system through these tools:
 - change_directory: Navigate to different directories
 - run_command: Execute any shell command (pip, python, git, npm, etc.)
 
+You also have vision capabilities. When the user shares an image, you'll receive
+a detailed description of it from a vision model. Use this to help with screenshots,
+diagrams, code images, error messages, UI mockups, etc.
+
 Use these tools proactively. You can set up venvs, install packages, run scripts,
 build projects, and manage git repos. Confirm before destructive operations."""
     }
@@ -554,7 +644,12 @@ build projects, and manage git repos. Confirm before destructive operations."""
     while True:
         try:
             console.print()
-            user_input = console.input("[bold green]YOU >[/bold green] ").strip()
+
+            # Show image indicator if one is pending
+            if pending_image:
+                user_input = console.input("[bold green]YOU[/bold green] [magenta][+img][/magenta][bold green] >[/bold green] ").strip()
+            else:
+                user_input = console.input("[bold green]YOU >[/bold green] ").strip()
 
             if not user_input:
                 continue
@@ -564,7 +659,41 @@ build projects, and manage git repos. Confirm before destructive operations."""
                 console.print("\n[dim magenta]MAUDE signing off. Until next time.[/dim magenta]\n")
                 break
 
-            messages.append({"role": "user", "content": user_input})
+            # Handle /paste command - grab from clipboard
+            if user_input.lower() == "/paste":
+                try:
+                    pending_image = grab_clipboard_image()
+                    console.print("[dim magenta]Image grabbed from clipboard! Now type your question.[/dim magenta]")
+                except ValueError as e:
+                    console.print(f"[red]Error: {e}[/red]")
+                    pending_image = None
+                continue
+
+            # Handle /image command - load from file
+            if user_input.lower().startswith("/image"):
+                parts = user_input.split(maxsplit=1)
+                if len(parts) < 2:
+                    console.print("[dim]Usage: /image <path_to_image>[/dim]")
+                    continue
+                try:
+                    pending_image = encode_image(parts[1].strip())
+                    console.print(f"[dim magenta]Image loaded: {parts[1].strip()}. Now type your question.[/dim magenta]")
+                except (FileNotFoundError, ValueError) as e:
+                    console.print(f"[red]Error: {e}[/red]")
+                    pending_image = None
+                continue
+
+            # Build user message, with image description if pending
+            if pending_image:
+                base64_data, media_type = pending_image
+                image_description = describe_image_with_llava(base64_data, media_type,
+                    "Describe this image in detail. Include any text, code, UI elements, error messages, or relevant details.")
+                user_content = f"[Image description from vision model]:\n{image_description}\n\n[User's question]: {user_input}"
+                pending_image = None
+            else:
+                user_content = user_input
+
+            messages.append({"role": "user", "content": user_content})
             console.print()
             response = chat(client, messages)
 
