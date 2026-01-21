@@ -8,6 +8,7 @@ import os
 import time
 import json
 import base64
+import io
 from pathlib import Path
 from openai import OpenAI
 from rich.console import Console
@@ -16,7 +17,7 @@ from rich.text import Text
 from rich.live import Live
 from rich.align import Align
 import pyfiglet
-from PIL import Image
+from PIL import Image, ImageGrab
 
 console = Console()
 
@@ -66,6 +67,35 @@ def encode_image(image_path: str) -> tuple[str, str]:
         image_data = base64.b64encode(f.read()).decode("utf-8")
 
     return image_data, media_type
+
+
+def grab_clipboard_image() -> tuple[str, str]:
+    """
+    Grab image from clipboard.
+    Returns (base64_data, media_type) tuple.
+    Raises ValueError if no image in clipboard.
+    """
+    try:
+        img = ImageGrab.grabclipboard()
+    except Exception as e:
+        raise ValueError(f"Failed to access clipboard: {e}")
+
+    if img is None:
+        raise ValueError("No image in clipboard. Copy an image first (screenshot or copy from browser).")
+
+    if not isinstance(img, Image.Image):
+        # Sometimes clipboard returns a list of file paths
+        if isinstance(img, list) and len(img) > 0:
+            return encode_image(img[0])
+        raise ValueError("Clipboard doesn't contain an image.")
+
+    # Convert to PNG bytes
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+    image_data = base64.b64encode(buffer.read()).decode("utf-8")
+
+    return image_data, "image/png"
 
 
 def resolve_path(path_str: str) -> Path:
@@ -191,7 +221,7 @@ def main():
 
     console.print(Panel(
         "[dim]LLaVA 13B via Ollama | Vision-Language Model[/dim]\n"
-        "[magenta]/image <path>[/magenta] [dim]to load an image |[/dim] [green]quit[/green] [dim]to leave[/dim]",
+        "[magenta]/paste[/magenta] [dim]clipboard |[/dim] [magenta]/image <path>[/magenta] [dim]file |[/dim] [green]quit[/green] [dim]to leave[/dim]",
         border_style="magenta",
         title="[bold magenta]MAUDE VISION[/bold magenta]",
         title_align="center"
@@ -238,6 +268,17 @@ Be concise but thorough. If you're uncertain about something in an image, say so
                 messages = [system_prompt]
                 pending_image = None
                 console.print("[dim]Conversation cleared.[/dim]")
+                continue
+
+            # Handle /paste command - grab from clipboard
+            if user_input.lower() == "/paste":
+                try:
+                    pending_image = grab_clipboard_image()
+                    console.print("[dim magenta]Image grabbed from clipboard![/dim magenta]")
+                    console.print("[dim]Now type your question about the image.[/dim]")
+                except ValueError as e:
+                    console.print(f"[red]Error: {e}[/red]")
+                    pending_image = None
                 continue
 
             # Handle /image command
