@@ -2,3 +2,8 @@ openai>=1.0.0
 python-dotenv
 rich
 pyfiglet
+jupyterlab>3.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+ddgs>=7.0.0
+playwright>=1.40.0

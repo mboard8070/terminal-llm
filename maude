@@ -1,3 +1,4 @@
 #!/bin/bash
-cd "$(dirname "$(readlink -f "$0")")"
-./venv/bin/python chat_local.py
+cd /home/mboard76/nvidia-workbench/terminal-llm
+source venv/bin/activate
+python chat_local.py

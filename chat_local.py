@@ -22,12 +22,23 @@ console = Console()
 # Working directory for file operations
 working_dir = Path.home()
 
-# Local llama.cpp server
+# Main model - Nemotron via llama.cpp for coding
 LOCAL_URL = "http://localhost:30000/v1"
 MODEL = "nemotron"
 
+# Vision model - LLaVA via Ollama (only used for web_view/view_image)
+VISION_URL = "http://localhost:11434/v1"
+VISION_MODEL = "llava:7b"
+
 # Toggle for showing reasoning
 show_thinking = False
+
+# Cache for web_view results (URL -> analysis) to avoid repeated screenshots
+_web_view_cache = {}
+
+# Track expensive calls per turn (reset in chat loop)
+_vision_call_count = 0
+_web_call_count = 0  # web_browse + web_search
 
 # Color palette for animation - fire gradient
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
@@ -132,6 +143,86 @@ TOOLS = [
                     }
                 },
                 "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_browse",
+            "description": "Fetch and read content from a web URL. Returns the page text/markdown. Use this to look up documentation, articles, API references, or any web content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL to fetch (must start with http:// or https://)"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web using DuckDuckGo. Returns a list of results with titles, URLs, and snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query"
+                    },
+                    "num_results": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 5, max 10)"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_view",
+            "description": "Take a screenshot of a webpage and analyze it visually using LLaVA vision model. Use this when you need to see the actual layout, images, or visual content of a page that text scraping would miss.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Full URL to screenshot (must start with http:// or https://)"
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Optional specific question about what to look for on the page (e.g., 'What products are shown?' or 'Describe the navigation menu')"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "view_image",
+            "description": "Analyze a local image file (screenshot, photo, diagram, etc.) using LLaVA vision model. Supports PNG, JPG, JPEG, GIF, WEBP formats.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the image file (relative to working directory or absolute)"
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "Optional specific question about the image (e.g., 'What error is shown?' or 'Describe the UI layout')"
+                    }
+                },
+                "required": ["path"]
             }
         }
     }
@@ -275,8 +366,274 @@ def tool_run_command(command: str) -> str:
         return f"Error executing command: {e}"
 
 
+def tool_web_browse(url: str) -> str:
+    """Fetch and parse web page content."""
+    import requests
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return "Error: beautifulsoup4 not installed. Run: pip install beautifulsoup4"
+
+    try:
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        console.print(f"[dim cyan]  -> Fetching {url}[/dim cyan]")
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Remove script, style, nav, footer, aside elements
+        for tag in soup(['script', 'style', 'nav', 'footer', 'aside', 'header', 'noscript', 'iframe']):
+            tag.decompose()
+
+        # Try to find main content
+        main_content = soup.find('main') or soup.find('article') or soup.find('div', {'class': ['content', 'post', 'article', 'main']})
+        if main_content:
+            text = main_content.get_text(separator='\n', strip=True)
+        else:
+            text = soup.get_text(separator='\n', strip=True)
+
+        # Clean up excessive whitespace
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        text = '\n'.join(lines)
+
+        # Truncate if too long
+        if len(text) > 15000:
+            text = text[:15000] + "\n\n... (content truncated)"
+
+        console.print(f"[dim cyan]  -> Retrieved {len(text)} chars from {url}[/dim cyan]")
+        return f"Content from {url}:\n\n{text}"
+
+    except requests.exceptions.Timeout:
+        return f"Error: Request timed out for {url}"
+    except requests.exceptions.RequestException as e:
+        return f"Error fetching {url}: {e}"
+    except Exception as e:
+        return f"Error parsing {url}: {e}"
+
+
+def tool_web_search(query: str, num_results: int = 5) -> str:
+    """Search the web using DuckDuckGo."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        return "Error: ddgs not installed. Run: pip install ddgs"
+
+    try:
+        num_results = min(max(1, num_results), 10)
+        console.print(f"[dim cyan]  -> Searching: {query}[/dim cyan]")
+
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=num_results))
+
+        if not results:
+            return f"No results found for: {query}"
+
+        output = f"Search results for: {query}\n\n"
+        for i, r in enumerate(results, 1):
+            output += f"{i}. {r.get('title', 'No title')}\n"
+            output += f"   URL: {r.get('href', 'No URL')}\n"
+            output += f"   {r.get('body', 'No description')}\n\n"
+
+        console.print(f"[dim cyan]  -> Found {len(results)} results[/dim cyan]")
+        return output
+
+    except Exception as e:
+        return f"Error searching: {e}"
+
+
+def tool_web_view(url: str, question: str = None) -> str:
+    """Screenshot a webpage and analyze it with LLaVA vision model."""
+    global _web_view_cache
+    import base64
+    import tempfile
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return "Error: playwright not installed. Run: pip install playwright && playwright install chromium"
+
+    try:
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+
+        # Check cache - return previous analysis if we already screenshotted this URL
+        if url in _web_view_cache:
+            console.print(f"[dim cyan]  -> Using cached screenshot of {url}[/dim cyan]")
+            return _web_view_cache[url] + "\n\n[NOTE: You already have this visual analysis. Use the information above to answer the user's question now. Do not call web_view again.]"
+
+        console.print(f"[dim cyan]  -> Capturing screenshot of {url}[/dim cyan]")
+
+        # Take screenshot with Playwright (smaller viewport for faster processing)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width': 1024, 'height': 768})
+            page.goto(url, wait_until='networkidle', timeout=30000)
+
+            # Wait a moment for any lazy-loaded content
+            page.wait_for_timeout(1000)
+
+            # Take screenshot
+            screenshot_bytes = page.screenshot(full_page=False)  # Viewport only for reasonable size
+            browser.close()
+
+        # Convert to base64
+        base64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+        console.print(f"[dim cyan]  -> Screenshot captured ({len(screenshot_bytes) // 1024}KB)[/dim cyan]")
+
+        # Prepare prompt for LLaVA
+        if question:
+            prompt = f"This is a screenshot of the webpage {url}. {question}"
+        else:
+            prompt = f"This is a screenshot of the webpage {url}. Describe what you see on this page, including the main content, layout, any images, navigation, and key information displayed."
+
+        # Send to LLaVA for visual analysis
+        console.print(f"[dim cyan]  -> Analyzing with LLaVA...[/dim cyan]")
+
+        vision_client = OpenAI(
+            base_url=VISION_URL,
+            api_key="not-needed"
+        )
+
+        response = vision_client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1024,
+            temperature=0.2
+        )
+
+        analysis = response.choices[0].message.content
+        console.print(f"[dim cyan]  -> Vision analysis complete[/dim cyan]")
+
+        result = f"Visual analysis of {url}:\n\n{analysis}"
+        _web_view_cache[url] = result  # Cache for future calls
+        return result
+
+    except Exception as e:
+        error_msg = str(e)
+        if "playwright" in error_msg.lower() or "browser" in error_msg.lower():
+            return f"Error: Playwright browser issue. Try running: playwright install chromium\n{e}"
+        elif "connect" in error_msg.lower() or "refused" in error_msg.lower():
+            return f"Error: Cannot connect to vision model at {VISION_URL}. Is Ollama running?\n{e}"
+        else:
+            return f"Error viewing webpage: {e}"
+
+
+def tool_view_image(path: str, question: str = None) -> str:
+    """Analyze a local image file with LLaVA vision model."""
+    import base64
+
+    try:
+        file_path = resolve_path(path)
+        if not file_path.exists():
+            return f"Error: Image not found: {file_path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {file_path}"
+
+        # Check file extension
+        ext = file_path.suffix.lower()
+        if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+            return f"Error: Unsupported image format: {ext}. Use PNG, JPG, JPEG, GIF, or WEBP."
+
+        # Check file size (limit to 20MB)
+        if file_path.stat().st_size > 20_000_000:
+            return f"Error: Image too large (>20MB): {file_path}"
+
+        # Determine MIME type
+        mime_types = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                      '.gif': 'image/gif', '.webp': 'image/webp'}
+        mime_type = mime_types.get(ext, 'image/png')
+
+        console.print(f"[dim cyan]  -> Reading image {file_path}[/dim cyan]")
+
+        # Read and encode image
+        with open(file_path, 'rb') as f:
+            image_bytes = f.read()
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+
+        console.print(f"[dim cyan]  -> Image loaded ({len(image_bytes) // 1024}KB)[/dim cyan]")
+
+        # Prepare prompt
+        if question:
+            prompt = f"This is an image from {file_path.name}. {question}"
+        else:
+            prompt = f"This is an image from {file_path.name}. Describe what you see in detail, including any text, UI elements, diagrams, or notable features."
+
+        # Send to LLaVA
+        console.print(f"[dim cyan]  -> Analyzing with LLaVA...[/dim cyan]")
+
+        vision_client = OpenAI(
+            base_url=VISION_URL,
+            api_key="not-needed"
+        )
+
+        response = vision_client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1024,
+            temperature=0.2
+        )
+
+        analysis = response.choices[0].message.content
+        console.print(f"[dim cyan]  -> Vision analysis complete[/dim cyan]")
+
+        return f"Analysis of {file_path.name}:\n\n{analysis}"
+
+    except Exception as e:
+        error_msg = str(e)
+        if "connect" in error_msg.lower() or "refused" in error_msg.lower():
+            return f"Error: Cannot connect to vision model at {VISION_URL}. Is Ollama running?\n{e}"
+        return f"Error analyzing image: {e}"
+
+
 def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool and return the result."""
+    global _vision_call_count, _web_call_count
+
+    # Limit vision tools to 1 call per turn
+    if name in ("web_view", "view_image"):
+        if _vision_call_count > 0:
+            return "(Vision analysis already completed - see previous result above. Please use that information to respond to the user.)"
+        _vision_call_count += 1
+
+    # Limit web tools to 4 calls per turn (search + browse combined)
+    if name in ("web_browse", "web_search"):
+        if _web_call_count >= 4:
+            return "(Web research limit reached. Please use the information already gathered to respond to the user now.)"
+        _web_call_count += 1
+
     if name == "read_file":
         return tool_read_file(arguments.get("path", ""))
     elif name == "write_file":
@@ -289,6 +646,14 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_change_directory(arguments.get("path", ""))
     elif name == "run_command":
         return tool_run_command(arguments.get("command", ""))
+    elif name == "web_browse":
+        return tool_web_browse(arguments.get("url", ""))
+    elif name == "web_search":
+        return tool_web_search(arguments.get("query", ""), arguments.get("num_results", 5))
+    elif name == "web_view":
+        return tool_web_view(arguments.get("url", ""), arguments.get("question"))
+    elif name == "view_image":
+        return tool_view_image(arguments.get("path", ""), arguments.get("question"))
     else:
         return f"Error: Unknown tool: {name}"
 
@@ -366,9 +731,19 @@ def print_separator():
 
 def chat(client, messages: list):
     """Send chat request to local Nemotron with tool support and live token display."""
-    global show_thinking
+    global show_thinking, _vision_call_count, _web_call_count
+
+    max_tool_iterations = 6  # Reasonable limit
+    tool_iteration = 0
+    recent_tool_calls = []  # Track recent calls to detect loops
+    _vision_call_count = 0  # Reset vision call counter for this turn
+    _web_call_count = 0  # Reset web call counter for this turn
 
     while True:
+        tool_iteration += 1
+        if tool_iteration > max_tool_iterations:
+            console.print("[dim yellow]  (max tool iterations reached)[/dim yellow]")
+            break
         try:
             # First show "thinking..." while waiting for first token
             console.print("[bold cyan]thinking...[/bold cyan]", end="\r")
@@ -461,8 +836,15 @@ def chat(client, messages: list):
                     except json.JSONDecodeError:
                         func_args = {}
 
-                    console.print(f"[dim yellow]  [{func_name}][/dim yellow]", end="")
-                    result = execute_tool(func_name, func_args)
+                    # Check for duplicate tool calls (same tool + same args)
+                    call_signature = (func_name, json.dumps(func_args, sort_keys=True))
+                    if call_signature in recent_tool_calls:
+                        console.print(f"[dim yellow]  [{func_name}] (skipped duplicate)[/dim yellow]")
+                        result = "(Already called with same arguments - see previous result)"
+                    else:
+                        recent_tool_calls.append(call_signature)
+                        console.print(f"[dim yellow]  [{func_name}][/dim yellow]", end="")
+                        result = execute_tool(func_name, func_args)
 
                     # Add tool result to messages
                     messages.append({
@@ -514,8 +896,8 @@ def main():
 
     # Info panel
     console.print(Panel(
-        "[dim]Nemotron-3-Nano-30B | llama.cpp on GB10 | 8K Context[/dim]\n"
-        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]| Say \"quit\" to leave[/dim]",
+        "[dim]Nemotron-30B (code) + LLaVA-13B (vision) | GB10[/dim]\n"
+        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]|[/dim] [green]Web Browse[/green] [dim]|[/dim] [green]Vision[/green] [dim]| Say \"quit\" to leave[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
@@ -545,9 +927,14 @@ You have full access to the local system through these tools:
 - get_working_directory: Check your current location
 - change_directory: Navigate to different directories
 - run_command: Execute any shell command (pip, python, git, npm, etc.)
+- web_browse: Fetch and read text content from any URL (documentation, articles, APIs)
+- web_search: Search the web using DuckDuckGo
+- web_view: Take a screenshot of a webpage and analyze it visually. Use this when you need to see actual layout, images, charts, or visual elements that text scraping would miss.
+- view_image: Analyze any local image file (screenshots, photos, diagrams). Supports PNG, JPG, GIF, WEBP.
 
 Use these tools proactively. You can set up venvs, install packages, run scripts,
-build projects, and manage git repos. Confirm before destructive operations."""
+build projects, manage git repos, research topics online, visually inspect webpages, and analyze images.
+Confirm before destructive operations."""
     }
     messages.append(system_prompt)
 
