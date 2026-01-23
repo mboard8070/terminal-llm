@@ -23,11 +23,13 @@ console = Console()
 working_dir = Path.home()
 
 # Main model - Nemotron via llama.cpp for coding
-LOCAL_URL = "http://localhost:30000/v1"
+# Override with LLM_SERVER_URL env var for remote servers (e.g., via Tailscale)
+LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
 MODEL = "nemotron"
 
 # Vision model - LLaVA via Ollama (only used for web_view/view_image)
-VISION_URL = "http://localhost:11434/v1"
+# Override with VISION_SERVER_URL env var for remote servers
+VISION_URL = os.environ.get("VISION_SERVER_URL", "http://localhost:11434/v1")
 VISION_MODEL = "llava:7b"
 
 # Toggle for showing reasoning
