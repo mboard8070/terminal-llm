@@ -49,6 +49,11 @@ from skills import (
     get_skill_manager,
     handle_skills_command
 )
+from mesh import (
+    MaudeMesh,
+    get_mesh,
+    handle_mesh_command
+)
 import asyncio
 
 console = Console()
@@ -1013,6 +1018,8 @@ def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
         return handle_voice_command(args)
     elif command == "skills":
         return handle_skills_command(args, get_skill_manager())
+    elif command == "mesh":
+        return handle_mesh_command(args)
     elif command == "help":
         return """MAUDE Commands:
 
@@ -1048,6 +1055,12 @@ Skills:
 /skills disable <name> - Disable a skill
 /skills reload         - Reload all skills
 
+Mesh:
+/mesh                  - Show mesh network status
+/mesh refresh          - Refresh node discovery
+/mesh add <host>       - Add a node manually
+/mesh remove <host>    - Remove a node
+
 /help                  - Show this help
 
 Say "quit" to exit."""
@@ -1082,10 +1095,16 @@ def main():
     skills_count = len(skill_manager.list_skills())
     skills_status = f"[green]{skills_count} skills[/green]" if skills_count else "[dim]no skills[/dim]"
 
+    # Initialize mesh network
+    mesh = get_mesh()
+    mesh.start()
+    mesh_nodes = len([n for n in mesh.list_nodes() if n.healthy])
+    mesh_status = f"[green]{mesh_nodes} mesh[/green]" if mesh_nodes else "[dim]no mesh[/dim]"
+
     # Info panel
     console.print(Panel(
-        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status} | {skills_status}[/dim]\n"
-        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]| /help | \"quit\"[/dim]",
+        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status} | {skills_status} | {mesh_status}[/dim]\n"
+        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Mesh[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"

@@ -1,7 +1,7 @@
 """
 Subagent Execution Engine for MAUDE.
 
-Handles routing to local (Ollama) and cloud (API) providers.
+Handles routing to local (Ollama), remote (mesh), and cloud (API) providers.
 """
 
 import os
@@ -12,6 +12,18 @@ from rich.console import Console
 from providers import PROVIDERS, Provider, get_api_key
 from subagents import SUBAGENTS, SubAgent, AgentProvider
 from cost_tracker import get_tracker
+
+# Lazy import to avoid circular dependency
+_mesh = None
+def _get_mesh():
+    global _mesh
+    if _mesh is None:
+        try:
+            from mesh import get_mesh
+            _mesh = get_mesh()
+        except ImportError:
+            pass
+    return _mesh
 
 console = Console()
 
@@ -77,11 +89,34 @@ def _execute_local(
     context: str = None,
     image_base64: str = None
 ) -> str:
-    """Execute against a local Ollama model."""
+    """Execute against a local or remote Ollama model."""
 
     # Get URL from environment or default
     default_url = "http://localhost:11434/v1"
     url = os.environ.get(provider.url_env, default_url) if provider.url_env else default_url
+    source = "local"
+
+    # Extract base model name for mesh lookup
+    model_base = provider.model.split(":")[0] if ":" in provider.model else provider.model
+
+    # Try local first
+    try:
+        client = OpenAI(base_url=url, api_key="not-needed")
+        # Quick check if model exists locally
+        client.models.retrieve(provider.model)
+    except Exception:
+        # Model not available locally, check mesh for remote nodes
+        mesh = _get_mesh()
+        if mesh:
+            remote_url = mesh.get_remote_ollama_url(model_base)
+            if remote_url:
+                url = remote_url
+                source = "mesh"
+                console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+            else:
+                return f"Error: {provider.model}: Not available locally or on mesh"
+        else:
+            return f"Error: {provider.model}: Not available locally"
 
     console.print(f"[dim cyan]  -> Delegating to {agent.name} ({provider.model})...[/dim cyan]")
 
@@ -108,7 +143,7 @@ def _execute_local(
             max_tokens=agent.max_tokens
         )
         result = response.choices[0].message.content
-        console.print(f"[dim cyan]  -> {agent.name} completed (local)[/dim cyan]")
+        console.print(f"[dim cyan]  -> {agent.name} completed ({source})[/dim cyan]")
         return f"[{agent.name.upper()} - {provider.model}]\n\n{result}"
     except Exception as e:
         return f"Error: {provider.model}: {e}"
