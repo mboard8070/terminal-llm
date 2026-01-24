@@ -11,3 +11,10 @@ playwright>=1.40.0
 # Cloud provider SDKs (optional - for frontier models)
 anthropic>=0.39.0
 google-generativeai>=0.8.0
+
+# Voice mode (optional - for speech-to-speech)
+sounddevice>=0.4.6
+scipy>=1.11.0
+websockets>=12.0
+faster-whisper>=1.0.0
+httpx>=0.25.0

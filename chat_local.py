@@ -32,6 +32,15 @@ from memory import (
     handle_recall_command,
     handle_forget_command
 )
+from voice import (
+    VoiceMode,
+    VoiceConfig,
+    VoiceBackend,
+    handle_voice_command,
+    check_voice_dependencies,
+    get_voice_mode
+)
+import asyncio
 
 console = Console()
 
@@ -984,6 +993,8 @@ def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
         return handle_recall_command(args, memory)
     elif command == "forget" and memory:
         return handle_forget_command(args, memory)
+    elif command == "voice":
+        return handle_voice_command(args)
     elif command == "help":
         return """MAUDE Commands:
 
@@ -1001,6 +1012,15 @@ Memory:
 /remember <key> <val>  - Store a memory
 /recall <key>          - Retrieve a memory
 /forget <key>          - Remove a memory
+
+Voice:
+/voice                 - Show voice mode help
+/voice start           - Listen once (STT)
+/voice talk            - Continuous conversation mode
+/voice stop            - Stop voice mode
+/voice config          - Show voice settings
+/voice backend <b>     - Set backend (personaplex, whisper_local)
+/voice tts <provider>  - Set TTS (piper, espeak, openai)
 
 /help                  - Show this help
 
@@ -1126,6 +1146,45 @@ will be provided below. Use /remember to store important information the user te
 
             # Handle slash commands
             if user_input.startswith("/"):
+                # Special handling for async voice commands
+                if user_input.startswith("/voice"):
+                    parts = user_input.split()
+                    if len(parts) >= 2 and parts[1].lower() in ["start", "talk", "stop"]:
+                        action = parts[1].lower()
+                        try:
+                            if action == "start":
+                                # Single voice input
+                                voice = asyncio.run(get_voice_mode())
+                                text = asyncio.run(voice.listen())
+                                if text:
+                                    console.print(f"[green]Heard:[/green] {text}")
+                                    # Process as if user typed it
+                                    user_input = text
+                                else:
+                                    console.print("[dim]No speech detected[/dim]")
+                                    continue
+                            elif action == "talk":
+                                # Continuous conversation mode
+                                def maude_callback(text):
+                                    messages.append({"role": "user", "content": text})
+                                    response = chat(client, messages)
+                                    if response:
+                                        messages.append({"role": "assistant", "content": response})
+                                    return response or "I couldn't process that."
+
+                                voice = asyncio.run(get_voice_mode())
+                                asyncio.run(voice.talk_mode(maude_callback))
+                                continue
+                            elif action == "stop":
+                                voice = asyncio.run(get_voice_mode())
+                                voice.stop_talk_mode()
+                                console.print("[dim]Voice mode stopped[/dim]")
+                                continue
+                        except Exception as e:
+                            console.print(f"[red]Voice error: {e}[/red]")
+                            console.print("[dim]Run ./setup_personaplex.sh to install voice dependencies[/dim]")
+                            continue
+
                 result = handle_command(user_input, memory)
                 if result:
                     console.print(f"\n{result}")
