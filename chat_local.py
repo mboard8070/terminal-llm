@@ -54,6 +54,19 @@ from mesh import (
     get_mesh,
     handle_mesh_command
 )
+from channels import (
+    ChannelGateway,
+    get_gateway,
+    handle_channels_command,
+    IncomingMessage,
+    OutgoingMessage
+)
+from channels.telegram import create_telegram_channel
+from scheduler import (
+    ProactiveScheduler,
+    get_scheduler,
+    handle_schedule_command
+)
 import asyncio
 
 console = Console()
@@ -1020,6 +1033,10 @@ def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
         return handle_skills_command(args, get_skill_manager())
     elif command == "mesh":
         return handle_mesh_command(args)
+    elif command == "channels":
+        return handle_channels_command(args)
+    elif command == "schedule":
+        return handle_schedule_command(args)
     elif command == "help":
         return """MAUDE Commands:
 
@@ -1061,6 +1078,16 @@ Mesh:
 /mesh add <host>       - Add a node manually
 /mesh remove <host>    - Remove a node
 
+Channels:
+/channels              - List messaging channels
+/channels pair         - Get pairing code for Telegram/Discord
+
+Scheduler:
+/schedule              - List scheduled tasks
+/schedule add "name" @daily "prompt"
+/schedule remove <id>  - Remove a task
+/schedule run <id>     - Run task now
+
 /help                  - Show this help
 
 Say "quit" to exit."""
@@ -1101,10 +1128,23 @@ def main():
     mesh_nodes = len([n for n in mesh.list_nodes() if n.healthy])
     mesh_status = f"[green]{mesh_nodes} mesh[/green]" if mesh_nodes else "[dim]no mesh[/dim]"
 
+    # Initialize channels (Telegram, etc.)
+    gateway = get_gateway()
+    telegram = create_telegram_channel()
+    if telegram:
+        gateway.register(telegram)
+    channels_count = len(gateway.channels)
+    channels_status = f"[green]{channels_count} channels[/green]" if channels_count else "[dim]no channels[/dim]"
+
+    # Initialize scheduler
+    scheduler = get_scheduler()
+    tasks_count = len([t for t in scheduler.tasks.values() if t.enabled])
+    schedule_status = f"[green]{tasks_count} scheduled[/green]" if tasks_count else "[dim]no tasks[/dim]"
+
     # Info panel
     console.print(Panel(
-        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status} | {skills_status} | {mesh_status}[/dim]\n"
-        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Mesh[/green] [dim]| /help | \"quit\"[/dim]",
+        f"[dim]Nemotron-30B | {cloud_status} | {memory_status} | {skills_status} | {mesh_status} | {channels_status}[/dim]\n"
+        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]|[/dim] [green]Telegram[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
