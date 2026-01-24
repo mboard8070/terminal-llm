@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 MAUDE CODE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
+
+Multi-agent orchestrator with local (Ollama) and cloud (API) subagents.
 """
 
 import sys
@@ -16,6 +18,13 @@ from rich.live import Live
 from rich.align import Align
 from rich.syntax import Syntax
 import pyfiglet
+
+# Subagent system imports
+from subagents import SUBAGENTS, get_agent_tool_definition, list_agents
+from execution import execute_subagent
+from providers import list_providers, get_available_providers
+from keys import KeyManager, handle_keys_command
+from cost_tracker import handle_cost_command, get_tracker
 
 console = Console()
 
@@ -225,6 +234,48 @@ TOOLS = [
                     }
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    # Subagent delegation tool - added dynamically
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_to_agent",
+            "description": """Delegate a specialized task to a subagent. Available agents:
+
+LOCAL (free, private, always available):
+- 'code': Code generation, debugging, refactoring (Codestral)
+- 'vision': Image/screenshot analysis (LLaVA)
+- 'writer': Long documentation or detailed explanations (Gemma)
+
+CLOUD (requires API key, higher capability):
+- 'reasoning': Complex analysis, multi-step planning (Claude Opus / o1)
+- 'search': Real-time web info, current events (Grok)
+
+The router tries local first, then falls back to cloud if configured.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "enum": ["code", "vision", "writer", "reasoning", "search"],
+                        "description": "Which specialized agent to use"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Clear description of what the agent should do"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Relevant context (code, file contents, requirements)"
+                    },
+                    "prefer_cloud": {
+                        "type": "boolean",
+                        "description": "Set true to prefer cloud models for this task (default: false)"
+                    }
+                },
+                "required": ["agent", "task"]
             }
         }
     }
@@ -656,6 +707,13 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_web_view(arguments.get("url", ""), arguments.get("question"))
     elif name == "view_image":
         return tool_view_image(arguments.get("path", ""), arguments.get("question"))
+    elif name == "delegate_to_agent":
+        return execute_subagent(
+            agent_name=arguments.get("agent", ""),
+            task=arguments.get("task", ""),
+            context=arguments.get("context"),
+            prefer_cloud=arguments.get("prefer_cloud", False)
+        )
     else:
         return f"Error: Unknown tool: {name}"
 
@@ -891,15 +949,60 @@ def chat(client, messages: list):
                 return None
 
 
+def handle_command(cmd: str) -> str:
+    """Handle slash commands. Returns response or None if not a command."""
+    if not cmd.startswith("/"):
+        return None
+
+    parts = cmd[1:].strip().split(maxsplit=10)
+    if not parts:
+        return None
+
+    command = parts[0].lower()
+    args = parts[1:] if len(parts) > 1 else []
+
+    if command == "keys":
+        return handle_keys_command(args)
+    elif command == "providers":
+        return list_providers()
+    elif command == "cost":
+        return handle_cost_command()
+    elif command == "agents":
+        return list_agents()
+    elif command == "help":
+        return """MAUDE Commands:
+
+/keys                  - List configured API keys
+/keys set <p> <key>    - Save API key for provider
+/keys test <provider>  - Test provider connection
+/providers             - List all available providers
+/agents                - List available subagents
+/cost                  - Show today's API spending
+/help                  - Show this help
+
+Say "quit" to exit."""
+    else:
+        return f"Unknown command: /{command}\nType /help for available commands."
+
+
 def main():
     """Main chat loop."""
     console.clear()
+
+    # Load stored API keys
+    km = KeyManager()
+    km.load_all_keys()
+
     animate_banner()
+
+    # Count available cloud providers
+    cloud_providers = get_available_providers()
+    cloud_status = f"[green]{len(cloud_providers)} cloud[/green]" if cloud_providers else "[dim]no cloud keys[/dim]"
 
     # Info panel
     console.print(Panel(
-        "[dim]Nemotron-30B (code) + LLaVA-13B (vision) | GB10[/dim]\n"
-        "[green]File Access[/green] [dim]|[/dim] [green]Shell Commands[/green] [dim]|[/dim] [green]Web Browse[/green] [dim]|[/dim] [green]Vision[/green] [dim]| Say \"quit\" to leave[/dim]",
+        f"[dim]Nemotron-30B + Subagents (codestral, llava, gemma) | {cloud_status}[/dim]\n"
+        "[green]File Access[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]| /help | \"quit\" to leave[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
@@ -917,7 +1020,7 @@ def main():
     messages = []
     system_prompt = {
         "role": "system",
-        "content": """You are MAUDE, an advanced AI assistant powered by NVIDIA Nemotron.
+        "content": """You are MAUDE, an advanced AI orchestrator powered by NVIDIA Nemotron.
 You excel at coding, reasoning, and complex problem-solving.
 Be concise but thorough. Show your reasoning when helpful.
 You have a calm, helpful personality with subtle wit.
@@ -929,14 +1032,29 @@ You have full access to the local system through these tools:
 - get_working_directory: Check your current location
 - change_directory: Navigate to different directories
 - run_command: Execute any shell command (pip, python, git, npm, etc.)
-- web_browse: Fetch and read text content from any URL (documentation, articles, APIs)
+- web_browse: Fetch and read text content from any URL
 - web_search: Search the web using DuckDuckGo
-- web_view: Take a screenshot of a webpage and analyze it visually. Use this when you need to see actual layout, images, charts, or visual elements that text scraping would miss.
-- view_image: Analyze any local image file (screenshots, photos, diagrams). Supports PNG, JPG, GIF, WEBP.
+- web_view: Screenshot and analyze a webpage visually
+- view_image: Analyze any local image file
 
-Use these tools proactively. You can set up venvs, install packages, run scripts,
-build projects, manage git repos, research topics online, visually inspect webpages, and analyze images.
-Confirm before destructive operations."""
+SUBAGENT DELEGATION:
+You can delegate specialized tasks to subagents using delegate_to_agent:
+- 'code' (Codestral): Code generation, debugging, refactoring
+- 'vision' (LLaVA): Image/screenshot analysis
+- 'writer' (Gemma): Long documentation, detailed explanations
+- 'reasoning' (Claude/o1): Complex analysis, planning (cloud, if API key set)
+- 'search' (Grok): Real-time info, current events (cloud, if API key set)
+
+WHEN TO DELEGATE:
+- Complex code tasks → delegate to 'code'
+- Long documentation → delegate to 'writer'
+- Hard reasoning problems → delegate to 'reasoning' with prefer_cloud=true
+
+WHEN TO HANDLE YOURSELF:
+- Simple questions, quick file ops, conversation
+- Synthesizing and presenting subagent results
+
+Use tools proactively. Confirm before destructive operations."""
     }
     messages.append(system_prompt)
 
@@ -952,6 +1070,13 @@ Confirm before destructive operations."""
             if user_input.lower() in ("quit", "exit", "bye", "goodbye"):
                 console.print("\n[dim magenta]MAUDE signing off. Until next time.[/dim magenta]\n")
                 break
+
+            # Handle slash commands
+            if user_input.startswith("/"):
+                result = handle_command(user_input)
+                if result:
+                    console.print(f"\n{result}")
+                    continue
 
             messages.append({"role": "user", "content": user_input})
             console.print()

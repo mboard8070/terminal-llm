@@ -7,3 +7,7 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 ddgs>=7.0.0
 playwright>=1.40.0
+
+# Cloud provider SDKs (optional - for frontier models)
+anthropic>=0.39.0
+google-generativeai>=0.8.0
