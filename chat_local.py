@@ -25,6 +25,13 @@ from execution import execute_subagent
 from providers import list_providers, get_available_providers
 from keys import KeyManager, handle_keys_command
 from cost_tracker import handle_cost_command, get_tracker
+from memory import (
+    MaudeMemory,
+    handle_memory_command,
+    handle_remember_command,
+    handle_recall_command,
+    handle_forget_command
+)
 
 console = Console()
 
@@ -949,7 +956,7 @@ def chat(client, messages: list):
                 return None
 
 
-def handle_command(cmd: str) -> str:
+def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
     """Handle slash commands. Returns response or None if not a command."""
     if not cmd.startswith("/"):
         return None
@@ -969,6 +976,14 @@ def handle_command(cmd: str) -> str:
         return handle_cost_command()
     elif command == "agents":
         return list_agents()
+    elif command == "memory" and memory:
+        return handle_memory_command(args, memory)
+    elif command == "remember" and memory:
+        return handle_remember_command(args, memory)
+    elif command == "recall" and memory:
+        return handle_recall_command(args, memory)
+    elif command == "forget" and memory:
+        return handle_forget_command(args, memory)
     elif command == "help":
         return """MAUDE Commands:
 
@@ -978,6 +993,15 @@ def handle_command(cmd: str) -> str:
 /providers             - List all available providers
 /agents                - List available subagents
 /cost                  - Show today's API spending
+
+Memory:
+/memory                - Show memory statistics
+/memory list [cat]     - List memories by category
+/memory search <query> - Search memories
+/remember <key> <val>  - Store a memory
+/recall <key>          - Retrieve a memory
+/forget <key>          - Remove a memory
+
 /help                  - Show this help
 
 Say "quit" to exit."""
@@ -987,22 +1011,30 @@ Say "quit" to exit."""
 
 def main():
     """Main chat loop."""
+    import uuid
+
     console.clear()
 
     # Load stored API keys
     km = KeyManager()
     km.load_all_keys()
 
+    # Initialize memory system
+    memory = MaudeMemory()
+    session_id = str(uuid.uuid4())[:8]
+    memory_stats = memory.get_stats()
+
     animate_banner()
 
     # Count available cloud providers
     cloud_providers = get_available_providers()
     cloud_status = f"[green]{len(cloud_providers)} cloud[/green]" if cloud_providers else "[dim]no cloud keys[/dim]"
+    memory_status = f"[green]{memory_stats['total_memories']} memories[/green]" if memory_stats['total_memories'] else "[dim]no memories[/dim]"
 
     # Info panel
     console.print(Panel(
-        f"[dim]Nemotron-30B + Subagents (codestral, llava, gemma) | {cloud_status}[/dim]\n"
-        "[green]File Access[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]| /help | \"quit\" to leave[/dim]",
+        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status}[/dim]\n"
+        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Memory[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
@@ -1054,9 +1086,30 @@ WHEN TO HANDLE YOURSELF:
 - Simple questions, quick file ops, conversation
 - Synthesizing and presenting subagent results
 
-Use tools proactively. Confirm before destructive operations."""
+Use tools proactively. Confirm before destructive operations.
+
+MEMORY:
+You have persistent memory. Relevant context from past conversations and stored facts
+will be provided below. Use /remember to store important information the user tells you.
+"""
     }
-    messages.append(system_prompt)
+
+    # Build initial system prompt with memory context
+    def build_system_prompt(user_query: str = "") -> dict:
+        """Build system prompt with memory context injected."""
+        base_content = system_prompt["content"]
+
+        # Get relevant memories for context
+        memory_context = memory.get_context_for_prompt(user_query) if user_query else ""
+
+        if memory_context:
+            full_content = base_content + "\n\n" + memory_context
+        else:
+            full_content = base_content
+
+        return {"role": "system", "content": full_content}
+
+    messages.append(build_system_prompt())
 
     while True:
         try:
@@ -1073,10 +1126,16 @@ Use tools proactively. Confirm before destructive operations."""
 
             # Handle slash commands
             if user_input.startswith("/"):
-                result = handle_command(user_input)
+                result = handle_command(user_input, memory)
                 if result:
                     console.print(f"\n{result}")
                     continue
+
+            # Update system prompt with memory context for this query
+            messages[0] = build_system_prompt(user_input)
+
+            # Save user message to conversation history
+            memory.save_message(session_id, "user", user_input)
 
             messages.append({"role": "user", "content": user_input})
             console.print()
@@ -1084,6 +1143,8 @@ Use tools proactively. Confirm before destructive operations."""
 
             if response:
                 messages.append({"role": "assistant", "content": response})
+                # Save assistant response to conversation history
+                memory.save_message(session_id, "assistant", response)
 
         except KeyboardInterrupt:
             console.print("\n[dim]Say \"quit\" to exit[/dim]")
