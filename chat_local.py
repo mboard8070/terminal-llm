@@ -7,6 +7,10 @@ Multi-agent orchestrator with local (Ollama) and cloud (API) subagents.
 
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 import time
 import json
 from pathlib import Path

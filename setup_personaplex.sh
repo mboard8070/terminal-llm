@@ -10,6 +10,14 @@ echo "=========================================="
 echo "  PersonaPlex Setup for NVIDIA GB10"
 echo "=========================================="
 
+# Load .env file if exists
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    echo "Loading environment from .env..."
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
 # Check for HuggingFace token
 if [ -z "$HF_TOKEN" ]; then
     echo ""
