@@ -64,3 +64,6 @@ models/
 
 # Environment files with secrets
 variables.env
+# Ignore cloned repos and env files
+personaplex/
+.env

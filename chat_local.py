@@ -44,6 +44,11 @@ from voice import (
     check_voice_dependencies,
     get_voice_mode
 )
+from skills import (
+    SkillManager,
+    get_skill_manager,
+    handle_skills_command
+)
 import asyncio
 
 console = Console()
@@ -734,6 +739,10 @@ def execute_tool(name: str, arguments: dict) -> str:
             context=arguments.get("context"),
             prefer_cloud=arguments.get("prefer_cloud", False)
         )
+    elif name.startswith("skill_"):
+        # Execute a skill
+        skill_name = name[6:]  # Remove "skill_" prefix
+        return get_skill_manager().execute_skill(skill_name, **arguments)
     else:
         return f"Error: Unknown tool: {name}"
 
@@ -829,13 +838,16 @@ def chat(client, messages: list):
             console.print("[bold cyan]thinking...[/bold cyan]", end="\r")
             start_time = time.time()
 
+            # Combine base tools with skill tools
+            all_tools = TOOLS + get_skill_manager().get_tool_definitions()
+
             # Stream the response for live token counting
             stream = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=4096,
-                tools=TOOLS,
+                tools=all_tools,
                 tool_choice="auto",
                 stream=True
             )
@@ -999,6 +1011,8 @@ def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
         return handle_forget_command(args, memory)
     elif command == "voice":
         return handle_voice_command(args)
+    elif command == "skills":
+        return handle_skills_command(args, get_skill_manager())
     elif command == "help":
         return """MAUDE Commands:
 
@@ -1025,6 +1039,14 @@ Voice:
 /voice config          - Show voice settings
 /voice backend <b>     - Set backend (personaplex, whisper_local)
 /voice tts <provider>  - Set TTS (piper, espeak, openai)
+
+Skills:
+/skills                - List installed skills
+/skills info <name>    - Show skill details
+/skills run <name>     - Run a skill directly
+/skills enable <name>  - Enable a skill
+/skills disable <name> - Disable a skill
+/skills reload         - Reload all skills
 
 /help                  - Show this help
 
@@ -1055,10 +1077,15 @@ def main():
     cloud_status = f"[green]{len(cloud_providers)} cloud[/green]" if cloud_providers else "[dim]no cloud keys[/dim]"
     memory_status = f"[green]{memory_stats['total_memories']} memories[/green]" if memory_stats['total_memories'] else "[dim]no memories[/dim]"
 
+    # Initialize skills
+    skill_manager = get_skill_manager()
+    skills_count = len(skill_manager.list_skills())
+    skills_status = f"[green]{skills_count} skills[/green]" if skills_count else "[dim]no skills[/dim]"
+
     # Info panel
     console.print(Panel(
-        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status}[/dim]\n"
-        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Memory[/green] [dim]| /help | \"quit\"[/dim]",
+        f"[dim]Nemotron-30B + Subagents | {cloud_status} | {memory_status} | {skills_status}[/dim]\n"
+        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE CODE[/bold cyan]",
         title_align="center"
