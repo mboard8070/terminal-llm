@@ -1133,10 +1133,22 @@ def main():
     tasks_count = len([t for t in scheduler.tasks.values() if t.enabled])
     schedule_status = f"[green]{tasks_count} scheduled[/green]" if tasks_count else "[dim]no tasks[/dim]"
 
+    # Check vision model availability
+    vision_status = "[dim]no vision[/dim]"
+    try:
+        import requests
+        resp = requests.get(f"{VISION_URL.replace('/v1', '')}/api/tags", timeout=2)
+        if resp.status_code == 200:
+            models = [m['name'] for m in resp.json().get('models', [])]
+            if any('llava' in m.lower() for m in models):
+                vision_status = f"[green]{VISION_MODEL}[/green]"
+    except:
+        pass
+
     # Info panel
     console.print(Panel(
-        f"[dim]Nemotron-30B | {cloud_status} | {memory_status} | {skills_status} | {mesh_status} | {channels_status}[/dim]\n"
-        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]|[/dim] [green]Telegram[/green] [dim]| /help | \"quit\"[/dim]",
+        f"[dim]Nemotron-30B | {cloud_status} | {memory_status} | {skills_status} | {mesh_status} | {channels_status} | {vision_status}[/dim]\n"
+        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]|[/dim] [green]Telegram[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
         title="[bold cyan]MAUDE[/bold cyan]",
         title_align="center"
