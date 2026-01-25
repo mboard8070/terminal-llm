@@ -37,6 +37,7 @@ from memory import MaudeMemory
 # Configuration
 LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
 MODEL = "nemotron"
+NUM_CTX = int(os.environ.get("MAUDE_NUM_CTX", "32768"))
 SERVICE_NAME = "MAUDE Telegram Service"
 
 # Global state
@@ -186,7 +187,8 @@ async def process_message(msg: IncomingMessage) -> str:
             temperature=0.7,
             max_tokens=1024,
             tools=tools if tools else None,
-            tool_choice="auto" if tools else None
+            tool_choice="auto" if tools else None,
+            extra_body={"num_ctx": NUM_CTX}
         )
 
         assistant_msg = response.choices[0].message
@@ -227,7 +229,8 @@ async def process_message(msg: IncomingMessage) -> str:
                 model=MODEL,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=1024
+                max_tokens=1024,
+                extra_body={"num_ctx": NUM_CTX}
             )
             result = response.choices[0].message.content
 

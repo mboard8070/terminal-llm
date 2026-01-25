@@ -78,6 +78,8 @@ working_dir = Path.home()
 # Override with LLM_SERVER_URL env var for remote servers (e.g., via Tailscale)
 LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
 MODEL = "nemotron"
+# Context window size - increase for longer conversations
+NUM_CTX = int(os.environ.get("MAUDE_NUM_CTX", "32768"))
 
 # Vision model - LLaVA via Ollama (only used for web_view/view_image)
 # Override with VISION_SERVER_URL env var for remote servers
@@ -855,7 +857,8 @@ def chat(client, messages: list):
                 max_tokens=4096,
                 tools=all_tools,
                 tool_choice="auto",
-                stream=True
+                stream=True,
+                extra_body={"num_ctx": NUM_CTX}
             )
 
             # Collect streamed response
@@ -972,7 +975,8 @@ def chat(client, messages: list):
                         model=MODEL,
                         messages=[m for m in messages if "tool_calls" not in m and m.get("role") != "tool"],
                         temperature=0.2,
-                        max_tokens=4096
+                        max_tokens=4096,
+                        extra_body={"num_ctx": NUM_CTX}
                     )
                     msg = response.choices[0].message
                     if msg.content:
