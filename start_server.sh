@@ -7,5 +7,5 @@ echo "Starting Nemotron-3-Nano-30B server on port 30000..."
     --host 0.0.0.0 \
     --port 30000 \
     --n-gpu-layers 99 \
-    --ctx-size 8192 \
+    --ctx-size 32768 \
     --threads 8
