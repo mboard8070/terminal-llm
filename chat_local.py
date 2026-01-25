@@ -854,7 +854,7 @@ def chat(client, messages: list):
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=4096,
+                max_tokens=1024,
                 tools=all_tools,
                 tool_choice="auto",
                 stream=True,
@@ -975,7 +975,7 @@ def chat(client, messages: list):
                         model=MODEL,
                         messages=[m for m in messages if "tool_calls" not in m and m.get("role") != "tool"],
                         temperature=0.2,
-                        max_tokens=4096,
+                        max_tokens=1024,
                         extra_body={"num_ctx": NUM_CTX}
                     )
                     msg = response.choices[0].message
