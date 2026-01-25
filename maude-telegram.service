@@ -1,0 +1,24 @@
+[Unit]
+Description=MAUDE Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=mboard76
+WorkingDirectory=/home/mboard76/nvidia-workbench/terminal-llm
+Environment="PATH=/home/mboard76/nvidia-workbench/terminal-llm/venv/bin:/usr/bin:/bin"
+ExecStart=/home/mboard76/nvidia-workbench/terminal-llm/venv/bin/python /home/mboard76/nvidia-workbench/terminal-llm/maude_telegram_service.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/var/log/maude-telegram.log
+StandardError=append:/var/log/maude-telegram.log
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/mboard76/.config/maude /var/log
+
+[Install]
+WantedBy=multi-user.target

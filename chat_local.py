@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MAUDE CODE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
+MAUDE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
 
 Multi-agent orchestrator with local (Ollama) and cloud (API) subagents.
 """
@@ -786,19 +786,15 @@ def fire_text(text: str, offset: int = 0) -> Text:
 
 
 def get_banner_with_mech():
-    """Generate banner text with mech positioned to the right."""
+    """Generate banner text."""
     banner = pyfiglet.figlet_format("MAUDE", font="banner3")
-    code_text = pyfiglet.figlet_format("CODE", font="banner3")
-
     banner_lines = banner.rstrip('\n').split('\n')
-    code_lines = code_text.rstrip('\n').split('\n')
-
-    return banner_lines, code_lines
+    return banner_lines
 
 
 def animate_banner():
-    """Display animated MAUDE banner with mech."""
-    banner_lines, code_lines = get_banner_with_mech()
+    """Display animated MAUDE banner."""
+    banner_lines = get_banner_with_mech()
 
     # Animate the banner with fire colors
     with Live(console=console, refresh_per_second=12, transient=True) as live:
@@ -810,11 +806,6 @@ def animate_banner():
                 content.append_text(fire_text(line, frame))
                 content.append('\n')
 
-            # Add CODE subtitle
-            for line in code_lines:
-                content.append_text(fire_text(line, frame + 2))
-                content.append('\n')
-
             live.update(Align.center(content))
             time.sleep(0.06)
 
@@ -822,9 +813,6 @@ def animate_banner():
     final_content = Text()
     for line in banner_lines:
         final_content.append_text(fire_text(line, 24))
-        final_content.append('\n')
-    for line in code_lines:
-        final_content.append_text(fire_text(line, 26))
         final_content.append('\n')
 
     console.print(Align.center(final_content))
@@ -1146,7 +1134,7 @@ def main():
         f"[dim]Nemotron-30B | {cloud_status} | {memory_status} | {skills_status} | {mesh_status} | {channels_status}[/dim]\n"
         "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]|[/dim] [green]Telegram[/green] [dim]| /help | \"quit\"[/dim]",
         border_style="cyan",
-        title="[bold cyan]MAUDE CODE[/bold cyan]",
+        title="[bold cyan]MAUDE[/bold cyan]",
         title_align="center"
     ))
     print_separator()

@@ -68,7 +68,7 @@ class TelegramChannel(Channel):
             # Initialize and start
             await self.app.initialize()
             await self.app.start()
-            await self.app.updater.start_polling(drop_pending_updates=True)
+            await self.app.updater.start_polling(drop_pending_updates=False)
 
             self.connected = True
             bot_info = await self.bot.get_me()
@@ -109,12 +109,24 @@ class TelegramChannel(Channel):
                         reply_to_message_id=int(message.reply_to) if message.reply_to else None
                     )
             else:
-                await self.bot.send_message(
-                    chat_id=int(channel_id),
-                    text=text,
-                    parse_mode=ParseMode.MARKDOWN if message.parse_mode == "markdown" else None,
-                    reply_to_message_id=int(message.reply_to) if message.reply_to else None
-                )
+                # Try with markdown first, fall back to plain text if parsing fails
+                try:
+                    await self.bot.send_message(
+                        chat_id=int(channel_id),
+                        text=text,
+                        parse_mode=ParseMode.MARKDOWN if message.parse_mode == "markdown" else None,
+                        reply_to_message_id=int(message.reply_to) if message.reply_to else None
+                    )
+                except Exception as e:
+                    if "parse" in str(e).lower():
+                        # Markdown parsing failed, send as plain text
+                        await self.bot.send_message(
+                            chat_id=int(channel_id),
+                            text=text,
+                            reply_to_message_id=int(message.reply_to) if message.reply_to else None
+                        )
+                    else:
+                        raise
 
             # Send attachments if any
             for attachment in message.attachments or []:
@@ -175,7 +187,11 @@ class TelegramChannel(Channel):
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text message."""
+        print(f">>> Telegram: received from {update.effective_user.first_name}: {update.message.text}", flush=True)
+
         if not self._message_handler:
+            print(">>> Telegram: No message handler set!", flush=True)
+            await update.message.reply_text("Bot is starting up, please try again...")
             return
 
         msg = IncomingMessage(
@@ -189,7 +205,9 @@ class TelegramChannel(Channel):
             raw=update
         )
 
+        print(f">>> Telegram: calling handler...", flush=True)
         await self._message_handler(msg)
+        print(f">>> Telegram: handler done", flush=True)
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming photo."""

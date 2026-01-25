@@ -172,35 +172,50 @@ class ChannelGateway:
 
     async def _handle_message(self, msg: IncomingMessage):
         """Route incoming message to MAUDE and send response."""
+        print(f">>> Gateway: {msg.text} from {msg.username}", flush=True)
+
         # Check for pairing command
         if msg.text.startswith("/pair "):
             code = msg.text[6:].strip()
+            print(f">>> Gateway: pairing with code {code}", flush=True)
             if self.complete_pairing(code, msg.channel, msg.channel_id,
                                      msg.user_id, msg.username):
+                print(f">>> Gateway: pairing successful!", flush=True)
                 await self.send(msg.channel, msg.channel_id,
                                OutgoingMessage(text="Paired successfully! You can now chat with MAUDE."))
             else:
+                print(f">>> Gateway: pairing failed", flush=True)
                 await self.send(msg.channel, msg.channel_id,
                                OutgoingMessage(text="Invalid or expired pairing code."))
             return
 
         # Check authorization
         if not self.is_authorized(msg.channel, msg.channel_id):
+            print(f">>> Gateway: not authorized {msg.channel}:{msg.channel_id}", flush=True)
             await self.send(msg.channel, msg.channel_id,
                            OutgoingMessage(text="Not authorized. Use /pair <code> with a code from MAUDE CLI."))
             return
 
+        print(f">>> Gateway: authorized, calling MAUDE", flush=True)
+
         # Process with MAUDE
         if self.maude_callback:
             try:
+                print(f">>> Gateway: invoking callback...", flush=True)
                 response = await self.maude_callback(msg)
+                print(f">>> Gateway: got response ({len(response) if response else 0} chars)", flush=True)
                 if response:
                     await self.send(msg.channel, msg.channel_id,
                                    OutgoingMessage(text=response, reply_to=msg.reply_to))
+                    print(f">>> Gateway: response sent", flush=True)
             except Exception as e:
-                console.print(f"[red]Error processing message: {e}[/red]")
+                print(f">>> Gateway: ERROR {e}", flush=True)
+                import traceback
+                traceback.print_exc()
                 await self.send(msg.channel, msg.channel_id,
                                OutgoingMessage(text=f"Error: {e}"))
+        else:
+            print(f">>> Gateway: no callback set!", flush=True)
 
     async def send(self, channel: str, channel_id: str, message: OutgoingMessage):
         """Send a message through a specific channel."""
