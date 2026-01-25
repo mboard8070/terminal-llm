@@ -6,13 +6,65 @@ import time
 import requests
 from skills import skill
 
-# Default ComfyUI host - can be overridden by COMFYUI_HOST env var
+# Default ComfyUI host - can be overridden by COMFYUI_HOST env var or mesh routing
 COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "mattwell")  # Tailscale hostname
 COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
 
+# Cached ComfyUI URL from router
+_cached_comfyui_url = None
+
+
+def _get_router():
+    """Lazy import router to avoid circular dependencies."""
+    try:
+        from routing import get_router
+        return get_router()
+    except ImportError:
+        return None
+
+
+def _get_comfyui_url_from_router():
+    """Try to get ComfyUI URL from capability router."""
+    global _cached_comfyui_url
+
+    # Return cached URL if available and valid
+    if _cached_comfyui_url:
+        return _cached_comfyui_url
+
+    router = _get_router()
+    if not router:
+        return None
+
+    try:
+        from capabilities import CapabilityType
+
+        # Try to find ComfyUI capability
+        result = router.find_comfyui()
+        if result:
+            node, cap = result
+            _cached_comfyui_url = cap.endpoint_url
+            return _cached_comfyui_url
+
+        # Try video generation capability
+        result = router.find_video_gen("mochi")
+        if result:
+            node, cap = result
+            _cached_comfyui_url = cap.endpoint_url
+            return _cached_comfyui_url
+    except Exception:
+        pass
+
+    return None
+
 
 def get_comfyui_url():
-    """Get the ComfyUI API URL."""
+    """Get the ComfyUI API URL, using router if available."""
+    # Try router first
+    router_url = _get_comfyui_url_from_router()
+    if router_url:
+        return router_url
+
+    # Fall back to environment/defaults
     return f"http://{COMFYUI_HOST}:{COMFYUI_PORT}"
 
 
@@ -136,23 +188,26 @@ def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1
     """Generate video using Mochi via ComfyUI."""
 
     if action == "status" or action == "check":
+        comfyui_url = get_comfyui_url()
         status = check_comfyui_status()
         if status["online"]:
             stats = status.get("stats", {})
             device = stats.get("system", {}).get("device_name", "Unknown")
             vram = stats.get("system", {}).get("vram_total", 0) / (1024**3)
-            return f"ComfyUI Status: Online\nHost: {COMFYUI_HOST}:{COMFYUI_PORT}\nDevice: {device}\nVRAM: {vram:.1f} GB"
+            source = "mesh" if _cached_comfyui_url else "config"
+            return f"ComfyUI Status: Online\nEndpoint: {comfyui_url}\nSource: {source}\nDevice: {device}\nVRAM: {vram:.1f} GB"
         else:
-            return f"ComfyUI Status: Offline\nHost: {COMFYUI_HOST}:{COMFYUI_PORT}\n\nMake sure ComfyUI is running on the remote machine."
+            return f"ComfyUI Status: Offline\nEndpoint: {comfyui_url}\n\nMake sure ComfyUI is running on the remote machine."
 
     # Check if ComfyUI is available
+    comfyui_url = get_comfyui_url()
     status = check_comfyui_status()
     if not status["online"]:
         return (
-            f"Cannot connect to ComfyUI at {COMFYUI_HOST}:{COMFYUI_PORT}\n\n"
+            f"Cannot connect to ComfyUI at {comfyui_url}\n\n"
             "Please ensure:\n"
             "1. ComfyUI is running on the remote machine\n"
-            "2. The machine is accessible via Tailscale\n"
+            "2. The machine is accessible via Tailscale/network\n"
             "3. ComfyUI is listening on all interfaces (--listen 0.0.0.0)"
         )
 
@@ -184,18 +239,25 @@ def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1
         if not prompt_id:
             return f"Failed to queue prompt: {result}"
 
+        # Extract hostname for display
+        from urllib.parse import urlparse
+        parsed = urlparse(comfyui_url)
+        host = parsed.hostname or comfyui_url
+        source = "mesh" if _cached_comfyui_url else "config"
+
         return (
             f"Video generation started!\n"
             f"Prompt ID: {prompt_id}\n"
-            f"Host: {COMFYUI_HOST}\n"
+            f"Endpoint: {comfyui_url}\n"
+            f"Source: {source}\n"
             f"Steps: {steps}\n"
             f"Seed: {seed}\n\n"
-            f"Generation is running in the background on the remote machine.\n"
-            f"Check ComfyUI on {COMFYUI_HOST} for progress and results."
+            f"Generation is running in the background.\n"
+            f"Check ComfyUI at {comfyui_url} for progress and results."
         )
 
     except requests.exceptions.ConnectionError:
-        return f"Connection failed to {COMFYUI_HOST}:{COMFYUI_PORT}. Is ComfyUI running?"
+        return f"Connection failed to {comfyui_url}. Is ComfyUI running?"
     except Exception as e:
         return f"Error: {e}"
 
@@ -224,16 +286,19 @@ def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1
 )
 def comfyui(action: str = "status", prompt_id: str = None) -> str:
     """Manage ComfyUI connection."""
+    comfyui_url = get_comfyui_url()
 
     if action == "status":
         status = check_comfyui_status()
         if status["online"]:
             stats = status.get("stats", {})
             system = stats.get("system", {})
+            source = "mesh" if _cached_comfyui_url else "config"
 
             output = [
                 f"ComfyUI: Online",
-                f"Host: {COMFYUI_HOST}:{COMFYUI_PORT}",
+                f"Endpoint: {comfyui_url}",
+                f"Source: {source}",
                 f"Device: {system.get('device_name', 'Unknown')}",
             ]
 
@@ -244,7 +309,7 @@ def comfyui(action: str = "status", prompt_id: str = None) -> str:
 
             return "\n".join(output)
         else:
-            return f"ComfyUI: Offline ({COMFYUI_HOST}:{COMFYUI_PORT})"
+            return f"ComfyUI: Offline ({comfyui_url})"
 
     elif action == "queue":
         try:

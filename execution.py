@@ -13,8 +13,10 @@ from providers import PROVIDERS, Provider, get_api_key
 from subagents import SUBAGENTS, SubAgent, AgentProvider
 from cost_tracker import get_tracker
 
-# Lazy import to avoid circular dependency
+# Lazy imports to avoid circular dependency
 _mesh = None
+_router = None
+
 def _get_mesh():
     global _mesh
     if _mesh is None:
@@ -24,6 +26,16 @@ def _get_mesh():
         except ImportError:
             pass
     return _mesh
+
+def _get_router():
+    global _router
+    if _router is None:
+        try:
+            from routing import get_router
+            _router = get_router()
+        except ImportError:
+            pass
+    return _router
 
 console = Console()
 
@@ -105,18 +117,40 @@ def _execute_local(
         # Quick check if model exists locally
         client.models.retrieve(provider.model)
     except Exception:
-        # Model not available locally, check mesh for remote nodes
-        mesh = _get_mesh()
-        if mesh:
-            remote_url = mesh.get_remote_ollama_url(model_base)
+        # Model not available locally, check mesh for remote nodes via router
+        router = _get_router()
+        if router:
+            remote_url = router.get_ollama_url_for_model(model_base)
             if remote_url:
                 url = remote_url
                 source = "mesh"
                 console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
             else:
-                return f"Error: {provider.model}: Not available locally or on mesh"
+                # Fall back to legacy mesh lookup
+                mesh = _get_mesh()
+                if mesh:
+                    remote_url = mesh.get_remote_ollama_url(model_base)
+                    if remote_url:
+                        url = remote_url
+                        source = "mesh"
+                        console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+                    else:
+                        return f"Error: {provider.model}: Not available locally or on mesh"
+                else:
+                    return f"Error: {provider.model}: Not available locally or on mesh"
         else:
-            return f"Error: {provider.model}: Not available locally"
+            # No router, fall back to legacy mesh
+            mesh = _get_mesh()
+            if mesh:
+                remote_url = mesh.get_remote_ollama_url(model_base)
+                if remote_url:
+                    url = remote_url
+                    source = "mesh"
+                    console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+                else:
+                    return f"Error: {provider.model}: Not available locally or on mesh"
+            else:
+                return f"Error: {provider.model}: Not available locally"
 
     console.print(f"[dim cyan]  -> Delegating to {agent.name} ({provider.model})...[/dim cyan]")
 
