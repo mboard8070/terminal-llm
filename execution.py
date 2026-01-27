@@ -79,6 +79,8 @@ def execute_subagent(
         try:
             if provider.type == "local":
                 result = _execute_local(agent, provider, task, context, image_base64)
+            elif provider.type == "eddie":
+                result = _execute_eddie(agent, provider, task, context)
             else:
                 result = _execute_cloud(agent, provider, task, context, image_base64)
 
@@ -92,6 +94,37 @@ def execute_subagent(
     # All providers failed
     error_summary = "\n".join(f"  - {e}" for e in errors)
     return f"Error: All providers for '{agent_name}' failed:\n{error_summary}"
+
+
+def _execute_eddie(
+    agent: SubAgent,
+    provider: AgentProvider,
+    task: str,
+    context: str = None
+) -> str:
+    """Execute via Eddie (Clawdbot/Claude bridge)."""
+    console.print(f"[dim cyan]  -> Delegating to Eddie (Claude via Clawdbot)...[/dim cyan]")
+    
+    try:
+        from eddie_bridge import call_eddie
+        
+        # Build the prompt with system context
+        full_prompt = f"{agent.system_prompt}\n\nTask: {task}"
+        if context:
+            full_prompt += f"\n\nContext:\n{context}"
+        
+        result = call_eddie(full_prompt, timeout=120)
+        
+        if result:
+            console.print(f"[dim cyan]  -> Eddie completed[/dim cyan]")
+            return f"[{agent.name.upper()} - Eddie/Claude]\n\n{result}"
+        else:
+            return "Error: Eddie bridge returned no response"
+            
+    except ImportError:
+        return "Error: eddie_bridge module not found"
+    except Exception as e:
+        return f"Error: Eddie bridge failed: {e}"
 
 
 def _execute_local(
