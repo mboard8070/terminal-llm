@@ -40,8 +40,8 @@ class VoiceConfig:
 
     # PersonaPlex settings
     personaplex_url: str = "wss://localhost:8998/ws"
-    personaplex_voice: str = "NATF2"  # Natural female voice 2
-    personaplex_role: str = "You are MAUDE, a helpful AI assistant."
+    personaplex_voice: str = "NATF2"  # Natural female voice 2 (FRIDAY-style)
+    personaplex_role: str = "You are MAUDE, a capable AI assistant with a subtle Scottish directness. You're efficient and professional, with occasional dry observations. Speak clearly and get things done. Don't over-explain. Be warm but not chatty. Think FRIDAY from Iron Man."
 
     # Whisper settings (local)
     whisper_model: str = "base"  # tiny, base, small, medium, large
