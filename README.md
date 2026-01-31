@@ -70,6 +70,7 @@ export VISION_SERVER_URL="http://remote-host:11434/v1"
 | `web_view` | Screenshot + visual analysis of webpages |
 | `view_image` | Analyze local images |
 | `ask_frontier` | Escalate to cloud AI (optional, requires API keys) |
+| `schedule_task` | Create and manage scheduled automated tasks |
 
 ## Frontier Model Escalation (Optional)
 
@@ -91,6 +92,25 @@ MAUDE escalates when:
 - Uncertainty about the correct approach
 
 Cost is displayed after each frontier call.
+
+## Scheduled Tasks
+
+MAUDE can schedule automated tasks using natural language. Just tell MAUDE when and what to do:
+
+```
+"Remind me every morning at 8am to check the weather"
+"Schedule a daily summary of my tasks at 6pm"
+"Every weekday at 9am, check my calendar"
+```
+
+MAUDE converts these to cron expressions automatically. Manage tasks with:
+- "Show my scheduled tasks"
+- "Disable the weather reminder"
+- "Remove task abc123"
+
+Supported shortcuts: `@hourly`, `@daily`, `@morning`, `@evening`, `@weekly`, `@workdays`
+
+Tasks are stored in `~/.config/maude/schedules.json` and viewable in the Command Center.
 
 ## Configuration
 
