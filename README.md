@@ -1,139 +1,135 @@
-# Terminal-LLM
+# MAUDE
 
-A terminal-based AI chat application that provides coding assistance and system interaction capabilities using NVIDIA's LLM models. Supports both cloud-based and fully offline local inference.
+**Multi-Agent Unified Dispatch Engine** — A local AI coding assistant with optional frontier model escalation.
+
+MAUDE runs on-device using llama.cpp or Ollama, providing file operations, shell access, web browsing, and vision capabilities. Use any local model (Nemotron, Codestral, Llama, Mistral, etc.) with optional escalation to frontier cloud models when needed.
 
 ## Features
 
-### Remote Mode (`chat.py`)
-- Multi-model support with 5 pre-configured NVIDIA models:
-  - Llama-3.3-70B-Instruct (default)
-  - NVIDIA Nemotron-51B-Instruct
-  - Llama-3.1-405B-Instruct
-  - CodeLlama-70B
-  - Nemotron-Nano-8B-V1
-- Streaming responses for real-time output
-- Rich terminal UI with markdown rendering
-- Interactive commands: `/quit`, `/clear`, `/model [name]`
-
-### Local Mode (`chat_local.py` / "MAUDE CODE")
-- Fully offline operation using Nemotron-3-Nano-30B
-- Built-in file system tools:
-  - `read_file` - Read files up to 1MB
-  - `write_file` - Create or modify files
-  - `list_directory` - Browse directories
-  - `get_working_directory` / `change_directory` - Navigate the filesystem
-  - `run_command` - Execute shell commands (pip, python, git, npm, etc.)
-- Token counting with performance metrics
-- Animated ASCII art banner
+- **Textual TUI** with animated banner and async processing
+- **32K context window** for long conversations
+- **File operations**: read, write, edit, search (single file or entire directory)
+- **Shell access**: run commands, manage git, pip, etc.
+- **Web tools**: browse pages, search DuckDuckGo, visual page analysis
+- **Vision**: analyze local images and webpage screenshots via LLaVA
+- **Frontier escalation** (optional): delegate complex tasks to Claude, GPT, Gemini, or Grok
 
 ## Requirements
 
 - Python 3.8+
-- NVIDIA GPU with CUDA support (for local mode)
-- NVIDIA NGC API key (for remote mode)
+- NVIDIA GPU with CUDA support
+- Ollama (for LLaVA vision model)
 
 ## Installation
 
-### Remote Mode
-
 ```bash
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Set up NVIDIA API key
-echo 'NGC_PERSONAL_KEY="your_key_here"' > variables.env
-```
-
-### Local Mode
-
-```bash
-# Run the automated setup script
+# Build llama.cpp and download model
 ./setup_local.sh
-```
 
-This script will:
-1. Create a Python virtual environment
-2. Clone and build llama.cpp with CUDA support
-3. Download the Nemotron-3-Nano-30B model (~38GB)
+# Install Playwright for web screenshots
+playwright install chromium
+
+# Install LLaVA for vision (via Ollama)
+ollama pull llava:7b
+```
 
 ## Usage
 
-### Remote Mode
-
-```bash
-python chat.py
-```
-
-### Local Mode
-
-**Option 1: Separate terminals**
 ```bash
 # Terminal 1: Start the inference server
 ./start_server.sh
 
-# Terminal 2: Launch the chat interface
+# Terminal 2: Launch MAUDE
 ./maude
 ```
 
-**Option 2: Combined launcher**
+Or use environment variables for remote servers:
 ```bash
-./run.sh
+export LLM_SERVER_URL="http://remote-host:30000/v1"
+export VISION_SERVER_URL="http://remote-host:11434/v1"
+./maude
 ```
 
-### Interactive Commands
+## Tools
 
-| Command | Description |
-|---------|-------------|
-| `/quit` | Exit the application |
-| `/clear` | Clear conversation history |
-| `/model <name>` | Switch to a different model (remote mode) |
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file with line numbers (supports ranges) |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Replace specific line ranges |
+| `search_file` | Search within a single file |
+| `search_directory` | Search across all files in a directory |
+| `list_directory` | Browse directory contents |
+| `change_directory` | Navigate filesystem |
+| `run_command` | Execute shell commands |
+| `web_browse` | Fetch and parse web pages |
+| `web_search` | Search via DuckDuckGo |
+| `web_view` | Screenshot + visual analysis of webpages |
+| `view_image` | Analyze local images |
+| `ask_frontier` | Escalate to cloud AI (optional, requires API keys) |
+
+## Frontier Model Escalation (Optional)
+
+MAUDE works fully offline with just the local Nemotron model. Optionally, configure API keys in `.env` to enable escalation to frontier models for complex tasks:
+
+```bash
+# Priority order: Claude > GPT > Gemini > Grok > Mistral
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GOOGLE_API_KEY=...
+XAI_API_KEY=...
+MISTRAL_API_KEY=...
+```
+
+MAUDE escalates when:
+- Complex multi-step reasoning is needed
+- Architecture or design decisions required
+- Deep domain expertise (security, algorithms, etc.)
+- Uncertainty about the correct approach
+
+Cost is displayed after each frontier call.
 
 ## Configuration
 
-### Environment Variables
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `LLM_SERVER_URL` | `http://localhost:30000/v1` | LLM server endpoint |
+| `MAUDE_MODEL` | `nemotron` | Model name (nemotron, codestral, llama3, etc.) |
+| `MAUDE_NUM_CTX` | `32768` | Context window size |
+| `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for vision |
+| `MAUDE_VISION_MODEL` | `llava:7b` | Vision model name |
 
-| Variable | Description | Required For |
-|----------|-------------|--------------|
-| `NGC_PERSONAL_KEY` | NVIDIA NGC API authentication token | Remote mode |
+### Using a Different Model
 
-### Local Server Settings
+Nemotron-3-Nano-30B is recommended for coding tasks, but you can use any model:
 
-The llama.cpp server is configured in `start_server.sh`:
+```bash
+# Use Codestral
+export MAUDE_MODEL="codestral"
+./maude
 
-| Setting | Value |
-|---------|-------|
-| Port | 30000 |
-| GPU layers | 99 (full offload) |
-| Context size | 8192 tokens |
-| Threads | 8 |
-
-### Model Parameters
-
-| Parameter | Value |
-|-----------|-------|
-| Temperature | 0.2 |
-| Max tokens | 4096 |
-| Streaming | Enabled |
+# Use Llama 3 via Ollama
+export LLM_SERVER_URL="http://localhost:11434/v1"
+export MAUDE_MODEL="llama3:70b"
+./maude
+```
 
 ## Project Structure
 
 ```
 terminal-llm/
-├── chat.py              # Remote mode (NVIDIA NGC API)
-├── chat_local.py        # Local mode (llama.cpp)
-├── maude                # Shortcut script for local mode
-├── run.sh               # Combined launcher
-├── setup_local.sh       # Automated local setup
-├── start_server.sh      # llama.cpp server launcher
-├── requirements.txt     # Python dependencies
-├── llama.cpp/           # llama.cpp repository (after setup)
-├── models/              # Downloaded model files
-└── venv/                # Python virtual environment
+├── chat_local.py     # MAUDE TUI application
+├── frontier.py       # Frontier model client
+├── providers.py      # Provider configurations
+├── maude             # Launcher script
+├── start_server.sh   # llama.cpp server launcher
+├── setup_local.sh    # Automated setup
+├── llama.cpp/        # Inference engine
+└── models/           # Downloaded models
 ```
-
-## NVIDIA AI Workbench
-
-This project is compatible with NVIDIA AI Workbench. The `.project/spec.yaml` file defines GPU resources, storage layout, and environment specifications for seamless integration.
 
 ## License
 

@@ -57,17 +57,18 @@ console = TUIConsole()
 # Working directory for file operations
 working_dir = Path.home()
 
-# Main model - Nemotron via llama.cpp for coding
-# Override with LLM_SERVER_URL env var for remote servers (e.g., via Tailscale)
+# Main model configuration
+# Nemotron-3-Nano-30B is recommended for coding tasks
+# Override with MAUDE_MODEL env var to use a different model (e.g., codestral, llama3, mistral)
 LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
-MODEL = "nemotron"
+MODEL = os.environ.get("MAUDE_MODEL", "nemotron")
 # Context window size - increase for longer conversations
 NUM_CTX = int(os.environ.get("MAUDE_NUM_CTX", "32768"))
 
 # Vision model - LLaVA via Ollama (only used for web_view/view_image)
-# Override with VISION_SERVER_URL env var for remote servers
+# Override with MAUDE_VISION_MODEL env var for different vision models
 VISION_URL = os.environ.get("VISION_SERVER_URL", "http://localhost:11434/v1")
-VISION_MODEL = "llava:7b"
+VISION_MODEL = os.environ.get("MAUDE_VISION_MODEL", "llava:7b")
 
 # Toggle for showing reasoning
 show_thinking = False
@@ -341,6 +342,31 @@ TOOLS = [
                     }
                 },
                 "required": ["path", "start_line", "end_line", "new_content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_frontier",
+            "description": "Escalate a complex question to a frontier AI model (Claude, GPT, Gemini). Use when: (1) complex multi-step reasoning needed, (2) nuanced code architecture decisions, (3) you're uncertain about accuracy, (4) deep domain expertise required. Include relevant context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question or task requiring expert analysis"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Relevant context (code snippets, file contents, prior discussion)"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Optional: specific provider (claude, openai, gemini, grok, mistral)"
+                    }
+                },
+                "required": ["question"]
             }
         }
     }
@@ -855,6 +881,33 @@ def tool_view_image(path: str, question: str = None) -> str:
         return f"Error analyzing image: {e}"
 
 
+def tool_ask_frontier(question: str, context: str = None, provider: str = None) -> str:
+    """Escalate a question to a frontier cloud model."""
+    try:
+        from frontier import ask_frontier, list_available_providers
+
+        available = list_available_providers()
+        if not available:
+            return "Error: No frontier providers configured. Set API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) in .env"
+
+        provider_name = provider if provider in available else None
+        console.print(f"[dim cyan]  -> Escalating to frontier model...[/dim cyan]")
+
+        response = ask_frontier(
+            query=question,
+            context=context,
+            provider_name=provider_name,
+            system_prompt="You are an expert assistant helping with a complex technical question. Be thorough but concise. Provide actionable guidance."
+        )
+
+        console.print(f"[dim cyan]  -> {response.provider} ({response.model}): {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f}[/dim cyan]")
+
+        return f"[Expert response from {response.provider}]\n\n{response.content}"
+
+    except Exception as e:
+        return f"Error calling frontier model: {e}"
+
+
 def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool and return the result."""
     global _vision_call_count, _web_call_count
@@ -897,6 +950,8 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_web_view(arguments.get("url", ""), arguments.get("question"))
     elif name == "view_image":
         return tool_view_image(arguments.get("path", ""), arguments.get("question"))
+    elif name == "ask_frontier":
+        return tool_ask_frontier(arguments.get("question", ""), arguments.get("context"), arguments.get("provider"))
     else:
         return f"Error: Unknown tool: {name}"
 
@@ -1099,6 +1154,7 @@ def handle_command(cmd: str) -> str:
         return """MAUDE Commands:
 
 /help    - Show this help
+/model   - Show current model configuration
 
 Tools available:
 - search_directory, search_file, read_file, write_file, edit_file
@@ -1106,13 +1162,30 @@ Tools available:
 - run_command (shell)
 - web_browse, web_search, web_view
 - view_image
+- ask_frontier (escalate to cloud AI, if configured)
 
 Say "quit" to exit."""
+    elif command == "model":
+        from frontier import list_available_providers
+        frontier_providers = list_available_providers()
+        frontier_info = ", ".join(frontier_providers) if frontier_providers else "none configured"
+        return f"""Model Configuration:
+
+Local LLM:    {MODEL}
+Server:       {LOCAL_URL}
+Context:      {NUM_CTX} tokens
+
+Vision:       {VISION_MODEL}
+Vision URL:   {VISION_URL}
+
+Frontier:     {frontier_info}
+
+Set MAUDE_MODEL env var to use a different local model."""
     else:
         return f"Unknown command: /{command}\nType /help for available commands."
 
 
-SYSTEM_PROMPT = """You are MAUDE, a coding assistant powered by Nemotron.
+SYSTEM_PROMPT = f"""You are MAUDE, a local coding assistant running {MODEL}.
 
 STYLE: Be brief. Action over explanation.
 
@@ -1126,6 +1199,14 @@ TOOLS:
 - run_command: Shell commands (git, pip, python, etc.)
 - web_browse, web_search: Web access
 - web_view, view_image: Visual analysis (LLaVA)
+- ask_frontier(question, context, provider): Escalate to cloud AI (optional, if configured)
+
+ESCALATION TO FRONTIER (optional):
+If frontier APIs are configured, use ask_frontier when:
+- Complex multi-step reasoning or architecture decisions needed
+- You're uncertain about the correct approach
+- Deep domain expertise required (security, performance, algorithms)
+If no frontier APIs are available, do your best with local capabilities.
 
 FILE EDITING WORKFLOW:
 1. search_directory to find which file contains the code
@@ -1215,7 +1296,7 @@ class MaudeApp(App):
             for line in self.banner_lines:
                 self.output_log.write(fire_text(line, 24))
             self.write_output("")
-            self.write_output("[dim]Nemotron-30B | Files | Shell | Web | Vision[/dim]")
+            self.write_output(f"[dim]{MODEL} | Files | Shell | Web | Vision[/dim]")
             self.write_output("[dim]Type /help for commands, 'quit' to exit[/dim]\n")
             self.input_widget.focus()
 
