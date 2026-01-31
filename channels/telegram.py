@@ -27,7 +27,7 @@ VOICE_RESPONSE_ENABLED = os.environ.get("VOICE_RESPONSE_ENABLED", "true").lower(
 try:
     from telegram import Update, Bot
     from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
-    from telegram.constants import ParseMode
+    from telegram.constants import ParseMode, ChatAction
     TELEGRAM_AVAILABLE = True
 except ImportError:
     TELEGRAM_AVAILABLE = False
@@ -219,7 +219,33 @@ class TelegramChannel(Channel):
         )
 
         print(f">>> Telegram: calling handler...", flush=True)
-        await self._message_handler(msg)
+
+        # Send immediate typing indicator
+        chat_id = update.effective_chat.id
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        except:
+            pass
+
+        # Keep typing indicator active until handler completes
+        stop_typing = asyncio.Event()
+
+        async def keep_typing():
+            await asyncio.sleep(4)  # Wait before first refresh
+            while not stop_typing.is_set():
+                try:
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                except:
+                    pass
+                await asyncio.sleep(4)
+
+        typing_task = asyncio.create_task(keep_typing())
+        try:
+            await self._message_handler(msg)
+        finally:
+            stop_typing.set()
+            typing_task.cancel()
+
         print(f">>> Telegram: handler done", flush=True)
 
     async def _handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
