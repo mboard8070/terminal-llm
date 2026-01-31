@@ -277,7 +277,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_file",
-            "description": "Search for text/pattern in a file. Returns matching lines with line numbers.",
+            "description": "Search for text/pattern in a single file. Returns matching lines with line numbers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -291,6 +291,27 @@ TOOLS = [
                     }
                 },
                 "required": ["path", "pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_directory",
+            "description": "Search for text/pattern across all files in a directory. Use this to find code when you don't know which file it's in. Returns file:line matches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "Directory to search in"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text or pattern to search for (case-insensitive)"
+                    }
+                },
+                "required": ["directory", "pattern"]
             }
         }
     },
@@ -400,6 +421,64 @@ def tool_search_file(path: str, pattern: str) -> str:
         return f"Matches in {file_path}:\n\n" + '\n'.join(matches[:50])
     except Exception as e:
         return f"Error searching file: {e}"
+
+
+def tool_search_directory(directory: str, pattern: str) -> str:
+    """Search for pattern across all files in directory."""
+    import re
+
+    EXCLUDE_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.venv', 'build', 'dist', '.cache'}
+    CODE_EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx', '.sh', '.yaml', '.yml', '.json', '.md', '.txt', '.html', '.css'}
+
+    try:
+        dir_path = resolve_path(directory)
+        if not dir_path.exists():
+            return f"Error: Directory not found: {dir_path}"
+        if not dir_path.is_dir():
+            return f"Error: Not a directory: {dir_path}"
+
+        pattern_lower = pattern.lower()
+        matches = []
+        files_searched = 0
+
+        for root, dirs, files in os.walk(dir_path):
+            # Skip excluded directories
+            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+
+            for name in files:
+                # Only search code files
+                if not any(name.endswith(ext) for ext in CODE_EXTENSIONS):
+                    continue
+
+                filepath = Path(root) / name
+                files_searched += 1
+
+                try:
+                    content = filepath.read_text(errors='replace')
+                    for lineno, line in enumerate(content.splitlines(), start=1):
+                        if pattern_lower in line.lower():
+                            rel_path = filepath.relative_to(dir_path)
+                            matches.append(f"{rel_path}:{lineno}: {line.strip()[:100]}")
+                            if len(matches) >= 50:
+                                break
+                except:
+                    continue
+
+                if len(matches) >= 50:
+                    break
+            if len(matches) >= 50:
+                break
+
+        if not matches:
+            return f"No matches for '{pattern}' in {dir_path} ({files_searched} files searched)"
+
+        console.print(f"[dim cyan]  -> Found {len(matches)} matches in {files_searched} files[/dim cyan]")
+        result = f"Matches for '{pattern}' in {dir_path}:\n\n" + '\n'.join(matches)
+        if len(matches) == 50:
+            result += "\n\n(Limited to 50 results)"
+        return result
+    except Exception as e:
+        return f"Error searching directory: {e}"
 
 
 def tool_edit_file(path: str, start_line: int, end_line: int, new_content: str) -> str:
@@ -798,6 +877,8 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_write_file(arguments.get("path", ""), arguments.get("content", ""))
     elif name == "search_file":
         return tool_search_file(arguments.get("path", ""), arguments.get("pattern", ""))
+    elif name == "search_directory":
+        return tool_search_directory(arguments.get("directory", ""), arguments.get("pattern", ""))
     elif name == "edit_file":
         return tool_edit_file(arguments.get("path", ""), arguments.get("start_line", 1), arguments.get("end_line", 1), arguments.get("new_content", ""))
     elif name == "list_directory":
@@ -1020,7 +1101,7 @@ def handle_command(cmd: str) -> str:
 /help    - Show this help
 
 Tools available:
-- read_file, write_file, search_file, edit_file
+- search_directory, search_file, read_file, write_file, edit_file
 - list_directory, change_directory, get_working_directory
 - run_command (shell)
 - web_browse, web_search, web_view
@@ -1036,17 +1117,18 @@ SYSTEM_PROMPT = """You are MAUDE, a coding assistant powered by Nemotron.
 STYLE: Be brief. Action over explanation.
 
 TOOLS:
+- search_directory(directory, pattern): Search across all files in a project - use when you don't know which file
+- search_file(path, pattern): Search within a single file
 - read_file(path, start_line, end_line): Read file with line numbers
 - write_file(path, content): Create/overwrite file
-- search_file(path, pattern): Find text, returns line numbers
 - edit_file(path, start_line, end_line, new_content): Edit specific lines
 - list_directory, change_directory, get_working_directory
 - run_command: Shell commands (git, pip, python, etc.)
 - web_browse, web_search: Web access
 - web_view, view_image: Visual analysis (LLaVA)
 
-FILE EDITING:
-1. search_file to find the code
+FILE EDITING WORKFLOW:
+1. search_directory to find which file contains the code
 2. read_file with line range to see context
 3. edit_file to replace lines
 
