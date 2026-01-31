@@ -1,75 +1,58 @@
 #!/usr/bin/env python3
 """
 MAUDE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
-
-Multi-agent orchestrator with local (Ollama) and cloud (API) subagents.
 """
 
 import sys
 import os
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
 load_dotenv()
+
 import time
 import json
+import threading
 from pathlib import Path
 from openai import OpenAI
-from rich.console import Console
-from rich.panel import Panel
+
+# Textual TUI framework
+from textual.app import App, ComposeResult
+from textual.widgets import Input, RichLog, Static, Footer
+from textual.containers import Container, Vertical
+from textual.binding import Binding
+from textual import work
 from rich.text import Text
-from rich.live import Live
-from rich.align import Align
-from rich.syntax import Syntax
+from rich.panel import Panel
 import pyfiglet
 
-# Subagent system imports
-from subagents import SUBAGENTS, get_agent_tool_definition, list_agents
-from execution import execute_subagent
-from providers import list_providers, get_available_providers
-from keys import KeyManager, handle_keys_command
-from cost_tracker import handle_cost_command, get_tracker
-from memory import (
-    MaudeMemory,
-    handle_memory_command,
-    handle_remember_command,
-    handle_recall_command,
-    handle_forget_command
-)
-from voice import (
-    VoiceMode,
-    VoiceConfig,
-    VoiceBackend,
-    handle_voice_command,
-    check_voice_dependencies,
-    get_voice_mode
-)
-from skills import (
-    SkillManager,
-    get_skill_manager,
-    handle_skills_command
-)
-from mesh import (
-    MaudeMesh,
-    get_mesh,
-    handle_mesh_command
-)
-from channels import (
-    ChannelGateway,
-    get_gateway,
-    handle_channels_command,
-    IncomingMessage,
-    OutgoingMessage
-)
-from channels.telegram import create_telegram_channel
-from scheduler import (
-    ProactiveScheduler,
-    get_scheduler,
-    handle_schedule_command
-)
-import asyncio
+# Minimal imports
+from keys import KeyManager
 
-console = Console()
+# Global reference to app for output
+_app = None
+
+class TUIConsole:
+    """Console that writes to Textual RichLog when app is running, otherwise stdout."""
+    def __init__(self):
+        self.width = 80
+
+    def print(self, *args, end="\n", **kwargs):
+        text = " ".join(str(a) for a in args)
+        if _app and hasattr(_app, 'output_log'):
+            try:
+                _app.call_from_thread(_app.write_output, text)
+            except:
+                print(text, end=end)
+        else:
+            print(text, end=end)
+
+    def input(self, prompt=""):
+        return input(prompt)
+
+    def clear(self):
+        if not _app:
+            os.system('clear' if os.name != 'nt' else 'cls')
+
+console = TUIConsole()
 
 # Working directory for file operations
 working_dir = Path.home()
@@ -105,13 +88,21 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file. Use this to examine code, configs, or any text file.",
+            "description": "Read file with line numbers. Use start_line/end_line for large files.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path to the file (relative to working directory or absolute)"
+                        "description": "Path to the file"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read (1-indexed, optional)"
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read (1-indexed, optional)"
                     }
                 },
                 "required": ["path"]
@@ -282,45 +273,53 @@ TOOLS = [
             }
         }
     },
-    # Subagent delegation tool - added dynamically
     {
         "type": "function",
         "function": {
-            "name": "delegate_to_agent",
-            "description": """Delegate a specialized task to a subagent. Available agents:
-
-LOCAL (free, private, always available):
-- 'code': Code generation, debugging, refactoring (Codestral)
-- 'vision': Image/screenshot analysis (LLaVA)
-- 'writer': Long documentation or detailed explanations (Gemma)
-
-CLOUD (requires API key, higher capability):
-- 'reasoning': Complex analysis, multi-step planning (Claude Opus / o1)
-- 'search': Real-time web info, current events (Grok)
-
-The router tries local first, then falls back to cloud if configured.""",
+            "name": "search_file",
+            "description": "Search for text/pattern in a file. Returns matching lines with line numbers.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "agent": {
+                    "path": {
                         "type": "string",
-                        "enum": ["code", "vision", "writer", "reasoning", "search"],
-                        "description": "Which specialized agent to use"
+                        "description": "Path to the file to search"
                     },
-                    "task": {
+                    "pattern": {
                         "type": "string",
-                        "description": "Clear description of what the agent should do"
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "Relevant context (code, file contents, requirements)"
-                    },
-                    "prefer_cloud": {
-                        "type": "boolean",
-                        "description": "Set true to prefer cloud models for this task (default: false)"
+                        "description": "Text or pattern to search for (case-insensitive)"
                     }
                 },
-                "required": ["agent", "task"]
+                "required": ["path", "pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit specific lines in a file. Read the file first to see line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-indexed)"
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-indexed)"
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "New content to insert"
+                    }
+                },
+                "required": ["path", "start_line", "end_line", "new_content"]
             }
         }
     }
@@ -336,8 +335,8 @@ def resolve_path(path_str: str) -> Path:
     return path.resolve()
 
 
-def tool_read_file(path: str) -> str:
-    """Read file contents."""
+def tool_read_file(path: str, start_line: int = None, end_line: int = None) -> str:
+    """Read file contents with line numbers."""
     try:
         file_path = resolve_path(path)
         if not file_path.exists():
@@ -346,9 +345,21 @@ def tool_read_file(path: str) -> str:
             return f"Error: Not a file: {file_path}"
         if file_path.stat().st_size > 1_000_000:  # 1MB limit
             return f"Error: File too large (>1MB): {file_path}"
-        content = file_path.read_text(errors='replace')
-        console.print(f"[dim cyan]  -> Read {len(content)} chars from {file_path}[/dim cyan]")
-        return content
+
+        lines = file_path.read_text(errors='replace').splitlines()
+        total_lines = len(lines)
+
+        # Handle line range
+        start_idx = (start_line - 1) if start_line else 0
+        end_idx = end_line if end_line else min(total_lines, start_idx + 200)
+        start_idx = max(0, start_idx)
+        end_idx = min(total_lines, end_idx)
+
+        selected = lines[start_idx:end_idx]
+        numbered = [f"{start_idx + i + 1:4d} | {line}" for i, line in enumerate(selected)]
+
+        console.print(f"[dim cyan]  -> Read lines {start_idx+1}-{end_idx} of {total_lines} from {file_path}[/dim cyan]")
+        return f"File: {file_path} ({total_lines} lines)\n\n" + '\n'.join(numbered)
     except PermissionError:
         return f"Error: Permission denied: {path}"
     except Exception as e:
@@ -367,6 +378,55 @@ def tool_write_file(path: str, content: str) -> str:
         return f"Error: Permission denied: {path}"
     except Exception as e:
         return f"Error writing file: {e}"
+
+
+def tool_search_file(path: str, pattern: str) -> str:
+    """Search for pattern in file, return matching lines with numbers."""
+    try:
+        file_path = resolve_path(path)
+        if not file_path.exists():
+            return f"Error: File not found: {file_path}"
+
+        lines = file_path.read_text(errors='replace').splitlines()
+        matches = []
+        for i, line in enumerate(lines):
+            if pattern.lower() in line.lower():
+                matches.append(f"{i+1:4d} | {line}")
+
+        if not matches:
+            return f"No matches for '{pattern}' in {file_path}"
+
+        console.print(f"[dim cyan]  -> Found {len(matches)} matches for '{pattern}'[/dim cyan]")
+        return f"Matches in {file_path}:\n\n" + '\n'.join(matches[:50])
+    except Exception as e:
+        return f"Error searching file: {e}"
+
+
+def tool_edit_file(path: str, start_line: int, end_line: int, new_content: str) -> str:
+    """Edit specific lines in a file."""
+    try:
+        file_path = resolve_path(path)
+        if not file_path.exists():
+            return f"Error: File not found: {file_path}"
+
+        lines = file_path.read_text(errors='replace').splitlines()
+        total = len(lines)
+
+        if start_line < 1 or end_line < start_line:
+            return f"Error: Invalid line range {start_line}-{end_line}"
+        if start_line > total:
+            return f"Error: start_line {start_line} > file length ({total})"
+
+        start_idx = start_line - 1
+        end_idx = min(end_line, total)
+
+        lines[start_idx:end_idx] = new_content.splitlines()
+        file_path.write_text('\n'.join(lines) + '\n')
+
+        console.print(f"[dim cyan]  -> Edited lines {start_line}-{end_line} in {file_path}[/dim cyan]")
+        return f"Edited lines {start_line}-{end_line} in {file_path}"
+    except Exception as e:
+        return f"Error editing file: {e}"
 
 
 def tool_list_directory(path: str = None) -> str:
@@ -733,9 +793,13 @@ def execute_tool(name: str, arguments: dict) -> str:
         _web_call_count += 1
 
     if name == "read_file":
-        return tool_read_file(arguments.get("path", ""))
+        return tool_read_file(arguments.get("path", ""), arguments.get("start_line"), arguments.get("end_line"))
     elif name == "write_file":
         return tool_write_file(arguments.get("path", ""), arguments.get("content", ""))
+    elif name == "search_file":
+        return tool_search_file(arguments.get("path", ""), arguments.get("pattern", ""))
+    elif name == "edit_file":
+        return tool_edit_file(arguments.get("path", ""), arguments.get("start_line", 1), arguments.get("end_line", 1), arguments.get("new_content", ""))
     elif name == "list_directory":
         return tool_list_directory(arguments.get("path"))
     elif name == "get_working_directory":
@@ -752,17 +816,6 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_web_view(arguments.get("url", ""), arguments.get("question"))
     elif name == "view_image":
         return tool_view_image(arguments.get("path", ""), arguments.get("question"))
-    elif name == "delegate_to_agent":
-        return execute_subagent(
-            agent_name=arguments.get("agent", ""),
-            task=arguments.get("task", ""),
-            context=arguments.get("context"),
-            prefer_cloud=arguments.get("prefer_cloud", False)
-        )
-    elif name.startswith("skill_"):
-        # Execute a skill
-        skill_name = name[6:]  # Remove "skill_" prefix
-        return get_skill_manager().execute_skill(skill_name, **arguments)
     else:
         return f"Error: Unknown tool: {name}"
 
@@ -827,88 +880,52 @@ def print_separator():
 
 
 def chat(client, messages: list):
-    """Send chat request to local Nemotron with tool support and live token display."""
+    """Send chat request to local Nemotron with tool support."""
     global show_thinking, _vision_call_count, _web_call_count
 
-    max_tool_iterations = 6  # Reasonable limit
+    max_tool_iterations = 15
     tool_iteration = 0
-    recent_tool_calls = []  # Track recent calls to detect loops
-    _vision_call_count = 0  # Reset vision call counter for this turn
-    _web_call_count = 0  # Reset web call counter for this turn
+    recent_tool_calls = []
+    _vision_call_count = 0
+    _web_call_count = 0
 
     while True:
         tool_iteration += 1
         if tool_iteration > max_tool_iterations:
-            console.print("[dim yellow]  (max tool iterations reached)[/dim yellow]")
+            console.print("[dim yellow](max tool iterations reached)[/dim yellow]")
             break
         try:
-            # First show "thinking..." while waiting for first token
-            console.print("[bold cyan]thinking...[/bold cyan]", end="\r")
             start_time = time.time()
 
-            # Combine base tools with skill tools
-            all_tools = TOOLS + get_skill_manager().get_tool_definitions()
-
-            # Stream the response for live token counting
-            stream = client.chat.completions.create(
+            # Non-streaming request for TUI compatibility
+            response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=1024,
-                tools=all_tools,
+                max_tokens=4096,
+                tools=TOOLS,
                 tool_choice="auto",
-                stream=True,
                 extra_body={"num_ctx": NUM_CTX}
             )
 
-            # Collect streamed response
-            full_content = ""
-            tool_calls_data = {}  # id -> {name, arguments}
-            token_count = 0
-            first_token = True
-
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-
-                delta = chunk.choices[0].delta
-
-                # Handle content tokens
-                if delta.content:
-                    if first_token:
-                        # Clear "thinking..." and show header
-                        console.print(" " * 40, end="\r")  # Clear line
-                        console.print(f"[bold magenta]MAUDE:[/bold magenta] ", end="")
-                        first_token = False
-                    print(delta.content, end="", flush=True)
-                    full_content += delta.content
-                    token_count += 1
-                    # Update token count on same line (in terminal title or status)
-                    console.set_window_title(f"MAUDE - {token_count} tokens")
-
-                # Handle tool calls in stream
-                if delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        tc_id = tc.id or list(tool_calls_data.keys())[-1] if tool_calls_data else "0"
-                        if tc.id:
-                            tool_calls_data[tc.id] = {
-                                "name": tc.function.name if tc.function and tc.function.name else "",
-                                "arguments": tc.function.arguments if tc.function and tc.function.arguments else ""
-                            }
-                        elif tc.function and tc.function.arguments:
-                            # Append to existing tool call arguments
-                            last_id = list(tool_calls_data.keys())[-1]
-                            tool_calls_data[last_id]["arguments"] += tc.function.arguments
-
-            # Print newline after streaming content
             elapsed_time = time.time() - start_time
+            msg = response.choices[0].message
+            full_content = msg.content or ""
+
+            # Show response
             if full_content:
-                print()  # Newline after streamed content
-                tokens_per_sec = token_count / elapsed_time if elapsed_time > 0 else 0
-                console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s ({tokens_per_sec:.1f} tok/s)[/dim]")
-            elif first_token:
-                # Clear "thinking..." if no content
-                console.print(" " * 40, end="\r")
+                console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
+                token_count = response.usage.completion_tokens if response.usage else 0
+                console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+
+            # Collect tool calls
+            tool_calls_data = {}
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_calls_data[tc.id] = {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
 
             # Handle tool calls
             if tool_calls_data:
@@ -944,7 +961,7 @@ def chat(client, messages: list):
                         result = "(Already called with same arguments - see previous result)"
                     else:
                         recent_tool_calls.append(call_signature)
-                        console.print(f"[dim yellow]  [{func_name}][/dim yellow]", end="")
+                        console.print(f"[dim yellow]  [{func_name}][/dim yellow]")
                         result = execute_tool(func_name, func_args)
 
                     # Add tool result to messages
@@ -958,11 +975,6 @@ def chat(client, messages: list):
                 continue
 
             # No tool calls - we're done
-            if show_thinking and hasattr(chunk.choices[0], 'reasoning_content'):
-                reasoning = chunk.choices[0].reasoning_content
-                if reasoning:
-                    console.print(f"[dim cyan]<thinking>{reasoning}</thinking>[/dim cyan]")
-
             return full_content
 
         except Exception as e:
@@ -991,7 +1003,7 @@ def chat(client, messages: list):
                 return None
 
 
-def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
+def handle_command(cmd: str) -> str:
     """Handle slash commands. Returns response or None if not a command."""
     if not cmd.startswith("/"):
         return None
@@ -1001,317 +1013,171 @@ def handle_command(cmd: str, memory: MaudeMemory = None) -> str:
         return None
 
     command = parts[0].lower()
-    args = parts[1:] if len(parts) > 1 else []
 
-    if command == "keys":
-        return handle_keys_command(args)
-    elif command == "providers":
-        return list_providers()
-    elif command == "cost":
-        return handle_cost_command()
-    elif command == "agents":
-        return list_agents()
-    elif command == "memory" and memory:
-        return handle_memory_command(args, memory)
-    elif command == "remember" and memory:
-        return handle_remember_command(args, memory)
-    elif command == "recall" and memory:
-        return handle_recall_command(args, memory)
-    elif command == "forget" and memory:
-        return handle_forget_command(args, memory)
-    elif command == "voice":
-        return handle_voice_command(args)
-    elif command == "skills":
-        return handle_skills_command(args, get_skill_manager())
-    elif command == "mesh":
-        return handle_mesh_command(args)
-    elif command == "channels":
-        return handle_channels_command(args)
-    elif command == "schedule":
-        return handle_schedule_command(args)
-    elif command == "help":
+    if command == "help":
         return """MAUDE Commands:
 
-/keys                  - List configured API keys
-/keys set <p> <key>    - Save API key for provider
-/keys test <provider>  - Test provider connection
-/providers             - List all available providers
-/agents                - List available subagents
-/cost                  - Show today's API spending
+/help    - Show this help
 
-Memory:
-/memory                - Show memory statistics
-/memory list [cat]     - List memories by category
-/memory search <query> - Search memories
-/remember <key> <val>  - Store a memory
-/recall <key>          - Retrieve a memory
-/forget <key>          - Remove a memory
-
-Voice:
-/voice                 - Show voice mode help
-/voice start           - Listen once (STT)
-/voice talk            - Continuous conversation mode
-/voice stop            - Stop voice mode
-/voice config          - Show voice settings
-/voice backend <b>     - Set backend (personaplex, whisper_local)
-/voice tts <provider>  - Set TTS (piper, espeak, openai)
-
-Skills:
-/skills                - List installed skills
-/skills info <name>    - Show skill details
-/skills run <name>     - Run a skill directly
-/skills enable <name>  - Enable a skill
-/skills disable <name> - Disable a skill
-/skills reload         - Reload all skills
-
-Mesh:
-/mesh                  - Show mesh network status
-/mesh refresh          - Refresh node discovery
-/mesh add <host>       - Add a node manually
-/mesh remove <host>    - Remove a node
-
-Channels:
-/channels              - List messaging channels
-/channels pair         - Get pairing code for Telegram/Discord
-
-Scheduler:
-/schedule              - List scheduled tasks
-/schedule add "name" @daily "prompt"
-/schedule remove <id>  - Remove a task
-/schedule run <id>     - Run task now
-
-/help                  - Show this help
+Tools available:
+- read_file, write_file, search_file, edit_file
+- list_directory, change_directory, get_working_directory
+- run_command (shell)
+- web_browse, web_search, web_view
+- view_image
 
 Say "quit" to exit."""
     else:
         return f"Unknown command: /{command}\nType /help for available commands."
 
 
-def main():
-    """Main chat loop."""
-    import uuid
+SYSTEM_PROMPT = """You are MAUDE, a coding assistant powered by Nemotron.
 
-    console.clear()
+STYLE: Be brief. Action over explanation.
 
-    # Load stored API keys
-    km = KeyManager()
-    km.load_all_keys()
+TOOLS:
+- read_file(path, start_line, end_line): Read file with line numbers
+- write_file(path, content): Create/overwrite file
+- search_file(path, pattern): Find text, returns line numbers
+- edit_file(path, start_line, end_line, new_content): Edit specific lines
+- list_directory, change_directory, get_working_directory
+- run_command: Shell commands (git, pip, python, etc.)
+- web_browse, web_search: Web access
+- web_view, view_image: Visual analysis (LLaVA)
 
-    # Initialize memory system
-    memory = MaudeMemory()
-    session_id = str(uuid.uuid4())[:8]
-    memory_stats = memory.get_stats()
+FILE EDITING:
+1. search_file to find the code
+2. read_file with line range to see context
+3. edit_file to replace lines
 
-    animate_banner()
+Use tools proactively. Confirm before destructive operations."""
 
-    # Count available cloud providers
-    cloud_providers = get_available_providers()
-    cloud_status = f"[green]{len(cloud_providers)} cloud[/green]" if cloud_providers else "[dim]no cloud keys[/dim]"
-    memory_status = f"[green]{memory_stats['total_memories']} memories[/green]" if memory_stats['total_memories'] else "[dim]no memories[/dim]"
 
-    # Initialize skills
-    skill_manager = get_skill_manager()
-    skills_count = len(skill_manager.list_skills())
-    skills_status = f"[green]{skills_count} skills[/green]" if skills_count else "[dim]no skills[/dim]"
+class MaudeApp(App):
+    """MAUDE TUI Application with fixed input at bottom."""
 
-    # Initialize mesh network
-    mesh = get_mesh()
-    mesh.start()
-    mesh_nodes = len([n for n in mesh.list_nodes() if n.healthy])
-    mesh_status = f"[green]{mesh_nodes} mesh[/green]" if mesh_nodes else "[dim]no mesh[/dim]"
-
-    # Initialize channels (Telegram, etc.)
-    gateway = get_gateway()
-    telegram = create_telegram_channel()
-    if telegram:
-        gateway.register(telegram)
-    channels_count = len(gateway.channels)
-    channels_status = f"[green]{channels_count} channels[/green]" if channels_count else "[dim]no channels[/dim]"
-
-    # Initialize scheduler
-    scheduler = get_scheduler()
-    tasks_count = len([t for t in scheduler.tasks.values() if t.enabled])
-    schedule_status = f"[green]{tasks_count} scheduled[/green]" if tasks_count else "[dim]no tasks[/dim]"
-
-    # Check vision model availability
-    vision_status = "[dim]no vision[/dim]"
-    try:
-        import requests
-        resp = requests.get(f"{VISION_URL.replace('/v1', '')}/api/tags", timeout=2)
-        if resp.status_code == 200:
-            models = [m['name'] for m in resp.json().get('models', [])]
-            if any('llava' in m.lower() for m in models):
-                vision_status = f"[green]{VISION_MODEL}[/green]"
-    except:
-        pass
-
-    # Info panel
-    console.print(Panel(
-        f"[dim]Nemotron-30B | {cloud_status} | {memory_status} | {skills_status} | {mesh_status} | {channels_status} | {vision_status}[/dim]\n"
-        "[green]Files[/green] [dim]|[/dim] [green]Shell[/green] [dim]|[/dim] [green]Web[/green] [dim]|[/dim] [green]Vision[/green] [dim]|[/dim] [green]Agents[/green] [dim]|[/dim] [green]Skills[/green] [dim]|[/dim] [green]Telegram[/green] [dim]| /help | \"quit\"[/dim]",
-        border_style="cyan",
-        title="[bold cyan]MAUDE[/bold cyan]",
-        title_align="center"
-    ))
-    print_separator()
-    console.print()
-
-    try:
-        client = create_client()
-    except Exception as e:
-        console.print(f"[red]Failed to connect: {e}[/red]")
-        console.print("[dim]Make sure the server is running: ./start_server.sh[/dim]")
-        sys.exit(1)
-
-    messages = []
-    system_prompt = {
-        "role": "system",
-        "content": """You are MAUDE, an advanced AI orchestrator powered by NVIDIA Nemotron.
-You excel at coding, reasoning, and complex problem-solving.
-
-RESPONSE STYLE:
-- Be BRIEF. Short answers for simple questions.
-- Only elaborate when asked or when truly necessary.
-- Prefer simple solutions over complex ones.
-- One command is better than a script. Direct action over explanation.
-
-ENVIRONMENT:
-- Local LLMs run via Ollama (use: ollama list, ollama run <model>)
-- You're part of a mesh network - use /mesh to see connected nodes
-- ComfyUI may be available for image/video generation
-
-You have full access to the local system through these tools:
-- read_file: Read contents of any file
-- write_file: Create or overwrite files
-- list_directory: Browse directories and see file sizes
-- get_working_directory: Check your current location
-- change_directory: Navigate to different directories
-- run_command: Execute any shell command (pip, python, git, npm, etc.)
-- web_browse: Fetch and read text content from any URL
-- web_search: Search the web using DuckDuckGo
-- web_view: Screenshot and analyze a webpage visually
-- view_image: Analyze any local image file
-
-SUBAGENT DELEGATION:
-You can delegate specialized tasks to subagents using delegate_to_agent:
-- 'code' (Codestral): Code generation, debugging, refactoring
-- 'vision' (LLaVA): Image/screenshot analysis
-- 'writer' (Gemma): Long documentation, detailed explanations
-- 'reasoning' (Claude/o1): Complex analysis, planning (cloud, if API key set)
-- 'search' (Grok): Real-time info, current events (cloud, if API key set)
-
-WHEN TO DELEGATE:
-- Complex code tasks → delegate to 'code'
-- Long documentation → delegate to 'writer'
-- Hard reasoning problems → delegate to 'reasoning' with prefer_cloud=true
-
-WHEN TO HANDLE YOURSELF:
-- Simple questions, quick file ops, conversation
-- Synthesizing and presenting subagent results
-
-Use tools proactively. Confirm before destructive operations.
-
-MEMORY:
-You have persistent memory. Relevant context from past conversations and stored facts
-will be provided below. Use /remember to store important information the user tells you.
-"""
+    CSS = """
+    #output {
+        height: 1fr;
+        border: solid cyan;
+        padding: 0 1;
+        scrollbar-gutter: stable;
     }
+    #input-container {
+        height: auto;
+        max-height: 3;
+        padding: 0 1;
+    }
+    Input {
+        border: solid green;
+    }
+    """
 
-    # Build initial system prompt with memory context
-    def build_system_prompt(user_query: str = "") -> dict:
-        """Build system prompt with memory context injected."""
-        base_content = system_prompt["content"]
+    BINDINGS = [
+        Binding("ctrl+c", "quit", "Quit"),
+    ]
 
-        # Get relevant memories for context
-        memory_context = memory.get_context_for_prompt(user_query) if user_query else ""
+    def __init__(self):
+        super().__init__()
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.client = None
 
-        if memory_context:
-            full_content = base_content + "\n\n" + memory_context
-        else:
-            full_content = base_content
+    def compose(self) -> ComposeResult:
+        yield RichLog(id="output", wrap=True, highlight=True, markup=True)
+        with Container(id="input-container"):
+            yield Input(placeholder="Type message... (quit to exit)", id="user-input")
 
-        return {"role": "system", "content": full_content}
+    def on_mount(self):
+        global _app
+        _app = self
 
-    messages.append(build_system_prompt())
+        # Load API keys
+        km = KeyManager()
+        km.load_all_keys()
 
-    while True:
+        # Create client
         try:
-            console.print()
-            user_input = console.input("[bold green]YOU >[/bold green] ").strip()
+            self.client = create_client()
+        except Exception as e:
+            self.write_output(f"[red]Failed to connect: {e}[/red]")
+            return
 
-            if not user_input:
-                continue
+        self.output_log = self.query_one("#output", RichLog)
+        self.input_widget = self.query_one("#user-input", Input)
+        self.banner_lines = get_banner_with_mech()
+        self.banner_frame = 0
 
-            # Natural exit commands
-            if user_input.lower() in ("quit", "exit", "bye", "goodbye"):
-                console.print("\n[dim magenta]MAUDE signing off. Until next time.[/dim magenta]\n")
-                break
+        # Start banner animation
+        self.animate_banner()
 
-            # Handle slash commands
-            if user_input.startswith("/"):
-                # Special handling for async voice commands
-                if user_input.startswith("/voice"):
-                    parts = user_input.split()
-                    if len(parts) >= 2 and parts[1].lower() in ["start", "talk", "stop"]:
-                        action = parts[1].lower()
-                        try:
-                            if action == "start":
-                                # Single voice input
-                                voice = asyncio.run(get_voice_mode())
-                                text = asyncio.run(voice.listen())
-                                if text:
-                                    console.print(f"[green]Heard:[/green] {text}")
-                                    # Process as if user typed it
-                                    user_input = text
-                                else:
-                                    console.print("[dim]No speech detected[/dim]")
-                                    continue
-                            elif action == "talk":
-                                # Continuous conversation mode
-                                def maude_callback(text):
-                                    messages.append({"role": "user", "content": text})
-                                    response = chat(client, messages)
-                                    if response:
-                                        messages.append({"role": "assistant", "content": response})
-                                    return response or "I couldn't process that."
+    def animate_banner(self):
+        """Animate the fire-colored banner."""
+        if self.banner_frame < 25:
+            # Clear and redraw banner with new frame
+            self.output_log.clear()
+            for line in self.banner_lines:
+                self.output_log.write(fire_text(line, self.banner_frame))
+            self.banner_frame += 1
+            self.set_timer(0.06, self.animate_banner)
+        else:
+            # Animation done, show final banner + info
+            self.output_log.clear()
+            for line in self.banner_lines:
+                self.output_log.write(fire_text(line, 24))
+            self.write_output("")
+            self.write_output("[dim]Nemotron-30B | Files | Shell | Web | Vision[/dim]")
+            self.write_output("[dim]Type /help for commands, 'quit' to exit[/dim]\n")
+            self.input_widget.focus()
 
-                                voice = asyncio.run(get_voice_mode())
-                                asyncio.run(voice.talk_mode(maude_callback))
-                                continue
-                            elif action == "stop":
-                                voice = asyncio.run(get_voice_mode())
-                                voice.stop_talk_mode()
-                                console.print("[dim]Voice mode stopped[/dim]")
-                                continue
-                        except Exception as e:
-                            console.print(f"[red]Voice error: {e}[/red]")
-                            console.print("[dim]Run ./setup_personaplex.sh to install voice dependencies[/dim]")
-                            continue
+    def write_output(self, text):
+        """Write to the output log."""
+        if hasattr(self, 'output_log'):
+            self.output_log.write(text)
 
-                result = handle_command(user_input, memory)
-                if result:
-                    console.print(f"\n{result}")
-                    continue
+    async def on_input_submitted(self, event: Input.Submitted):
+        """Handle user input."""
+        user_input = event.value.strip()
+        self.input_widget.clear()
 
-            # Update system prompt with memory context for this query
-            messages[0] = build_system_prompt(user_input)
+        if not user_input:
+            return
 
-            # Save user message to conversation history
-            memory.save_message(session_id, "user", user_input)
+        # Show user message
+        self.write_output(f"\n[bold green]YOU >[/bold green] {user_input}")
 
-            messages.append({"role": "user", "content": user_input})
-            console.print()
-            response = chat(client, messages)
+        # Exit commands
+        if user_input.lower() in ("quit", "exit", "bye", "goodbye"):
+            self.write_output("\n[dim magenta]MAUDE signing off.[/dim magenta]")
+            self.exit()
+            return
 
-            if response:
-                messages.append({"role": "assistant", "content": response})
-                # Save assistant response to conversation history
-                memory.save_message(session_id, "assistant", response)
+        # Slash commands
+        if user_input.startswith("/"):
+            result = handle_command(user_input)
+            if result:
+                self.write_output(f"\n{result}")
+            return
 
-        except KeyboardInterrupt:
-            console.print("\n[dim]Say \"quit\" to exit[/dim]")
-        except EOFError:
-            break
+        # Process with LLM in background
+        self.process_message(user_input)
+
+    @work(thread=True)
+    def process_message(self, user_input: str):
+        """Process message with LLM in background thread."""
+        self.messages.append({"role": "user", "content": user_input})
+
+        # Show thinking indicator
+        self.call_from_thread(self.write_output, "\n[cyan]thinking...[/cyan]")
+
+        response = chat(self.client, self.messages)
+
+        if response:
+            self.messages.append({"role": "assistant", "content": response})
+
+
+def main():
+    app = MaudeApp()
+    app.run()
 
 
 if __name__ == "__main__":
