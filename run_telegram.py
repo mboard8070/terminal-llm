@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 MAUDE Telegram bot.
-Uses the same model as chat_local.py with web search capability.
+Uses shared maude_core for full tool access.
 """
 
 import asyncio
 import json
-import os
 import sys
 from dotenv import load_dotenv
 
@@ -15,127 +14,44 @@ sys.stderr.reconfigure(line_buffering=True)
 
 load_dotenv()
 
+import os
 from openai import OpenAI
 from channels import get_gateway, IncomingMessage
 from channels.telegram import create_telegram_channel
 
-# Use same model config as chat_local.py
-LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
-MODEL = os.environ.get("MAUDE_MODEL", "nemotron")
+# Use shared MAUDE core
+import maude_core
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since
 
-# System prompt
+# Get config from maude_core
+LOCAL_URL = maude_core.LOCAL_URL
+MODEL = maude_core.MODEL
+
+# Set up logging callback
+def telegram_log(message: str):
+    print(f">>> {message}", flush=True)
+
+maude_core.set_log_callback(telegram_log)
+
+# System prompt - now with full tool access
 SYSTEM_PROMPT = f"""You are MAUDE, a local AI assistant running {MODEL}.
 
 Be brief and direct. Keep responses concise for mobile/Telegram.
 
-TOOLS:
-- web_search: Search the web. Results include snippets - often enough to answer without browsing.
-- web_browse: Fetch a URL. Use sparingly - many sites have messy HTML.
+TOOLS AVAILABLE:
+- web_search: Search the web (use first for current info)
+- web_browse: Fetch URL content
+- read_file, write_file, edit_file: File operations
+- search_file, search_directory: Search in files
+- list_directory, change_directory: Navigate filesystem
+- run_command: Execute shell commands
+- view_image, web_view: Vision analysis (LLaVA)
+- ask_frontier: Escalate to cloud AI if needed
 
 STRATEGY:
-1. Start with web_search - the snippets often contain the answer
-2. If snippets are sufficient, respond directly without browsing
-3. Only use web_browse for specific pages with clean content
-4. If web_browse returns junk, use search snippets instead
-5. For weather: prefer wttr.in or search snippets over weather.com"""
-
-# Tools - just web search and browse
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web using DuckDuckGo. Use for weather, news, prices, current info.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"}
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_browse",
-            "description": "Fetch and read content from a URL.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "URL to fetch"}
-                },
-                "required": ["url"]
-            }
-        }
-    }
-]
-
-
-def tool_web_search(query: str) -> str:
-    """Search the web using DuckDuckGo."""
-    try:
-        from ddgs import DDGS
-        print(f">>> Searching: {query}", flush=True)
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
-        if not results:
-            return f"No results for: {query}"
-        output = f"Search results for: {query}\n\n"
-        for i, r in enumerate(results, 1):
-            output += f"{i}. {r.get('title', 'No title')}\n"
-            output += f"   {r.get('body', '')[:150]}\n\n"
-        return output
-    except Exception as e:
-        return f"Search error: {e}"
-
-
-def tool_web_browse(url: str) -> str:
-    """Fetch and parse web page content."""
-    try:
-        import requests
-        from bs4 import BeautifulSoup
-
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-
-        print(f">>> Fetching: {url}", flush=True)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Remove junk elements
-        for tag in soup(['script', 'style', 'nav', 'footer', 'aside', 'header', 'noscript', 'iframe', 'form', 'button']):
-            tag.decompose()
-
-        # Try to find main content
-        main = soup.find('main') or soup.find('article') or soup.find('div', class_='content')
-        if main:
-            text = main.get_text(separator=' ', strip=True)
-        else:
-            text = soup.get_text(separator=' ', strip=True)
-
-        # Clean up whitespace
-        text = ' '.join(text.split())
-
-        # Limit length for model context
-        if len(text) > 1500:
-            text = text[:1500] + "..."
-
-        return f"Content from {url}:\n{text}" if text else f"No readable content from {url}"
-    except Exception as e:
-        return f"Error fetching {url}: {e}"
-
-
-def execute_tool(name: str, args: dict) -> str:
-    """Execute a tool."""
-    if name == "web_search":
-        return tool_web_search(args.get("query", ""))
-    elif name == "web_browse":
-        return tool_web_browse(args.get("url", ""))
-    return f"Unknown tool: {name}"
+1. For current info (weather, news): use web_search first
+2. For file tasks: use file tools
+3. Keep responses concise for mobile"""
 
 
 def get_client():
@@ -153,8 +69,10 @@ async def maude_callback(msg: IncomingMessage) -> str:
             {"role": "user", "content": msg.text}
         ]
 
-        # Allow up to 3 tool iterations
-        for _ in range(3):
+        reset_rate_limits()  # Reset per-turn limits
+
+        # Allow up to 5 tool iterations
+        for _ in range(5):
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
@@ -172,6 +90,9 @@ async def maude_callback(msg: IncomingMessage) -> str:
                 if not reply.strip():
                     reply = "I found some information but couldn't summarize it. Try rephrasing your question."
                 print(f">>> MAUDE: {reply[:100]}...", flush=True)
+                # Log for sync (after processing complete)
+                append_chat_log("telegram", "user", msg.text)
+                append_chat_log("telegram", "assistant", reply)
                 return reply
 
             # Handle tool calls
@@ -186,7 +107,11 @@ async def maude_callback(msg: IncomingMessage) -> str:
             })
 
             for tc in assistant_msg.tool_calls:
-                args = json.loads(tc.function.arguments)
+                print(f">>> [{tc.function.name}]", flush=True)
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
                 result = execute_tool(tc.function.name, args)
                 messages.append({
                     "role": "tool",
@@ -201,59 +126,105 @@ async def maude_callback(msg: IncomingMessage) -> str:
         return f"Error: {str(e)[:100]}"
 
 
-async def main():
-    print("=" * 50, flush=True)
-    print("MAUDE Telegram Bot", flush=True)
-    print("=" * 50, flush=True)
+async def sync_cli_messages(gateway):
+    """Watch for CLI messages and push to Telegram."""
+    from channels import OutgoingMessage
+    import os
+
+    # Start from end of file
+    log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
+    try:
+        position = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+    except:
+        position = 0
+
+    while True:
+        await asyncio.sleep(2)
+        try:
+            entries, new_position = read_chat_log_since(position)
+            for entry in entries:
+                if entry.get("channel") == "cli":
+                    role = entry.get("role", "")
+                    content = entry.get("content", "")
+                    if role == "user":
+                        text = f"[cli] YOU: {content}"
+                    elif role == "assistant":
+                        text = f"[cli] MAUDE: {content}"
+                    else:
+                        continue
+                    await gateway.broadcast(OutgoingMessage(text=text))
+            position = new_position
+        except Exception:
+            pass
+
+
+async def main(standalone: bool = True):
+    """Run Telegram bot. If standalone=False, runs quietly as background service."""
+    if standalone:
+        print("=" * 50, flush=True)
+        print("MAUDE Telegram Bot", flush=True)
+        print("=" * 50, flush=True)
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
-        print("ERROR: TELEGRAM_BOT_TOKEN not set!", flush=True)
-        sys.exit(1)
+        if standalone:
+            print("ERROR: TELEGRAM_BOT_TOKEN not set!", flush=True)
+            sys.exit(1)
+        return
 
-    print(f"Model: {MODEL}", flush=True)
-    print(f"Server: {LOCAL_URL}", flush=True)
+    if standalone:
+        print(f"Model: {MODEL}", flush=True)
+        print(f"Server: {LOCAL_URL}", flush=True)
 
-    try:
-        client = get_client()
-        client.models.list()
-        print("LLM: Connected", flush=True)
-    except Exception as e:
-        print(f"LLM: Not available ({e})", flush=True)
+        try:
+            client = get_client()
+            client.models.list()
+            print("LLM: Connected", flush=True)
+        except Exception as e:
+            print(f"LLM: Not available ({e})", flush=True)
 
-    print("Tools: web_search, web_browse", flush=True)
+        tool_names = [t["function"]["name"] for t in TOOLS]
+        print(f"Tools: {', '.join(tool_names[:5])}... ({len(tool_names)} total)", flush=True)
 
     gateway = get_gateway()
     gateway.set_maude_callback(maude_callback)
 
     telegram = create_telegram_channel(token)
     if not telegram:
-        print("ERROR: Failed to create Telegram channel", flush=True)
-        sys.exit(1)
+        if standalone:
+            print("ERROR: Failed to create Telegram channel", flush=True)
+            sys.exit(1)
+        return
 
     gateway.register(telegram)
 
     try:
         await telegram.connect()
     except Exception as e:
-        print(f"ERROR: Failed to connect: {e}", flush=True)
-        sys.exit(1)
+        if standalone:
+            print(f"ERROR: Failed to connect: {e}", flush=True)
+            sys.exit(1)
+        return
 
-    if gateway.authorized:
-        print("\nPaired users:", flush=True)
-        for key, auth in gateway.authorized.items():
-            print(f"  - {auth.username} ({auth.channel})", flush=True)
-    else:
-        code = gateway.generate_pairing_code()
-        print(f"\nPairing Code: {code}", flush=True)
+    if standalone:
+        if gateway.authorized:
+            print("\nPaired users:", flush=True)
+            for key, auth in gateway.authorized.items():
+                print(f"  - {auth.username} ({auth.channel})", flush=True)
+        else:
+            code = gateway.generate_pairing_code()
+            print(f"\nPairing Code: {code}", flush=True)
 
-    print("\nReady.\n", flush=True)
+        print("\nReady.\n", flush=True)
+
+    # Start sync task for CLI messages
+    sync_task = asyncio.create_task(sync_cli_messages(gateway))
 
     try:
         while True:
             await asyncio.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down...", flush=True)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        sync_task.cancel()
         await telegram.disconnect()
 
 
