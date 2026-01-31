@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-MAUDE - Terminal LLM Chat powered by Nemotron-3-Nano-30B
+MAUDE - Terminal LLM Chat powered by local LLMs
 """
 
 import sys
 import os
+import asyncio
+import threading
 from dotenv import load_dotenv
 load_dotenv()
 
 import time
 import json
-import threading
 from pathlib import Path
 from openai import OpenAI
 
@@ -24,11 +25,16 @@ from rich.text import Text
 from rich.panel import Panel
 import pyfiglet
 
+# MAUDE core - shared tools
+import maude_core
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since
+
 # Minimal imports
 from keys import KeyManager
 
 # Global reference to app for output
 _app = None
+
 
 class TUIConsole:
     """Console that writes to Textual RichLog when app is running, otherwise stdout."""
@@ -52,909 +58,22 @@ class TUIConsole:
         if not _app:
             os.system('clear' if os.name != 'nt' else 'cls')
 
+
 console = TUIConsole()
 
-# Working directory for file operations
-working_dir = Path.home()
+# Set up logging callback for maude_core to use TUI console
+def tui_log(message: str):
+    console.print(f"[dim cyan]  -> {message}[/dim cyan]")
 
-# Main model configuration
-# Nemotron-3-Nano-30B is recommended for coding tasks
-# Override with MAUDE_MODEL env var to use a different model (e.g., codestral, llama3, mistral)
-LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
-MODEL = os.environ.get("MAUDE_MODEL", "nemotron")
-# Context window size - increase for longer conversations
-NUM_CTX = int(os.environ.get("MAUDE_NUM_CTX", "32768"))
+maude_core.set_log_callback(tui_log)
 
-# Vision model - LLaVA via Ollama (only used for web_view/view_image)
-# Override with MAUDE_VISION_MODEL env var for different vision models
-VISION_URL = os.environ.get("VISION_SERVER_URL", "http://localhost:11434/v1")
-VISION_MODEL = os.environ.get("MAUDE_VISION_MODEL", "llava:7b")
-
-# Toggle for showing reasoning
-show_thinking = False
-
-# Cache for web_view results (URL -> analysis) to avoid repeated screenshots
-_web_view_cache = {}
-
-# Track expensive calls per turn (reset in chat loop)
-_vision_call_count = 0
-_web_call_count = 0  # web_browse + web_search
+# Get config from maude_core
+LOCAL_URL = maude_core.LOCAL_URL
+MODEL = maude_core.MODEL
+NUM_CTX = maude_core.NUM_CTX
 
 # Color palette for animation - fire gradient
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
-
-# File system tools definition
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read file with line numbers. Use start_line/end_line for large files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file"
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "First line to read (1-indexed, optional)"
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "Last line to read (1-indexed, optional)"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file (relative to working directory or absolute)"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                    }
-                },
-                "required": ["path", "content"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_directory",
-            "description": "List files and directories in a path. Shows file sizes and types.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to list (relative to working directory or absolute). Defaults to current working directory."
-                    }
-                },
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_working_directory",
-            "description": "Get the current working directory path.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "change_directory",
-            "description": "Change the current working directory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to change to (relative or absolute)"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_command",
-            "description": "Execute a shell command. Use for: pip install, python scripts, git, venv setup, build tools, etc.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute"
-                    }
-                },
-                "required": ["command"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_browse",
-            "description": "Fetch and read content from a web URL. Returns the page text/markdown. Use this to look up documentation, articles, API references, or any web content.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Full URL to fetch (must start with http:// or https://)"
-                    }
-                },
-                "required": ["url"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web using DuckDuckGo. Returns a list of results with titles, URLs, and snippets.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query"
-                    },
-                    "num_results": {
-                        "type": "integer",
-                        "description": "Number of results to return (default 5, max 10)"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_view",
-            "description": "Take a screenshot of a webpage and analyze it visually using LLaVA vision model. Use this when you need to see the actual layout, images, or visual content of a page that text scraping would miss.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Full URL to screenshot (must start with http:// or https://)"
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "Optional specific question about what to look for on the page (e.g., 'What products are shown?' or 'Describe the navigation menu')"
-                    }
-                },
-                "required": ["url"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "view_image",
-            "description": "Analyze a local image file (screenshot, photo, diagram, etc.) using LLaVA vision model. Supports PNG, JPG, JPEG, GIF, WEBP formats.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the image file (relative to working directory or absolute)"
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "Optional specific question about the image (e.g., 'What error is shown?' or 'Describe the UI layout')"
-                    }
-                },
-                "required": ["path"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_file",
-            "description": "Search for text/pattern in a single file. Returns matching lines with line numbers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to search"
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Text or pattern to search for (case-insensitive)"
-                    }
-                },
-                "required": ["path", "pattern"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_directory",
-            "description": "Search for text/pattern across all files in a directory. Use this to find code when you don't know which file it's in. Returns file:line matches.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "directory": {
-                        "type": "string",
-                        "description": "Directory to search in"
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Text or pattern to search for (case-insensitive)"
-                    }
-                },
-                "required": ["directory", "pattern"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Edit specific lines in a file. Read the file first to see line numbers.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file"
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "First line to replace (1-indexed)"
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "Last line to replace (1-indexed)"
-                    },
-                    "new_content": {
-                        "type": "string",
-                        "description": "New content to insert"
-                    }
-                },
-                "required": ["path", "start_line", "end_line", "new_content"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "ask_frontier",
-            "description": "Escalate a complex question to a frontier AI model (Claude, GPT, Gemini). Use when: (1) complex multi-step reasoning needed, (2) nuanced code architecture decisions, (3) you're uncertain about accuracy, (4) deep domain expertise required. Include relevant context.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The question or task requiring expert analysis"
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "Relevant context (code snippets, file contents, prior discussion)"
-                    },
-                    "provider": {
-                        "type": "string",
-                        "description": "Optional: specific provider (claude, openai, gemini, grok, mistral)"
-                    }
-                },
-                "required": ["question"]
-            }
-        }
-    }
-]
-
-
-def resolve_path(path_str: str) -> Path:
-    """Resolve a path relative to working directory."""
-    global working_dir
-    path = Path(path_str).expanduser()
-    if not path.is_absolute():
-        path = working_dir / path
-    return path.resolve()
-
-
-def tool_read_file(path: str, start_line: int = None, end_line: int = None) -> str:
-    """Read file contents with line numbers."""
-    try:
-        file_path = resolve_path(path)
-        if not file_path.exists():
-            return f"Error: File not found: {file_path}"
-        if not file_path.is_file():
-            return f"Error: Not a file: {file_path}"
-        if file_path.stat().st_size > 1_000_000:  # 1MB limit
-            return f"Error: File too large (>1MB): {file_path}"
-
-        lines = file_path.read_text(errors='replace').splitlines()
-        total_lines = len(lines)
-
-        # Handle line range
-        start_idx = (start_line - 1) if start_line else 0
-        end_idx = end_line if end_line else min(total_lines, start_idx + 200)
-        start_idx = max(0, start_idx)
-        end_idx = min(total_lines, end_idx)
-
-        selected = lines[start_idx:end_idx]
-        numbered = [f"{start_idx + i + 1:4d} | {line}" for i, line in enumerate(selected)]
-
-        console.print(f"[dim cyan]  -> Read lines {start_idx+1}-{end_idx} of {total_lines} from {file_path}[/dim cyan]")
-        return f"File: {file_path} ({total_lines} lines)\n\n" + '\n'.join(numbered)
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error reading file: {e}"
-
-
-def tool_write_file(path: str, content: str) -> str:
-    """Write content to file."""
-    try:
-        file_path = resolve_path(path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content)
-        console.print(f"[dim cyan]  -> Wrote {len(content)} chars to {file_path}[/dim cyan]")
-        return f"Successfully wrote {len(content)} characters to {file_path}"
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error writing file: {e}"
-
-
-def tool_search_file(path: str, pattern: str) -> str:
-    """Search for pattern in file, return matching lines with numbers."""
-    try:
-        file_path = resolve_path(path)
-        if not file_path.exists():
-            return f"Error: File not found: {file_path}"
-
-        lines = file_path.read_text(errors='replace').splitlines()
-        matches = []
-        for i, line in enumerate(lines):
-            if pattern.lower() in line.lower():
-                matches.append(f"{i+1:4d} | {line}")
-
-        if not matches:
-            return f"No matches for '{pattern}' in {file_path}"
-
-        console.print(f"[dim cyan]  -> Found {len(matches)} matches for '{pattern}'[/dim cyan]")
-        return f"Matches in {file_path}:\n\n" + '\n'.join(matches[:50])
-    except Exception as e:
-        return f"Error searching file: {e}"
-
-
-def tool_search_directory(directory: str, pattern: str) -> str:
-    """Search for pattern across all files in directory."""
-    import re
-
-    EXCLUDE_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.venv', 'build', 'dist', '.cache'}
-    CODE_EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx', '.sh', '.yaml', '.yml', '.json', '.md', '.txt', '.html', '.css'}
-
-    try:
-        dir_path = resolve_path(directory)
-        if not dir_path.exists():
-            return f"Error: Directory not found: {dir_path}"
-        if not dir_path.is_dir():
-            return f"Error: Not a directory: {dir_path}"
-
-        pattern_lower = pattern.lower()
-        matches = []
-        files_searched = 0
-
-        for root, dirs, files in os.walk(dir_path):
-            # Skip excluded directories
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
-
-            for name in files:
-                # Only search code files
-                if not any(name.endswith(ext) for ext in CODE_EXTENSIONS):
-                    continue
-
-                filepath = Path(root) / name
-                files_searched += 1
-
-                try:
-                    content = filepath.read_text(errors='replace')
-                    for lineno, line in enumerate(content.splitlines(), start=1):
-                        if pattern_lower in line.lower():
-                            rel_path = filepath.relative_to(dir_path)
-                            matches.append(f"{rel_path}:{lineno}: {line.strip()[:100]}")
-                            if len(matches) >= 50:
-                                break
-                except:
-                    continue
-
-                if len(matches) >= 50:
-                    break
-            if len(matches) >= 50:
-                break
-
-        if not matches:
-            return f"No matches for '{pattern}' in {dir_path} ({files_searched} files searched)"
-
-        console.print(f"[dim cyan]  -> Found {len(matches)} matches in {files_searched} files[/dim cyan]")
-        result = f"Matches for '{pattern}' in {dir_path}:\n\n" + '\n'.join(matches)
-        if len(matches) == 50:
-            result += "\n\n(Limited to 50 results)"
-        return result
-    except Exception as e:
-        return f"Error searching directory: {e}"
-
-
-def tool_edit_file(path: str, start_line: int, end_line: int, new_content: str) -> str:
-    """Edit specific lines in a file."""
-    try:
-        file_path = resolve_path(path)
-        if not file_path.exists():
-            return f"Error: File not found: {file_path}"
-
-        lines = file_path.read_text(errors='replace').splitlines()
-        total = len(lines)
-
-        if start_line < 1 or end_line < start_line:
-            return f"Error: Invalid line range {start_line}-{end_line}"
-        if start_line > total:
-            return f"Error: start_line {start_line} > file length ({total})"
-
-        start_idx = start_line - 1
-        end_idx = min(end_line, total)
-
-        lines[start_idx:end_idx] = new_content.splitlines()
-        file_path.write_text('\n'.join(lines) + '\n')
-
-        console.print(f"[dim cyan]  -> Edited lines {start_line}-{end_line} in {file_path}[/dim cyan]")
-        return f"Edited lines {start_line}-{end_line} in {file_path}"
-    except Exception as e:
-        return f"Error editing file: {e}"
-
-
-def tool_list_directory(path: str = None) -> str:
-    """List directory contents."""
-    global working_dir
-    try:
-        if path:
-            dir_path = resolve_path(path)
-        else:
-            dir_path = working_dir
-
-        if not dir_path.exists():
-            return f"Error: Directory not found: {dir_path}"
-        if not dir_path.is_dir():
-            return f"Error: Not a directory: {dir_path}"
-
-        entries = []
-        for item in sorted(dir_path.iterdir()):
-            try:
-                if item.is_dir():
-                    entries.append(f"[DIR]  {item.name}/")
-                else:
-                    size = item.stat().st_size
-                    if size < 1024:
-                        size_str = f"{size}B"
-                    elif size < 1024 * 1024:
-                        size_str = f"{size // 1024}KB"
-                    else:
-                        size_str = f"{size // (1024 * 1024)}MB"
-                    entries.append(f"[FILE] {item.name} ({size_str})")
-            except PermissionError:
-                entries.append(f"[????] {item.name} (permission denied)")
-
-        result = f"Directory: {dir_path}\n\n" + "\n".join(entries) if entries else f"Directory: {dir_path}\n\n(empty)"
-        console.print(f"[dim cyan]  -> Listed {len(entries)} items in {dir_path}[/dim cyan]")
-        return result
-    except PermissionError:
-        return f"Error: Permission denied: {path}"
-    except Exception as e:
-        return f"Error listing directory: {e}"
-
-
-def tool_get_working_directory() -> str:
-    """Get current working directory."""
-    global working_dir
-    return str(working_dir)
-
-
-def tool_change_directory(path: str) -> str:
-    """Change working directory."""
-    global working_dir
-    try:
-        new_path = resolve_path(path)
-        if not new_path.exists():
-            return f"Error: Directory not found: {new_path}"
-        if not new_path.is_dir():
-            return f"Error: Not a directory: {new_path}"
-        working_dir = new_path
-        console.print(f"[dim cyan]  -> Changed directory to {working_dir}[/dim cyan]")
-        return f"Changed working directory to: {working_dir}"
-    except Exception as e:
-        return f"Error changing directory: {e}"
-
-
-def tool_run_command(command: str) -> str:
-    """Execute a shell command."""
-    global working_dir
-    import subprocess
-    try:
-        console.print(f"[dim cyan]  $ {command}[/dim cyan]")
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(working_dir),
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minute timeout
-        )
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            output += ("\n" if output else "") + result.stderr
-        if result.returncode != 0:
-            output += f"\n[Exit code: {result.returncode}]"
-        if not output.strip():
-            output = "(command completed successfully)"
-        # Truncate very long output
-        if len(output) > 10000:
-            output = output[:10000] + "\n... (output truncated)"
-        return output
-    except subprocess.TimeoutExpired:
-        return "Error: Command timed out after 5 minutes"
-    except Exception as e:
-        return f"Error executing command: {e}"
-
-
-def tool_web_browse(url: str) -> str:
-    """Fetch and parse web page content."""
-    import requests
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        return "Error: beautifulsoup4 not installed. Run: pip install beautifulsoup4"
-
-    try:
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-
-        console.print(f"[dim cyan]  -> Fetching {url}[/dim cyan]")
-
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Remove script, style, nav, footer, aside elements
-        for tag in soup(['script', 'style', 'nav', 'footer', 'aside', 'header', 'noscript', 'iframe']):
-            tag.decompose()
-
-        # Try to find main content
-        main_content = soup.find('main') or soup.find('article') or soup.find('div', {'class': ['content', 'post', 'article', 'main']})
-        if main_content:
-            text = main_content.get_text(separator='\n', strip=True)
-        else:
-            text = soup.get_text(separator='\n', strip=True)
-
-        # Clean up excessive whitespace
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        text = '\n'.join(lines)
-
-        # Truncate if too long
-        if len(text) > 15000:
-            text = text[:15000] + "\n\n... (content truncated)"
-
-        console.print(f"[dim cyan]  -> Retrieved {len(text)} chars from {url}[/dim cyan]")
-        return f"Content from {url}:\n\n{text}"
-
-    except requests.exceptions.Timeout:
-        return f"Error: Request timed out for {url}"
-    except requests.exceptions.RequestException as e:
-        return f"Error fetching {url}: {e}"
-    except Exception as e:
-        return f"Error parsing {url}: {e}"
-
-
-def tool_web_search(query: str, num_results: int = 5) -> str:
-    """Search the web using DuckDuckGo."""
-    try:
-        from ddgs import DDGS
-    except ImportError:
-        return "Error: ddgs not installed. Run: pip install ddgs"
-
-    try:
-        num_results = min(max(1, num_results), 10)
-        console.print(f"[dim cyan]  -> Searching: {query}[/dim cyan]")
-
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=num_results))
-
-        if not results:
-            return f"No results found for: {query}"
-
-        output = f"Search results for: {query}\n\n"
-        for i, r in enumerate(results, 1):
-            output += f"{i}. {r.get('title', 'No title')}\n"
-            output += f"   URL: {r.get('href', 'No URL')}\n"
-            output += f"   {r.get('body', 'No description')}\n\n"
-
-        console.print(f"[dim cyan]  -> Found {len(results)} results[/dim cyan]")
-        return output
-
-    except Exception as e:
-        return f"Error searching: {e}"
-
-
-def tool_web_view(url: str, question: str = None) -> str:
-    """Screenshot a webpage and analyze it with LLaVA vision model."""
-    global _web_view_cache
-    import base64
-    import tempfile
-
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return "Error: playwright not installed. Run: pip install playwright && playwright install chromium"
-
-    try:
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
-
-        # Check cache - return previous analysis if we already screenshotted this URL
-        if url in _web_view_cache:
-            console.print(f"[dim cyan]  -> Using cached screenshot of {url}[/dim cyan]")
-            return _web_view_cache[url] + "\n\n[NOTE: You already have this visual analysis. Use the information above to answer the user's question now. Do not call web_view again.]"
-
-        console.print(f"[dim cyan]  -> Capturing screenshot of {url}[/dim cyan]")
-
-        # Take screenshot with Playwright (smaller viewport for faster processing)
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={'width': 1024, 'height': 768})
-            page.goto(url, wait_until='networkidle', timeout=30000)
-
-            # Wait a moment for any lazy-loaded content
-            page.wait_for_timeout(1000)
-
-            # Take screenshot
-            screenshot_bytes = page.screenshot(full_page=False)  # Viewport only for reasonable size
-            browser.close()
-
-        # Convert to base64
-        base64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
-        console.print(f"[dim cyan]  -> Screenshot captured ({len(screenshot_bytes) // 1024}KB)[/dim cyan]")
-
-        # Prepare prompt for LLaVA
-        if question:
-            prompt = f"This is a screenshot of the webpage {url}. {question}"
-        else:
-            prompt = f"This is a screenshot of the webpage {url}. Describe what you see on this page, including the main content, layout, any images, navigation, and key information displayed."
-
-        # Send to LLaVA for visual analysis
-        console.print(f"[dim cyan]  -> Analyzing with LLaVA...[/dim cyan]")
-
-        vision_client = OpenAI(
-            base_url=VISION_URL,
-            api_key="not-needed"
-        )
-
-        response = vision_client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=1024,
-            temperature=0.2
-        )
-
-        analysis = response.choices[0].message.content
-        console.print(f"[dim cyan]  -> Vision analysis complete[/dim cyan]")
-
-        result = f"Visual analysis of {url}:\n\n{analysis}"
-        _web_view_cache[url] = result  # Cache for future calls
-        return result
-
-    except Exception as e:
-        error_msg = str(e)
-        if "playwright" in error_msg.lower() or "browser" in error_msg.lower():
-            return f"Error: Playwright browser issue. Try running: playwright install chromium\n{e}"
-        elif "connect" in error_msg.lower() or "refused" in error_msg.lower():
-            return f"Error: Cannot connect to vision model at {VISION_URL}. Is Ollama running?\n{e}"
-        else:
-            return f"Error viewing webpage: {e}"
-
-
-def tool_view_image(path: str, question: str = None) -> str:
-    """Analyze a local image file with LLaVA vision model."""
-    import base64
-
-    try:
-        file_path = resolve_path(path)
-        if not file_path.exists():
-            return f"Error: Image not found: {file_path}"
-        if not file_path.is_file():
-            return f"Error: Not a file: {file_path}"
-
-        # Check file extension
-        ext = file_path.suffix.lower()
-        if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
-            return f"Error: Unsupported image format: {ext}. Use PNG, JPG, JPEG, GIF, or WEBP."
-
-        # Check file size (limit to 20MB)
-        if file_path.stat().st_size > 20_000_000:
-            return f"Error: Image too large (>20MB): {file_path}"
-
-        # Determine MIME type
-        mime_types = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                      '.gif': 'image/gif', '.webp': 'image/webp'}
-        mime_type = mime_types.get(ext, 'image/png')
-
-        console.print(f"[dim cyan]  -> Reading image {file_path}[/dim cyan]")
-
-        # Read and encode image
-        with open(file_path, 'rb') as f:
-            image_bytes = f.read()
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
-
-        console.print(f"[dim cyan]  -> Image loaded ({len(image_bytes) // 1024}KB)[/dim cyan]")
-
-        # Prepare prompt
-        if question:
-            prompt = f"This is an image from {file_path.name}. {question}"
-        else:
-            prompt = f"This is an image from {file_path.name}. Describe what you see in detail, including any text, UI elements, diagrams, or notable features."
-
-        # Send to LLaVA
-        console.print(f"[dim cyan]  -> Analyzing with LLaVA...[/dim cyan]")
-
-        vision_client = OpenAI(
-            base_url=VISION_URL,
-            api_key="not-needed"
-        )
-
-        response = vision_client.chat.completions.create(
-            model=VISION_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=1024,
-            temperature=0.2
-        )
-
-        analysis = response.choices[0].message.content
-        console.print(f"[dim cyan]  -> Vision analysis complete[/dim cyan]")
-
-        return f"Analysis of {file_path.name}:\n\n{analysis}"
-
-    except Exception as e:
-        error_msg = str(e)
-        if "connect" in error_msg.lower() or "refused" in error_msg.lower():
-            return f"Error: Cannot connect to vision model at {VISION_URL}. Is Ollama running?\n{e}"
-        return f"Error analyzing image: {e}"
-
-
-def tool_ask_frontier(question: str, context: str = None, provider: str = None) -> str:
-    """Escalate a question to a frontier cloud model."""
-    try:
-        from frontier import ask_frontier, list_available_providers
-
-        available = list_available_providers()
-        if not available:
-            return "Error: No frontier providers configured. Set API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) in .env"
-
-        provider_name = provider if provider in available else None
-        console.print(f"[dim cyan]  -> Escalating to frontier model...[/dim cyan]")
-
-        response = ask_frontier(
-            query=question,
-            context=context,
-            provider_name=provider_name,
-            system_prompt="You are an expert assistant helping with a complex technical question. Be thorough but concise. Provide actionable guidance."
-        )
-
-        console.print(f"[dim cyan]  -> {response.provider} ({response.model}): {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f}[/dim cyan]")
-
-        return f"[Expert response from {response.provider}]\n\n{response.content}"
-
-    except Exception as e:
-        return f"Error calling frontier model: {e}"
-
-
-def execute_tool(name: str, arguments: dict) -> str:
-    """Execute a tool and return the result."""
-    global _vision_call_count, _web_call_count
-
-    # Limit vision tools to 1 call per turn
-    if name in ("web_view", "view_image"):
-        if _vision_call_count > 0:
-            return "(Vision analysis already completed - see previous result above. Please use that information to respond to the user.)"
-        _vision_call_count += 1
-
-    # Limit web tools to 4 calls per turn (search + browse combined)
-    if name in ("web_browse", "web_search"):
-        if _web_call_count >= 4:
-            return "(Web research limit reached. Please use the information already gathered to respond to the user now.)"
-        _web_call_count += 1
-
-    if name == "read_file":
-        return tool_read_file(arguments.get("path", ""), arguments.get("start_line"), arguments.get("end_line"))
-    elif name == "write_file":
-        return tool_write_file(arguments.get("path", ""), arguments.get("content", ""))
-    elif name == "search_file":
-        return tool_search_file(arguments.get("path", ""), arguments.get("pattern", ""))
-    elif name == "search_directory":
-        return tool_search_directory(arguments.get("directory", ""), arguments.get("pattern", ""))
-    elif name == "edit_file":
-        return tool_edit_file(arguments.get("path", ""), arguments.get("start_line", 1), arguments.get("end_line", 1), arguments.get("new_content", ""))
-    elif name == "list_directory":
-        return tool_list_directory(arguments.get("path"))
-    elif name == "get_working_directory":
-        return tool_get_working_directory()
-    elif name == "change_directory":
-        return tool_change_directory(arguments.get("path", ""))
-    elif name == "run_command":
-        return tool_run_command(arguments.get("command", ""))
-    elif name == "web_browse":
-        return tool_web_browse(arguments.get("url", ""))
-    elif name == "web_search":
-        return tool_web_search(arguments.get("query", ""), arguments.get("num_results", 5))
-    elif name == "web_view":
-        return tool_web_view(arguments.get("url", ""), arguments.get("question"))
-    elif name == "view_image":
-        return tool_view_image(arguments.get("path", ""), arguments.get("question"))
-    elif name == "ask_frontier":
-        return tool_ask_frontier(arguments.get("question", ""), arguments.get("context"), arguments.get("provider"))
-    else:
-        return f"Error: Unknown tool: {name}"
-
 
 def create_client():
     """Create local API client."""
@@ -1016,14 +135,13 @@ def print_separator():
 
 
 def chat(client, messages: list):
-    """Send chat request to local Nemotron with tool support."""
-    global show_thinking, _vision_call_count, _web_call_count
+    """Send chat request to local LLM with tool support."""
+    global show_thinking
 
     max_tool_iterations = 15
     tool_iteration = 0
     recent_tool_calls = []
-    _vision_call_count = 0
-    _web_call_count = 0
+    reset_rate_limits()  # Reset per-turn limits in maude_core
 
     while True:
         tool_iteration += 1
@@ -1251,6 +369,13 @@ class MaudeApp(App):
         self.spinner_frame = 0
         self.spinner_timer = None
         self.thinking_line_count = 0
+        # For sync: start from end of log file
+        import os
+        log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
+        try:
+            self.sync_position = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+        except:
+            self.sync_position = 0
 
     def compose(self) -> ComposeResult:
         yield RichLog(id="output", wrap=True, highlight=True, markup=True)
@@ -1299,11 +424,30 @@ class MaudeApp(App):
             self.write_output(f"[dim]{MODEL} | Files | Shell | Web | Vision[/dim]")
             self.write_output("[dim]Type /help for commands, 'quit' to exit[/dim]\n")
             self.input_widget.focus()
+            # Start sync polling
+            self.check_telegram_messages()
 
     def write_output(self, text):
         """Write to the output log."""
         if hasattr(self, 'output_log'):
             self.output_log.write(text)
+
+    def check_telegram_messages(self):
+        """Check for Telegram messages and display them."""
+        try:
+            entries, self.sync_position = read_chat_log_since(self.sync_position)
+            for entry in entries:
+                if entry.get("channel") == "telegram":
+                    role = entry.get("role", "")
+                    content = entry.get("content", "")
+                    if role == "user":
+                        self.write_output(f"\n[dim cyan][telegram][/dim cyan] [bold blue]USER >[/bold blue] {content}")
+                    elif role == "assistant":
+                        self.write_output(f"[dim cyan][telegram][/dim cyan] [bold magenta]MAUDE:[/bold magenta] {content}")
+        except:
+            pass
+        # Check again in 2 seconds
+        self.set_timer(2.0, self.check_telegram_messages)
 
     async def on_input_submitted(self, event: Input.Submitted):
         """Handle user input."""
@@ -1372,9 +516,33 @@ class MaudeApp(App):
 
         if response:
             self.messages.append({"role": "assistant", "content": response})
+            # Log for sync (after processing complete)
+            append_chat_log("cli", "user", user_input)
+            append_chat_log("cli", "assistant", response)
+
+
+def run_telegram_in_background():
+    """Run Telegram bot in a background thread."""
+    try:
+        from run_telegram import main as telegram_main
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(telegram_main(standalone=False))
+    except ImportError:
+        pass  # Telegram deps not installed
+    except Exception:
+        pass  # Silently continue - TUI keeps working
 
 
 def main():
+    # Check if Telegram should be enabled
+    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+
+    if telegram_token:
+        # Start Telegram bot in background thread
+        telegram_thread = threading.Thread(target=run_telegram_in_background, daemon=True)
+        telegram_thread.start()
+
     app = MaudeApp()
     app.run()
 
