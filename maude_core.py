@@ -373,6 +373,34 @@ TOOLS = [
                 "required": ["question"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_task",
+            "description": """Schedule automated tasks. Convert natural language schedules to cron expressions:
+- "every morning" or "daily at 8am" → 0 8 * * *
+- "every hour" → 0 * * * *
+- "weekdays at 9am" → 0 9 * * 1-5
+- "every evening at 6pm" → 0 18 * * *
+- "weekly on Monday" → 0 9 * * 1
+- "every 30 minutes" → */30 * * * *
+
+Shortcuts: @hourly, @daily, @morning, @evening, @weekly, @workdays
+
+Actions: add (create task), list (show all), remove (delete), enable, disable, run (execute now)""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Action: add, list, remove, enable, disable, run", "enum": ["add", "list", "remove", "enable", "disable", "run"]},
+                    "name": {"type": "string", "description": "Descriptive name for the task (for add action)"},
+                    "cron": {"type": "string", "description": "Cron expression or shortcut like @daily, @morning (for add action)"},
+                    "prompt": {"type": "string", "description": "What MAUDE should do when triggered (for add action)"},
+                    "task_id": {"type": "string", "description": "Task ID (for remove/enable/disable/run actions)"}
+                },
+                "required": ["action"]
+            }
+        }
     }
 ]
 
@@ -850,6 +878,66 @@ def tool_ask_frontier(question: str, context: str = None, provider: str = None) 
         return f"Error calling frontier model: {e}"
 
 
+def tool_schedule_task(action: str, name: str = None, cron: str = None, prompt: str = None, task_id: str = None) -> str:
+    """Manage scheduled tasks."""
+    try:
+        from scheduler import get_scheduler
+        scheduler = get_scheduler()
+
+        if action == "list":
+            return scheduler.list_tasks()
+
+        elif action == "add":
+            if not name:
+                return "Error: 'name' is required for add action"
+            if not cron:
+                return "Error: 'cron' is required for add action"
+            if not prompt:
+                return "Error: 'prompt' is required for add action"
+            log(f"Scheduling task: {name}")
+            return scheduler.schedule(name=name, cron=cron, prompt=prompt)
+
+        elif action == "remove":
+            if not task_id:
+                return "Error: 'task_id' is required for remove action"
+            log(f"Removing task: {task_id}")
+            return scheduler.unschedule(task_id)
+
+        elif action == "enable":
+            if not task_id:
+                return "Error: 'task_id' is required for enable action"
+            log(f"Enabling task: {task_id}")
+            return scheduler.enable_task(task_id)
+
+        elif action == "disable":
+            if not task_id:
+                return "Error: 'task_id' is required for disable action"
+            log(f"Disabling task: {task_id}")
+            return scheduler.disable_task(task_id)
+
+        elif action == "run":
+            if not task_id:
+                return "Error: 'task_id' is required for run action"
+            log(f"Running task: {task_id}")
+            # Synchronous wrapper for async run
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(scheduler.run_task_by_id(task_id))
+                    return f"Running task {task_id}..."
+                else:
+                    return loop.run_until_complete(scheduler.run_task_by_id(task_id))
+            except:
+                return f"Task {task_id} scheduled to run."
+
+        else:
+            return f"Unknown action: {action}. Use: add, list, remove, enable, disable, run"
+
+    except Exception as e:
+        return f"Error with scheduler: {e}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Execution
 # ─────────────────────────────────────────────────────────────────────────────
@@ -910,5 +998,13 @@ def execute_tool(name: str, arguments: dict) -> str:
         return tool_view_image(arguments.get("path", ""), arguments.get("question"))
     elif name == "ask_frontier":
         return tool_ask_frontier(arguments.get("question", ""), arguments.get("context"), arguments.get("provider"))
+    elif name == "schedule_task":
+        return tool_schedule_task(
+            arguments.get("action", "list"),
+            arguments.get("name"),
+            arguments.get("cron"),
+            arguments.get("prompt"),
+            arguments.get("task_id")
+        )
     else:
         return f"Error: Unknown tool: {name}"
