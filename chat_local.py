@@ -1145,6 +1145,10 @@ class MaudeApp(App):
         padding: 0 1;
         scrollbar-gutter: stable;
     }
+    #status {
+        height: 1;
+        padding: 0 1;
+    }
     #input-container {
         height: auto;
         max-height: 3;
@@ -1163,9 +1167,13 @@ class MaudeApp(App):
         super().__init__()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.client = None
+        self.spinner_frame = 0
+        self.spinner_timer = None
+        self.thinking_line_count = 0
 
     def compose(self) -> ComposeResult:
         yield RichLog(id="output", wrap=True, highlight=True, markup=True)
+        yield Static("", id="status")
         with Container(id="input-container"):
             yield Input(placeholder="Type message... (quit to exit)", id="user-input")
 
@@ -1243,15 +1251,43 @@ class MaudeApp(App):
         # Process with LLM in background
         self.process_message(user_input)
 
+    def start_spinner(self):
+        """Start the thinking spinner animation."""
+        self.spinner_frame = 0
+        self.update_spinner()
+
+    def update_spinner(self):
+        """Update spinner animation frame."""
+        spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        color = "bright_cyan" if self.spinner_frame % 2 else "cyan"
+        spinner = spinners[self.spinner_frame % len(spinners)]
+
+        status = self.query_one("#status", Static)
+        status.update(Text(f"{spinner} thinking...", style=color))
+
+        self.spinner_frame += 1
+        self.spinner_timer = self.set_timer(0.1, self.update_spinner)
+
+    def stop_spinner(self):
+        """Stop the thinking spinner."""
+        if self.spinner_timer:
+            self.spinner_timer.stop()
+            self.spinner_timer = None
+        status = self.query_one("#status", Static)
+        status.update("")
+
     @work(thread=True)
     def process_message(self, user_input: str):
         """Process message with LLM in background thread."""
         self.messages.append({"role": "user", "content": user_input})
 
-        # Show thinking indicator
-        self.call_from_thread(self.write_output, "\n[cyan]thinking...[/cyan]")
+        # Start spinner
+        self.call_from_thread(self.start_spinner)
 
         response = chat(self.client, self.messages)
+
+        # Stop spinner
+        self.call_from_thread(self.stop_spinner)
 
         if response:
             self.messages.append({"role": "assistant", "content": response})
