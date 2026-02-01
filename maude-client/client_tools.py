@@ -501,17 +501,22 @@ def run_server_command(command: str) -> str:
 def send_to_server_maude(message: str) -> str:
     """Send a message to the server MAUDE instance via tmux."""
     try:
+        # Sanitize message - keep only safe characters
+        safe_msg = ''.join(c for c in message if c.isalnum() or c in ' .,!?-_:@')
+
+        if not safe_msg.strip():
+            return "Error: Message was empty after sanitization"
+
         # Send to MAUDE tmux session on server
-        escaped = message.replace('"', '\\"').replace("'", "\\'")
         result = subprocess.run(
-            ["ssh", SERVER_SSH_HOST, f"tmux send-keys -t maude -l '{escaped}' && tmux send-keys -t maude Enter"],
+            ["ssh", SERVER_SSH_HOST, f'tmux send-keys -t maude "{safe_msg}" Enter'],
             capture_output=True,
             text=True,
             timeout=10
         )
 
         if result.returncode == 0:
-            return f"Message sent to server MAUDE: {message[:100]}..."
+            return f"Message sent to server MAUDE: {safe_msg[:100]}..."
         else:
             return f"Error sending to server MAUDE: {result.stderr}"
     except Exception as e:
