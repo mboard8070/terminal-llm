@@ -24,3 +24,8 @@ python-telegram-bot>=20.0
 
 # Scheduler (optional)
 croniter>=2.0
+
+# Google integration (optional - for Gmail and Drive)
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.1.0
