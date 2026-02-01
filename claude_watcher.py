@@ -121,8 +121,34 @@ def detect_permission_prompt(content: str) -> str | None:
 
 
 def format_for_maude(prompt: str) -> str:
-    """Format the permission prompt for MAUDE to display."""
-    return f"[CLAUDE NEEDS APPROVAL]\n{prompt}\n\nReply 'approve' or 'deny'"
+    """Format the permission prompt for MAUDE to display (truncated to save context)."""
+    # Extract just the key info - tool type and brief description
+    lines = prompt.strip().split("\n")
+
+    # Find the tool/action line (usually contains the action description)
+    summary = ""
+    for line in lines:
+        line = line.strip()
+        # Skip empty lines and menu options
+        if not line or line.startswith("❯") or line.startswith("1.") or line.startswith("2.") or line.startswith("3."):
+            continue
+        # Look for tool indicators
+        if any(x in line.lower() for x in ["bash", "edit", "write", "read", "web search", "wants to", "command"]):
+            summary = line[:100]  # Truncate long lines
+            break
+
+    if not summary:
+        # Fallback - just take first meaningful line, truncated
+        for line in lines:
+            line = line.strip()
+            if line and len(line) > 10:
+                summary = line[:100]
+                break
+
+    if not summary:
+        summary = "Claude needs permission"
+
+    return f"[APPROVE?] {summary}"
 
 
 def watch_for_maude_response(timeout: int = 300) -> str | None:
@@ -146,7 +172,7 @@ def watch_for_maude_response(timeout: int = 300) -> str | None:
 
             # Check for approval keywords in recent output
             if "approve" in recent[-500:] or "yes" in recent[-200:] or "allow" in recent[-200:]:
-                return "1"  # Claude expects "1" for Yes
+                return "2"  # "Yes, and don't ask again" - reduces future prompts
             elif "deny" in recent[-500:] or "reject" in recent[-200:] or "cancel" in recent[-200:]:
                 return "Escape"  # Escape to cancel
 
