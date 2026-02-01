@@ -45,18 +45,32 @@ ollama pull llava:7b
 
 ## Quick Start
 
+**Terminal 1** - Start the agent system:
 ```bash
-# 1. Start the inference server
-./start_server.sh
-
-# 2. Launch the agent system (in another terminal)
+ssh -L 3000:localhost:3001 mboard76@spark-e26c
+cd ~/nvidia-workbench/terminal-llm
 ./maude
 ```
 
-That's it! The `./maude` command automatically starts:
-- **MAUDE** in tmux session `maude` (your main interface)
-- **Claude Code** in tmux session `claude` (for complex tasks)
-- **Permission Watcher** in tmux session `watcher` (bridges permissions)
+The `./maude` command automatically starts 4 tmux sessions:
+- `nemo` - Nemotron inference server
+- `maude` - Your main interface (attaches here)
+- `claude` - Claude Code for complex tasks
+- `watcher` - Permission bridge
+
+**Terminal 2** - Watch Claude work (optional):
+```bash
+ssh -L 3000:localhost:3001 mboard76@spark-e26c
+cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude
+```
+
+**Terminal 3** - Watch permission flow (optional):
+```bash
+ssh -L 3000:localhost:3001 mboard76@spark-e26c
+cd ~/nvidia-workbench/terminal-llm && tmux attach -t watcher
+```
+
+Each session is independent - open as many terminals as you want.
 
 ## Architecture
 
@@ -101,15 +115,22 @@ That's it! The `./maude` command automatically starts:
 
 ## Session Management
 
-After starting with `./maude`, you'll be attached to the MAUDE session. Use these tmux commands:
+After starting with `./maude`, you'll be attached to the MAUDE session.
 
+**From the same terminal:**
 | Command | Action |
 |---------|--------|
-| `Ctrl+B` then `D` | Detach from current session |
-| `Ctrl+B` then `s` | Switch between sessions |
-| `tmux attach -t maude` | Attach to MAUDE |
-| `tmux attach -t claude` | Watch Claude work |
-| `tmux attach -t watcher` | View permission bridge logs |
+| `Ctrl+B d` | Detach from current session |
+| `tmux attach -t maude` | Reattach to MAUDE |
+| `tmux attach -t claude` | Attach to Claude |
+| `tmux attach -t watcher` | Attach to Watcher |
+| `tmux attach -t nemo` | Attach to Nemotron server |
+
+**From a new SSH session (view multiple at once):**
+```bash
+ssh -L 3000:localhost:3001 mboard76@spark-e26c
+cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude
+```
 
 ## Monitoring & Control
 

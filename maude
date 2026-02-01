@@ -1,6 +1,6 @@
 #!/bin/bash
 # MAUDE - Multi-Agent Unified Dispatch Engine
-# Starts the full agent system: MAUDE + Claude Code + Permission Watcher
+# Starts all agents in separate tmux sessions
 
 cd /home/mboard76/nvidia-workbench/terminal-llm
 
@@ -11,47 +11,61 @@ mkdir -p ~/.config/maude
 # Initialize activity log
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SYSTEM] Agent system starting" >> ~/.config/maude/activity.log
 
-# Start Claude Code if not running
+echo "Starting MAUDE Agent System..."
+echo ""
+
+# Start Nemotron server if not running
+if ! tmux has-session -t nemo 2>/dev/null; then
+    echo "Starting Nemotron server..."
+    tmux new-session -d -s nemo "cd /home/mboard76/nvidia-workbench/terminal-llm && ./start_nemo.sh; exec bash"
+    sleep 3
+else
+    echo "Nemotron server already running"
+fi
+
+# Start Claude if not running
 if ! tmux has-session -t claude 2>/dev/null; then
     echo "Starting Claude Code..."
-    tmux new-session -d -s claude
-    tmux send-keys -t claude "cd /home/mboard76/nvidia-workbench/terminal-llm && claude" Enter
-    sleep 2
+    tmux new-session -d -s claude "cd /home/mboard76/nvidia-workbench/terminal-llm && claude; exec bash"
+else
+    echo "Claude already running"
 fi
 
-# Start Permission Watcher if not running
+# Start Watcher if not running
 if ! tmux has-session -t watcher 2>/dev/null; then
-    echo "Starting permission watcher..."
-    tmux new-session -d -s watcher
-    tmux send-keys -t watcher "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 claude_watcher.py" Enter
-    sleep 1
+    echo "Starting Watcher..."
+    tmux new-session -d -s watcher "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 claude_watcher.py; exec bash"
+else
+    echo "Watcher already running"
 fi
 
-# Start MAUDE in tmux if not running, then attach
+# Start MAUDE if not running
 if ! tmux has-session -t maude 2>/dev/null; then
     echo "Starting MAUDE..."
-    tmux new-session -d -s maude
-    tmux send-keys -t maude "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 chat_local.py" Enter
-    sleep 1
+    tmux new-session -d -s maude "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 chat_local.py; exec bash"
+else
+    echo "MAUDE already running"
 fi
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║  MAUDE Agent System                                           ║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Sessions:                                                    ║"
-echo "║    maude   - Your main interface                              ║"
-echo "║    claude  - Claude Code (for complex tasks)                  ║"
-echo "║    watcher - Permission bridge                                ║"
+echo "║  Sessions (each in separate tmux):                            ║"
+echo "║    tmux attach -t nemo     - Nemotron server                  ║"
+echo "║    tmux attach -t maude    - Your main interface              ║"
+echo "║    tmux attach -t claude   - Claude Code                      ║"
+echo "║    tmux attach -t watcher  - Permission bridge                ║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Commands:                                                    ║"
-echo "║    Ctrl+B then D     - Detach from session                    ║"
-echo "║    Ctrl+B then s     - Switch sessions                        ║"
-echo "║    tmux attach -t X  - Attach to session X                    ║"
+echo "║  New SSH session (copy/paste):                                ║"
+echo "║    ssh -L 3000:localhost:3001 mboard76@spark-e26c             ║"
+echo "║    cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Logs:  tail -f ~/.config/maude/activity.log                  ║"
-echo "║  Stop:  touch ~/.config/maude/stop                            ║"
+echo "║  Detach: Ctrl+B d    Logs: tail -f ~/.config/maude/activity.log"
+echo "║  Stop all: touch ~/.config/maude/stop                         ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Attaching to MAUDE..."
 echo ""
 
 # Attach to MAUDE session
