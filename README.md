@@ -1,24 +1,28 @@
 # MAUDE
 
-**Multi-Agent Unified Dispatch Engine** — A local AI coding assistant with optional frontier model escalation.
+**Multi-Agent Unified Dispatch Engine** — A local AI coding assistant that collaborates with Claude Code.
 
-MAUDE runs on-device using llama.cpp or Ollama, providing file operations, shell access, web browsing, and vision capabilities. Use any local model (Nemotron, Codestral, Llama, Mistral, etc.) with optional escalation to frontier cloud models when needed.
+MAUDE runs on-device using llama.cpp or Ollama, providing file operations, shell access, web browsing, and vision capabilities. When complex tasks arise, MAUDE delegates to Claude Code running in a companion tmux session, with MAUDE acting as the permission gatekeeper.
 
 ## Features
 
+- **Multi-Agent Architecture**: MAUDE + Claude Code working together
 - **Textual TUI** with animated banner and async processing
 - **32K context window** for long conversations
 - **File operations**: read, write, edit, search (single file or entire directory)
 - **Shell access**: run commands, manage git, pip, etc.
 - **Web tools**: browse pages, search DuckDuckGo, visual page analysis
 - **Vision**: analyze local images and webpage screenshots via LLaVA
-- **Frontier escalation** (optional): delegate complex tasks to Claude, GPT, Gemini, or Grok
+- **Claude Code delegation**: complex tasks automatically routed to Claude
+- **Permission proxy**: MAUDE approves/denies Claude's permission requests
 
 ## Requirements
 
 - Python 3.8+
 - NVIDIA GPU with CUDA support
 - Ollama (for LLaVA vision model)
+- Claude Code CLI (`claude`)
+- tmux
 
 ## Installation
 
@@ -34,23 +38,92 @@ playwright install chromium
 
 # Install LLaVA for vision (via Ollama)
 ollama pull llava:7b
+
+# Install Claude Code (if not already installed)
+# See: https://docs.anthropic.com/en/docs/claude-code
 ```
 
-## Usage
+## Quick Start
 
 ```bash
-# Terminal 1: Start the inference server
+# 1. Start the inference server
 ./start_server.sh
 
-# Terminal 2: Launch MAUDE
+# 2. Launch the agent system (in another terminal)
 ./maude
 ```
 
-Or use environment variables for remote servers:
+That's it! The `./maude` command automatically starts:
+- **MAUDE** in tmux session `maude` (your main interface)
+- **Claude Code** in tmux session `claude` (for complex tasks)
+- **Permission Watcher** in tmux session `watcher` (bridges permissions)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         YOU                                     │
+│                          │                                      │
+│                          ▼                                      │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                      MAUDE                               │   │
+│  │            (Local AI - Nemotron/Codestral)               │   │
+│  │                                                          │   │
+│  │  • Handles simple tasks directly                         │   │
+│  │  • Delegates complex tasks to Claude                     │   │
+│  │  • Approves/denies Claude's permission requests          │   │
+│  └──────────────────────┬──────────────────────────────────┘   │
+│                         │                                       │
+│            send_to_claude()                                     │
+│                         │                                       │
+│                         ▼                                       │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                   CLAUDE CODE                            │   │
+│  │              (Frontier AI - Claude)                      │   │
+│  │                                                          │   │
+│  │  • Complex reasoning & multi-file refactoring            │   │
+│  │  • Git operations, PR creation                           │   │
+│  │  • Deep code analysis                                    │   │
+│  └──────────────────────┬──────────────────────────────────┘   │
+│                         │                                       │
+│              Permission needed?                                 │
+│                         │                                       │
+│                         ▼                                       │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                PERMISSION WATCHER                        │   │
+│  │                                                          │   │
+│  │  • Detects Claude's permission prompts                   │   │
+│  │  • Forwards to MAUDE for approval                        │   │
+│  │  • Sends response back to Claude                         │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Session Management
+
+After starting with `./maude`, you'll be attached to the MAUDE session. Use these tmux commands:
+
+| Command | Action |
+|---------|--------|
+| `Ctrl+B` then `D` | Detach from current session |
+| `Ctrl+B` then `s` | Switch between sessions |
+| `tmux attach -t maude` | Attach to MAUDE |
+| `tmux attach -t claude` | Watch Claude work |
+| `tmux attach -t watcher` | View permission bridge logs |
+
+## Monitoring & Control
+
 ```bash
-export LLM_SERVER_URL="http://remote-host:30000/v1"
-export VISION_SERVER_URL="http://remote-host:11434/v1"
-./maude
+# Watch activity log
+tail -f ~/.config/maude/activity.log
+
+# Emergency stop (halts the watcher)
+touch ~/.config/maude/stop
+
+# Kill all sessions
+tmux kill-session -t maude
+tmux kill-session -t claude
+tmux kill-session -t watcher
 ```
 
 ## Tools
@@ -69,34 +142,28 @@ export VISION_SERVER_URL="http://remote-host:11434/v1"
 | `web_search` | Search via DuckDuckGo |
 | `web_view` | Screenshot + visual analysis of webpages |
 | `view_image` | Analyze local images |
-| `ask_frontier` | Escalate to cloud AI (optional, requires API keys) |
 | `schedule_task` | Create and manage scheduled automated tasks |
-| `send_to_claude` | Delegate tasks to Claude Code running in tmux |
+| `send_to_claude` | Delegate tasks to Claude Code |
 
-## Frontier Model Escalation (Optional)
+## Claude Code Delegation
 
-MAUDE works fully offline with just the local Nemotron model. Optionally, configure API keys in `.env` to enable escalation to frontier models for complex tasks:
+MAUDE automatically delegates to Claude when you say things like:
+- "ask Claude to review this code"
+- "have Claude handle the git rebase"
+- "let Claude refactor the authentication module"
+- "delegate to Claude for the architecture decision"
 
-```bash
-# Priority order: Claude > GPT > Gemini > Grok > Mistral
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GOOGLE_API_KEY=...
-XAI_API_KEY=...
-MISTRAL_API_KEY=...
-```
+MAUDE also delegates automatically for:
+- Complex multi-file refactoring
+- Git operations beyond simple commits
+- Deep code analysis across large codebases
+- Tasks where MAUDE is uncertain
 
-MAUDE escalates when:
-- Complex multi-step reasoning is needed
-- Architecture or design decisions required
-- Deep domain expertise (security, algorithms, etc.)
-- Uncertainty about the correct approach
-
-Cost is displayed after each frontier call.
+When Claude needs permission (to run commands, edit files, etc.), the watcher forwards the request to MAUDE. MAUDE decides whether to approve, and the response is sent back to Claude automatically.
 
 ## Scheduled Tasks
 
-MAUDE can schedule automated tasks using natural language. Just tell MAUDE when and what to do:
+MAUDE can schedule automated tasks using natural language:
 
 ```
 "Remind me every morning at 8am to check the weather"
@@ -111,51 +178,17 @@ MAUDE converts these to cron expressions automatically. Manage tasks with:
 
 Supported shortcuts: `@hourly`, `@daily`, `@morning`, `@evening`, `@weekly`, `@workdays`
 
-Tasks are stored in `~/.config/maude/schedules.json` and viewable in the Command Center.
-
-## Claude Code Integration
-
-MAUDE can delegate complex tasks to Claude Code running in a tmux session. This enables two-way communication where MAUDE sends tasks and receives Claude's responses.
-
-### Setup
-
-```bash
-# Terminal 1: Start Claude Code in tmux (then detach with Ctrl+B, D)
-./start_claude.sh
-
-# Terminal 2: Run MAUDE
-./maude
-```
-
-### Usage
-
-MAUDE automatically delegates to Claude when you say things like:
-- "ask Claude to review this code"
-- "have Claude handle the git rebase"
-- "let Claude refactor the authentication module"
-- "delegate to Claude for the architecture decision"
-
-MAUDE also delegates automatically for:
-- Complex multi-file refactoring
-- Git operations beyond simple commits
-- Deep code analysis across large codebases
-- Tasks where MAUDE is uncertain
-
-The response from Claude is captured and returned to MAUDE, completing the loop.
-
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `LLM_SERVER_URL` | `http://localhost:30000/v1` | LLM server endpoint |
-| `MAUDE_MODEL` | `nemotron` | Model name (nemotron, codestral, llama3, etc.) |
+| `MAUDE_MODEL` | `nemotron` | Model name |
 | `MAUDE_NUM_CTX` | `32768` | Context window size |
 | `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for vision |
 | `MAUDE_VISION_MODEL` | `llava:7b` | Vision model name |
 
 ### Using a Different Model
-
-Nemotron-3-Nano-30B is recommended for coding tasks, but you can use any model:
 
 ```bash
 # Use Codestral
@@ -172,16 +205,16 @@ export MAUDE_MODEL="llama3:70b"
 
 ```
 terminal-llm/
-├── maude             # Launcher script
-├── maude_core.py     # Core tools and functionality
-├── chat_local.py     # MAUDE TUI application
-├── frontier.py       # Frontier model client
-├── providers.py      # Provider configurations
-├── start_server.sh   # llama.cpp server launcher
-├── start_claude.sh   # Claude Code tmux launcher
-├── setup_local.sh    # Automated setup
-├── llama.cpp/        # Inference engine
-└── models/           # Downloaded models
+├── maude               # Main launcher (starts all agents)
+├── maude_core.py       # Core tools and functionality
+├── chat_local.py       # MAUDE TUI application
+├── claude_watcher.py   # Permission bridge between Claude and MAUDE
+├── start_server.sh     # llama.cpp server launcher
+├── start_claude.sh     # Claude Code standalone launcher
+├── start_maude.sh      # MAUDE standalone launcher
+├── start_agents.sh     # Alternative full system launcher
+├── llama.cpp/          # Inference engine
+└── models/             # Downloaded models
 ```
 
 ## License
