@@ -16,6 +16,7 @@ MAUDE runs on-device using llama.cpp, providing file operations, shell access, w
 - **Claude Code delegation**: complex tasks automatically routed to Claude
 - **Permission proxy**: MAUDE approves/denies Claude's permission requests
 - **Scheduled tasks**: automate recurring tasks with natural language
+- **Google integration**: Gmail and Google Drive access
 
 ## Models
 
@@ -162,6 +163,17 @@ Each session is independent - open as many terminals as you want.
 | `send_to_claude` | Delegate tasks to Claude Code |
 | `schedule_task` | Create and manage scheduled automated tasks |
 
+### Google Integration
+| Tool | Description |
+|------|-------------|
+| `gmail_list` | List emails with optional search query |
+| `gmail_read` | Read a specific email by ID |
+| `gmail_send` | Send emails |
+| `drive_list` | List Google Drive files |
+| `drive_search` | Search Drive by name or content |
+| `drive_read` | Read text files from Drive |
+| `drive_upload` | Upload local files to Drive |
+
 ## Vision Capabilities
 
 MAUDE can analyze images and webpages using LLaVA (Large Language and Vision Assistant):
@@ -276,6 +288,39 @@ export MAUDE_MODEL="gemma2:9b"
 ./maude
 ```
 
+## Google Integration Setup
+
+MAUDE can access your Gmail and Google Drive. One-time setup required:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a project and enable **Gmail API** and **Google Drive API**
+3. Configure OAuth consent screen (add yourself as test user)
+4. Create OAuth 2.0 credentials (Desktop app type)
+5. Download the credentials JSON file
+
+**If authenticating from a remote/headless server:**
+
+```bash
+# On your local Mac/PC - copy credentials and run auth helper
+scp ~/Downloads/client_secret_*.json mboard76@spark-e26c:.config/maude/credentials.json
+scp mboard76@spark-e26c:nvidia-workbench/terminal-llm/mac_google_auth.py /tmp/
+python3 /tmp/mac_google_auth.py
+
+# Copy token back to server
+scp /tmp/google_token.json mboard76@spark-e26c:.config/maude/google_token.json
+```
+
+**Test the connection:**
+```bash
+python3 google_tools.py --test
+```
+
+Then ask MAUDE things like:
+- "Check my recent emails"
+- "Search my email for messages about the project"
+- "List my Google Drive files"
+- "Upload report.pdf to my Drive"
+
 ## Project Structure
 
 ```
@@ -284,6 +329,8 @@ terminal-llm/
 ├── maude_core.py       # Core tools and functionality
 ├── chat_local.py       # MAUDE TUI application
 ├── claude_watcher.py   # Permission bridge between Claude and MAUDE
+├── google_tools.py     # Gmail and Google Drive integration
+├── mac_google_auth.py  # Helper for OAuth on local Mac/PC
 ├── start_nemo.sh       # Nemotron server launcher
 ├── start_codestral.sh  # Codestral server launcher
 ├── start_claude.sh     # Claude Code standalone launcher

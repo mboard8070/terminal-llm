@@ -396,8 +396,27 @@ if __name__ == "__main__":
             print(f"5. Save it to {CREDENTIALS_FILE}")
             sys.exit(1)
 
-        print("Opening browser for authentication...")
-        creds = get_credentials()
+        print("Starting authentication flow...")
+        print("(If no browser opens, copy the URL and open it manually)\n")
+
+        # Manual auth flow for headless servers
+        flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+
+        # Try local server first, fall back to console/manual
+        try:
+            creds = flow.run_local_server(port=0)
+        except Exception:
+            # Headless server - use manual flow
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            print(f"Open this URL in your browser:\n\n{auth_url}\n")
+            code = input("Enter the authorization code: ").strip()
+            flow.fetch_token(code=code)
+            creds = flow.credentials
+
+        # Save token
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(TOKEN_FILE, 'w') as f:
+            f.write(creds.to_json())
 
         if creds:
             print(f"\nAuthentication successful!")
