@@ -19,29 +19,19 @@ ACTIVITY_LOG = Path.home() / ".config" / "maude" / "activity.log"
 KILL_SWITCH = Path.home() / ".config" / "maude" / "stop"
 
 # Patterns that indicate Claude is waiting for permission
+# Must be specific to actual Claude Code permission dialogs, not conversational questions
 PERMISSION_PATTERNS = [
     r"Do you want to proceed\?",
-    r"Allow .*\?",
-    r"Do you want to .*\?",
     r"Press Enter to allow",
-    r"yes.*no.*always",
-    r"\[y/n\]",
-    r"\(y\)es.*\(n\)o",
-    r"Allow this",
-    r"Approve\?",
-    r"1\. Yes",
-    r"❯.*Yes",
 ]
 
-# Pattern to detect the permission prompt line (usually at bottom)
-PROMPT_INDICATORS = [
-    "Do you want to proceed",
-    "Allow",
-    "approve",
-    "y/n",
-    "yes/no",
-    "(y)",
+# These MUST also be present for it to be a real permission dialog
+PERMISSION_REQUIRED_INDICATORS = [
     "1. Yes",
+    "2. Yes, and don't ask again",
+    "3. No",
+    "Esc to cancel",
+    "Tab to amend",
 ]
 
 
@@ -98,13 +88,22 @@ def detect_permission_prompt(content: str) -> str | None:
     """
     Detect if Claude is showing a permission prompt.
     Returns the prompt text if found, None otherwise.
+
+    Must match BOTH a permission pattern AND have the dialog indicators
+    (like "1. Yes" options) to avoid false positives on conversational questions.
     """
     lines = content.strip().split("\n")
 
-    # Look at the last 20 lines for permission patterns
-    recent_lines = lines[-20:] if len(lines) > 20 else lines
+    # Look at the last 25 lines for permission patterns
+    recent_lines = lines[-25:] if len(lines) > 25 else lines
     recent_text = "\n".join(recent_lines)
 
+    # First check if this looks like a permission dialog (has the menu options)
+    has_dialog_indicators = any(ind in recent_text for ind in PERMISSION_REQUIRED_INDICATORS)
+    if not has_dialog_indicators:
+        return None
+
+    # Now check for the actual permission question
     for pattern in PERMISSION_PATTERNS:
         match = re.search(pattern, recent_text, re.IGNORECASE)
         if match:

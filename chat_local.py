@@ -141,6 +141,7 @@ def chat(client, messages: list):
     max_tool_iterations = 15
     tool_iteration = 0
     recent_tool_calls = []
+    consecutive_duplicates = 0
     reset_rate_limits()  # Reset per-turn limits in maude_core
 
     while True:
@@ -211,9 +212,15 @@ def chat(client, messages: list):
                     # Check for duplicate tool calls (same tool + same args)
                     call_signature = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_signature in recent_tool_calls:
+                        consecutive_duplicates += 1
                         console.print(f"[dim yellow]  [{func_name}] (skipped duplicate)[/dim yellow]")
-                        result = "(Already called with same arguments - see previous result)"
+                        result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user.)"
+                        # Break out if too many duplicates in a row
+                        if consecutive_duplicates >= 3:
+                            console.print("[dim yellow](breaking loop - too many duplicate calls)[/dim yellow]")
+                            return "I attempted to complete this task but got stuck in a loop. Please try rephrasing your request or ask me something else."
                     else:
+                        consecutive_duplicates = 0  # Reset on successful new call
                         recent_tool_calls.append(call_signature)
                         console.print(f"[dim yellow]  [{func_name}][/dim yellow]")
                         result = execute_tool(func_name, func_args)

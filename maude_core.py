@@ -1064,9 +1064,29 @@ def tool_send_to_claude(message: str, session: str = "claude") -> str:
 
     response = "\n".join(response_lines).strip()
 
+    # Truncate long responses to avoid filling MAUDE's context
+    MAX_RESPONSE = 2000
+    if len(response) > MAX_RESPONSE:
+        response = response[:MAX_RESPONSE] + "\n\n[Response truncated - see Claude's tmux session for full output]"
+
+    # Detect if Claude is asking a follow-up question
+    follow_up_indicators = [
+        "would you like",
+        "do you want",
+        "should i",
+        "shall i",
+        "let me know",
+        "what would you",
+        "which option",
+        "prefer",
+    ]
+    is_follow_up = any(ind in response.lower() for ind in follow_up_indicators)
+
     if response:
         log(f"Got response from Claude ({len(response)} chars)")
-        return f"Claude's response:\n\n{response}"
+        if is_follow_up:
+            return f"Claude's response:\n\n{response}\n\n[Claude is asking a follow-up question - relay this to the user and wait for their answer before proceeding]"
+        return f"Claude completed the task:\n\n{response}"
     else:
         return "Claude received the message but no response was captured. Check tmux session."
 
@@ -1078,10 +1098,13 @@ def tool_send_to_claude(message: str, session: str = "claude") -> str:
 # Rate limiting counters (reset per turn by caller)
 vision_call_count = 0
 web_call_count = 0
+claude_call_count = 0
 
 
 def reset_rate_limits():
     """Reset per-turn rate limits. Call at start of each user turn."""
+    global claude_call_count
+    claude_call_count = 0
     global vision_call_count, web_call_count
     vision_call_count = 0
     web_call_count = 0
@@ -1089,7 +1112,13 @@ def reset_rate_limits():
 
 def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool and return the result."""
-    global vision_call_count, web_call_count
+    global vision_call_count, web_call_count, claude_call_count
+
+    # Rate limiting for Claude calls - prevent loops
+    if name == "send_to_claude":
+        claude_call_count += 1
+        if claude_call_count > 2:
+            return "STOP: Already contacted Claude twice this turn. Report the results to the user and wait for their next message."
 
     # Rate limiting
     if name in ("web_view", "view_image"):
