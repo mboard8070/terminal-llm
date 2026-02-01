@@ -35,7 +35,7 @@ MODELS = {
 }
 
 # Default model
-DEFAULT_MODEL = "llama-3.3"
+DEFAULT_MODEL = "nemotron-nano"
 
 
 def create_client():
@@ -90,10 +90,10 @@ def chat(client, messages: list, model: str = DEFAULT_MODEL, stream: bool = True
 def main():
     """Main chat loop."""
     console.print(Panel.fit(
-        "[bold cyan]NVIDIA Terminal LLM[/bold cyan]\n"
-        "[dim]Default: Llama-3.3-70B-Instruct[/dim]\n"
+        "[bold magenta]NVIDIA Terminal LLM[/bold magenta]\n"
+        "[dim]Default: Nemotron-Nano-8B (local) / Llama-3.3-70B (remote)[/dim]\n"
         "[dim]Best for: Coding, Reasoning, Complex Tasks[/dim]",
-        border_style="cyan"
+        border_style="magenta"
     ))
     console.print(f"[dim]Commands: /quit, /clear, /model [{' | '.join(MODELS.keys())}][/dim]\n")
 
