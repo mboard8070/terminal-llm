@@ -2,7 +2,7 @@
 
 **Multi-Agent Unified Dispatch Engine** — A local AI coding assistant that collaborates with Claude Code.
 
-MAUDE runs on-device using llama.cpp or Ollama, providing file operations, shell access, web browsing, and vision capabilities. When complex tasks arise, MAUDE delegates to Claude Code running in a companion tmux session, with MAUDE acting as the permission gatekeeper.
+MAUDE runs on-device using llama.cpp, providing file operations, shell access, web browsing, and vision capabilities. When complex tasks arise, MAUDE delegates to Claude Code running in a companion tmux session, with MAUDE acting as the permission gatekeeper.
 
 ## Features
 
@@ -11,15 +11,34 @@ MAUDE runs on-device using llama.cpp or Ollama, providing file operations, shell
 - **32K context window** for long conversations
 - **File operations**: read, write, edit, search (single file or entire directory)
 - **Shell access**: run commands, manage git, pip, etc.
-- **Web tools**: browse pages, search DuckDuckGo, visual page analysis
-- **Vision**: analyze local images and webpage screenshots via LLaVA
+- **Web browsing**: fetch and parse web pages, search DuckDuckGo
+- **Vision**: screenshot webpages and analyze images using LLaVA
 - **Claude Code delegation**: complex tasks automatically routed to Claude
 - **Permission proxy**: MAUDE approves/denies Claude's permission requests
+- **Scheduled tasks**: automate recurring tasks with natural language
+
+## Models
+
+**Primary Model (MAUDE):**
+- **Nemotron-3-Nano-30B** (Q8_K_XL quantization) via llama.cpp
+- 32K context window, runs on GPU with 99 layers offloaded
+
+**Vision Model:**
+- **LLaVA 7B/13B** via Ollama for image and screenshot analysis
+
+**Available Alternative Models:**
+- Codestral 22B - optimized for code
+- CodeLlama 7B - lightweight code model
+- Gemma 3 12B - general purpose
+- Mistral Nemo Instruct - general purpose
+
+**Delegation Target:**
+- **Claude Code** (Anthropic) - frontier AI for complex reasoning
 
 ## Requirements
 
 - Python 3.8+
-- NVIDIA GPU with CUDA support
+- NVIDIA GPU with CUDA support (tested on DGX Spark)
 - Ollama (for LLaVA vision model)
 - Claude Code CLI (`claude`)
 - tmux
@@ -53,7 +72,7 @@ cd ~/nvidia-workbench/terminal-llm
 ```
 
 The `./maude` command automatically starts 4 tmux sessions:
-- `nemo` - Nemotron inference server
+- `nemo` - Nemotron inference server (llama.cpp)
 - `maude` - Your main interface (attaches here)
 - `claude` - Claude Code for complex tasks
 - `watcher` - Permission bridge
@@ -81,9 +100,11 @@ Each session is independent - open as many terminals as you want.
 │                          ▼                                      │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                      MAUDE                               │   │
-│  │            (Local AI - Nemotron/Codestral)               │   │
+│  │              (Nemotron-3-Nano-30B)                       │   │
 │  │                                                          │   │
 │  │  • Handles simple tasks directly                         │   │
+│  │  • Web browsing & search (DuckDuckGo)                    │   │
+│  │  • Vision analysis (LLaVA via Ollama)                    │   │
 │  │  • Delegates complex tasks to Claude                     │   │
 │  │  • Approves/denies Claude's permission requests          │   │
 │  └──────────────────────┬──────────────────────────────────┘   │
@@ -93,7 +114,7 @@ Each session is independent - open as many terminals as you want.
 │                         ▼                                       │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                   CLAUDE CODE                            │   │
-│  │              (Frontier AI - Claude)                      │   │
+│  │              (Anthropic Claude)                          │   │
 │  │                                                          │   │
 │  │  • Complex reasoning & multi-file refactoring            │   │
 │  │  • Git operations, PR creation                           │   │
@@ -112,6 +133,72 @@ Each session is independent - open as many terminals as you want.
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## Tools
+
+### File Operations
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file with line numbers (supports ranges) |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Replace specific line ranges |
+| `search_file` | Search within a single file |
+| `search_directory` | Search across all files in a directory |
+| `list_directory` | Browse directory contents |
+| `change_directory` | Navigate filesystem |
+| `run_command` | Execute shell commands |
+
+### Web & Vision
+| Tool | Description |
+|------|-------------|
+| `web_browse` | Fetch and parse web pages (text extraction) |
+| `web_search` | Search via DuckDuckGo |
+| `web_view` | Screenshot webpage + LLaVA visual analysis |
+| `view_image` | Analyze local images with LLaVA |
+
+### Delegation & Automation
+| Tool | Description |
+|------|-------------|
+| `send_to_claude` | Delegate tasks to Claude Code |
+| `schedule_task` | Create and manage scheduled automated tasks |
+
+## Vision Capabilities
+
+MAUDE can analyze images and webpages using LLaVA (Large Language and Vision Assistant):
+
+**Screenshot & Analyze Webpages:**
+```
+"What does the Apple homepage look like?"
+"Describe the layout of artstation.com/artwork/k4eYxl"
+```
+
+**Analyze Local Images:**
+```
+"What's in the image at ~/screenshots/diagram.png?"
+"Describe this architecture diagram"
+```
+
+Vision requires Ollama running with LLaVA:
+```bash
+ollama serve  # Start Ollama
+ollama pull llava:7b  # Download model
+```
+
+## Claude Code Delegation
+
+MAUDE automatically delegates to Claude when you say things like:
+- "ask Claude to review this code"
+- "have Claude handle the git rebase"
+- "let Claude refactor the authentication module"
+- "delegate to Claude for the architecture decision"
+
+MAUDE also delegates automatically for:
+- Complex multi-file refactoring
+- Git operations beyond simple commits
+- Deep code analysis across large codebases
+- Tasks where MAUDE is uncertain
+
+When Claude needs permission (to run commands, edit files, etc.), the watcher forwards the request to MAUDE. MAUDE decides whether to approve, and the response is sent back to Claude automatically.
 
 ## Session Management
 
@@ -145,42 +232,8 @@ touch ~/.config/maude/stop
 tmux kill-session -t maude
 tmux kill-session -t claude
 tmux kill-session -t watcher
+tmux kill-session -t nemo
 ```
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file with line numbers (supports ranges) |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Replace specific line ranges |
-| `search_file` | Search within a single file |
-| `search_directory` | Search across all files in a directory |
-| `list_directory` | Browse directory contents |
-| `change_directory` | Navigate filesystem |
-| `run_command` | Execute shell commands |
-| `web_browse` | Fetch and parse web pages |
-| `web_search` | Search via DuckDuckGo |
-| `web_view` | Screenshot + visual analysis of webpages |
-| `view_image` | Analyze local images |
-| `schedule_task` | Create and manage scheduled automated tasks |
-| `send_to_claude` | Delegate tasks to Claude Code |
-
-## Claude Code Delegation
-
-MAUDE automatically delegates to Claude when you say things like:
-- "ask Claude to review this code"
-- "have Claude handle the git rebase"
-- "let Claude refactor the authentication module"
-- "delegate to Claude for the architecture decision"
-
-MAUDE also delegates automatically for:
-- Complex multi-file refactoring
-- Git operations beyond simple commits
-- Deep code analysis across large codebases
-- Tasks where MAUDE is uncertain
-
-When Claude needs permission (to run commands, edit files, etc.), the watcher forwards the request to MAUDE. MAUDE decides whether to approve, and the response is sent back to Claude automatically.
 
 ## Scheduled Tasks
 
@@ -203,22 +256,23 @@ Supported shortcuts: `@hourly`, `@daily`, `@morning`, `@evening`, `@weekly`, `@w
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `LLM_SERVER_URL` | `http://localhost:30000/v1` | LLM server endpoint |
-| `MAUDE_MODEL` | `nemotron` | Model name |
+| `LLM_SERVER_URL` | `http://localhost:30000/v1` | llama.cpp server endpoint |
+| `MAUDE_MODEL` | `nemotron` | Model name for requests |
 | `MAUDE_NUM_CTX` | `32768` | Context window size |
-| `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for vision |
+| `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for LLaVA |
 | `MAUDE_VISION_MODEL` | `llava:7b` | Vision model name |
 
 ### Using a Different Model
 
 ```bash
-# Use Codestral
+# Use Codestral (better for code)
+./start_codestral.sh  # Instead of start_nemo.sh
 export MAUDE_MODEL="codestral"
 ./maude
 
-# Use Llama 3 via Ollama
+# Use a model via Ollama
 export LLM_SERVER_URL="http://localhost:11434/v1"
-export MAUDE_MODEL="llama3:70b"
+export MAUDE_MODEL="gemma2:9b"
 ./maude
 ```
 
@@ -230,12 +284,16 @@ terminal-llm/
 ├── maude_core.py       # Core tools and functionality
 ├── chat_local.py       # MAUDE TUI application
 ├── claude_watcher.py   # Permission bridge between Claude and MAUDE
-├── start_server.sh     # llama.cpp server launcher
+├── start_nemo.sh       # Nemotron server launcher
+├── start_codestral.sh  # Codestral server launcher
 ├── start_claude.sh     # Claude Code standalone launcher
 ├── start_maude.sh      # MAUDE standalone launcher
-├── start_agents.sh     # Alternative full system launcher
 ├── llama.cpp/          # Inference engine
-└── models/             # Downloaded models
+└── models/             # Downloaded GGUF models
+    ├── Nemotron-3-Nano-30B-A3B-UD-Q8_K_XL.gguf
+    ├── codestral-22b-v0.1-Q6_K.gguf
+    ├── codellama-7b-instruct.Q6_K.gguf
+    └── ...
 ```
 
 ## License
