@@ -317,14 +317,16 @@ TOOLS:
 - run_command: Shell commands (git, pip, python, etc.)
 - web_browse, web_search: Web access
 - web_view, view_image: Visual analysis (LLaVA)
-- ask_frontier(question, context, provider): Escalate to cloud AI (optional, if configured)
+- send_to_claude(message): Send a task to Claude Code running in tmux
 
-ESCALATION TO FRONTIER (optional):
-If frontier APIs are configured, use ask_frontier when:
-- Complex multi-step reasoning or architecture decisions needed
-- You're uncertain about the correct approach
-- Deep domain expertise required (security, performance, algorithms)
-If no frontier APIs are available, do your best with local capabilities.
+DELEGATION TO CLAUDE:
+Claude Code is your partner for complex tasks. Use send_to_claude when:
+- User says "ask Claude", "have Claude do", "let Claude handle", "delegate to Claude"
+- Complex multi-file refactoring or architecture changes needed
+- Git operations beyond simple commits (rebasing, complex merges, PR creation)
+- Tasks requiring deep code analysis across a large codebase
+- You're uncertain and want a second opinion
+When delegating, send a clear task description. Claude will work on it in the tmux session.
 
 FILE EDITING WORKFLOW:
 1. search_directory to find which file contains the code

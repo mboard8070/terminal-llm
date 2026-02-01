@@ -377,6 +377,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "send_to_claude",
+            "description": "Send a message to Claude Code running in tmux. Use this to delegate complex coding tasks, get expert analysis, or have Claude work on files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "The message/task to send to Claude Code"},
+                    "session": {"type": "string", "description": "tmux session name (default: 'claude')"}
+                },
+                "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "schedule_task",
             "description": """Schedule automated tasks. Convert natural language schedules to cron expressions:
 - "every morning" or "daily at 8am" → 0 8 * * *
@@ -938,6 +953,124 @@ def tool_schedule_task(action: str, name: str = None, cron: str = None, prompt: 
         return f"Error with scheduler: {e}"
 
 
+def tool_send_to_claude(message: str, session: str = "claude") -> str:
+    """Send a message to Claude Code running in tmux and capture the response."""
+    import shutil
+    import time
+
+    # Check if tmux is available
+    if not shutil.which("tmux"):
+        return "Error: tmux is not installed"
+
+    # Check if the session exists
+    result = subprocess.run(
+        ["tmux", "has-session", "-t", session],
+        capture_output=True
+    )
+    if result.returncode != 0:
+        return f"Error: tmux session '{session}' not found. Start Claude with: ./start_claude.sh"
+
+    # Capture pane content before sending (to know what's new)
+    before = subprocess.run(
+        ["tmux", "capture-pane", "-t", session, "-p"],
+        capture_output=True,
+        text=True
+    ).stdout
+
+    # Send the message using -l (literal) flag to avoid interpretation issues
+    log(f"Sending to Claude: {message[:50]}...")
+
+    # First send the message text literally
+    result = subprocess.run(
+        ["tmux", "send-keys", "-t", session, "-l", message],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        return f"Error sending to Claude: {result.stderr}"
+
+    # Small delay then send Enter key separately
+    time.sleep(0.1)
+    result = subprocess.run(
+        ["tmux", "send-keys", "-t", session, "Enter"],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        return f"Error sending Enter: {result.stderr}"
+
+    # Wait for Claude to respond - poll until we see the prompt again
+    log("Waiting for Claude's response...")
+    max_wait = 120  # seconds
+    poll_interval = 1
+    waited = 0
+    last_content = ""
+
+    while waited < max_wait:
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+        # Capture current pane content
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
+            capture_output=True,
+            text=True
+        )
+        current = result.stdout
+
+        # Check if Claude is done (prompt visible and content stopped changing)
+        if "❯" in current.split("\n")[-5:] or ">" in current.split("\n")[-3:]:
+            # Prompt appeared, check if content stabilized
+            if current == last_content:
+                break
+        last_content = current
+
+        # Also break if we've been waiting and content hasn't changed
+        if waited > 5 and current == last_content:
+            time.sleep(2)  # One more pause to be sure
+            final_check = subprocess.run(
+                ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
+                capture_output=True,
+                text=True
+            ).stdout
+            if final_check == current:
+                break
+
+    # Extract new content (what appeared after our message)
+    after = subprocess.run(
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
+        capture_output=True,
+        text=True
+    ).stdout
+
+    # Find the response - everything after our message
+    lines = after.strip().split("\n")
+
+    # Look for our message and get everything after until the prompt
+    response_lines = []
+    found_message = False
+    for line in lines:
+        if message[:40] in line:  # Found our message
+            found_message = True
+            continue
+        if found_message:
+            # Stop at the prompt
+            if line.strip().startswith("❯") or line.strip() == ">":
+                break
+            if "bypass permissions" in line:
+                continue
+            response_lines.append(line)
+
+    response = "\n".join(response_lines).strip()
+
+    if response:
+        log(f"Got response from Claude ({len(response)} chars)")
+        return f"Claude's response:\n\n{response}"
+    else:
+        return "Claude received the message but no response was captured. Check tmux session."
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Execution
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1006,5 +1139,7 @@ def execute_tool(name: str, arguments: dict) -> str:
             arguments.get("prompt"),
             arguments.get("task_id")
         )
+    elif name == "send_to_claude":
+        return tool_send_to_claude(arguments.get("message", ""), arguments.get("session", "claude"))
     else:
         return f"Error: Unknown tool: {name}"

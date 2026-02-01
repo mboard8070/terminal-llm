@@ -71,6 +71,7 @@ export VISION_SERVER_URL="http://remote-host:11434/v1"
 | `view_image` | Analyze local images |
 | `ask_frontier` | Escalate to cloud AI (optional, requires API keys) |
 | `schedule_task` | Create and manage scheduled automated tasks |
+| `send_to_claude` | Delegate tasks to Claude Code running in tmux |
 
 ## Frontier Model Escalation (Optional)
 
@@ -112,6 +113,36 @@ Supported shortcuts: `@hourly`, `@daily`, `@morning`, `@evening`, `@weekly`, `@w
 
 Tasks are stored in `~/.config/maude/schedules.json` and viewable in the Command Center.
 
+## Claude Code Integration
+
+MAUDE can delegate complex tasks to Claude Code running in a tmux session. This enables two-way communication where MAUDE sends tasks and receives Claude's responses.
+
+### Setup
+
+```bash
+# Terminal 1: Start Claude Code in tmux (then detach with Ctrl+B, D)
+./start_claude.sh
+
+# Terminal 2: Run MAUDE
+./maude
+```
+
+### Usage
+
+MAUDE automatically delegates to Claude when you say things like:
+- "ask Claude to review this code"
+- "have Claude handle the git rebase"
+- "let Claude refactor the authentication module"
+- "delegate to Claude for the architecture decision"
+
+MAUDE also delegates automatically for:
+- Complex multi-file refactoring
+- Git operations beyond simple commits
+- Deep code analysis across large codebases
+- Tasks where MAUDE is uncertain
+
+The response from Claude is captured and returned to MAUDE, completing the loop.
+
 ## Configuration
 
 | Environment Variable | Default | Description |
@@ -141,11 +172,13 @@ export MAUDE_MODEL="llama3:70b"
 
 ```
 terminal-llm/
+├── maude             # Launcher script
+├── maude_core.py     # Core tools and functionality
 ├── chat_local.py     # MAUDE TUI application
 ├── frontier.py       # Frontier model client
 ├── providers.py      # Provider configurations
-├── maude             # Launcher script
 ├── start_server.sh   # llama.cpp server launcher
+├── start_claude.sh   # Claude Code tmux launcher
 ├── setup_local.sh    # Automated setup
 ├── llama.cpp/        # Inference engine
 └── models/           # Downloaded models
