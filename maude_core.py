@@ -416,6 +416,111 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                 "required": ["action"]
             }
         }
+    },
+    # Google Tools
+    {
+        "type": "function",
+        "function": {
+            "name": "gmail_list",
+            "description": "List recent emails from Gmail. Use query for searching (same syntax as Gmail search).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query (e.g., 'from:someone@example.com', 'subject:invoice', 'is:unread')"},
+                    "max_results": {"type": "integer", "description": "Maximum emails to return (default 10)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "gmail_read",
+            "description": "Read a specific email by its message ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_id": {"type": "string", "description": "The Gmail message ID"}
+                },
+                "required": ["message_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "gmail_send",
+            "description": "Send an email via Gmail.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email body text"},
+                    "cc": {"type": "string", "description": "CC recipients (optional)"}
+                },
+                "required": ["to", "subject", "body"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_list",
+            "description": "List files in Google Drive. Use query for filtering.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Drive query (e.g., \"name contains 'report'\")"},
+                    "max_results": {"type": "integer", "description": "Maximum files to return (default 20)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_search",
+            "description": "Search Google Drive for files by name or content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search term"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_read",
+            "description": "Read the contents of a file from Google Drive (text files, Google Docs, etc.).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string", "description": "The Google Drive file ID"}
+                },
+                "required": ["file_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_upload",
+            "description": "Upload a local file to Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "local_path": {"type": "string", "description": "Path to the local file to upload"},
+                    "folder_id": {"type": "string", "description": "Optional Drive folder ID to upload into"}
+                },
+                "required": ["local_path"]
+            }
+        }
     }
 ]
 
@@ -1170,5 +1275,32 @@ def execute_tool(name: str, arguments: dict) -> str:
         )
     elif name == "send_to_claude":
         return tool_send_to_claude(arguments.get("message", ""), arguments.get("session", "claude"))
+    # Google Tools
+    elif name == "gmail_list":
+        from google_tools import gmail_list_messages
+        return gmail_list_messages(arguments.get("query", ""), arguments.get("max_results", 10))
+    elif name == "gmail_read":
+        from google_tools import gmail_read_message
+        return gmail_read_message(arguments.get("message_id", ""))
+    elif name == "gmail_send":
+        from google_tools import gmail_send_message
+        return gmail_send_message(
+            arguments.get("to", ""),
+            arguments.get("subject", ""),
+            arguments.get("body", ""),
+            arguments.get("cc")
+        )
+    elif name == "drive_list":
+        from google_tools import drive_list_files
+        return drive_list_files(arguments.get("query", ""), arguments.get("max_results", 20))
+    elif name == "drive_search":
+        from google_tools import drive_search
+        return drive_search(arguments.get("query", ""))
+    elif name == "drive_read":
+        from google_tools import drive_read_file
+        return drive_read_file(arguments.get("file_id", ""))
+    elif name == "drive_upload":
+        from google_tools import drive_upload_file
+        return drive_upload_file(arguments.get("local_path", ""), arguments.get("folder_id"))
     else:
         return f"Error: Unknown tool: {name}"
