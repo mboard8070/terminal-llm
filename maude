@@ -65,8 +65,11 @@ echo "║  Detach: Ctrl+B d    Logs: tail -f ~/.config/maude/activity.log"
 echo "║  Stop all: touch ~/.config/maude/stop                         ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
-echo "Attaching to MAUDE..."
-echo ""
-
-# Attach to MAUDE session
-tmux attach -t maude
+# Skip attach if -n flag provided
+if [[ "$1" != "-n" ]]; then
+    echo "Attaching to MAUDE..."
+    echo ""
+    tmux attach -t maude
+else
+    echo "Use 'tmux attach -t maude' to connect"
+fi

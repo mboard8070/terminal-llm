@@ -370,6 +370,195 @@ def drive_upload_file(local_path: str, folder_id: str = None) -> str:
         return f"Error uploading file: {e}"
 
 
+def drive_create_folder(name: str, parent_id: str = None) -> str:
+    """Create a folder in Google Drive."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        if parent_id:
+            file_metadata['parents'] = [parent_id]
+
+        folder = service.files().create(
+            body=file_metadata,
+            fields='id, name, webViewLink'
+        ).execute()
+
+        return f"Folder created successfully!\nName: {folder['name']}\nID: {folder['id']}\nLink: {folder.get('webViewLink', 'N/A')}"
+
+    except Exception as e:
+        return f"Error creating folder: {e}"
+
+
+def drive_create_doc(name: str, folder_id: str = None, content: str = "") -> str:
+    """Create a Google Doc in Google Drive."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.document'
+        }
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+
+        doc = service.files().create(
+            body=file_metadata,
+            fields='id, name, webViewLink'
+        ).execute()
+
+        result = f"Google Doc created successfully!\nName: {doc['name']}\nID: {doc['id']}\nLink: {doc.get('webViewLink', 'N/A')}"
+
+        # If content provided, try to add it using the Docs API
+        if content:
+            try:
+                docs_service = build('docs', 'v1', credentials=creds)
+                docs_service.documents().batchUpdate(
+                    documentId=doc['id'],
+                    body={
+                        'requests': [{
+                            'insertText': {
+                                'location': {'index': 1},
+                                'text': content
+                            }
+                        }]
+                    }
+                ).execute()
+                result += "\nContent added successfully."
+            except Exception as e:
+                result += f"\nNote: Doc created but could not add content (enable Google Docs API for this feature)."
+
+        return result
+
+    except Exception as e:
+        return f"Error creating Google Doc: {e}"
+
+
+def drive_create_sheet(name: str, folder_id: str = None) -> str:
+    """Create a Google Sheet in Google Drive."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+
+        file_metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.spreadsheet'
+        }
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+
+        sheet = service.files().create(
+            body=file_metadata,
+            fields='id, name, webViewLink'
+        ).execute()
+
+        return f"Google Sheet created successfully!\nName: {sheet['name']}\nID: {sheet['id']}\nLink: {sheet.get('webViewLink', 'N/A')}"
+
+    except Exception as e:
+        return f"Error creating Google Sheet: {e}"
+
+
+def drive_update_doc(doc_id: str, content: str, append: bool = False) -> str:
+    """Update content in an existing Google Doc."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        docs_service = build('docs', 'v1', credentials=creds)
+
+        # Get current document to find end index if appending
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+
+        requests = []
+        if append:
+            # Find the end of the document
+            end_index = doc.get('body', {}).get('content', [{}])[-1].get('endIndex', 1) - 1
+            if end_index < 1:
+                end_index = 1
+            requests.append({
+                'insertText': {
+                    'location': {'index': end_index},
+                    'text': content
+                }
+            })
+        else:
+            # Replace all content - first delete existing, then insert new
+            end_index = doc.get('body', {}).get('content', [{}])[-1].get('endIndex', 1) - 1
+            if end_index > 1:
+                requests.append({
+                    'deleteContentRange': {
+                        'range': {
+                            'startIndex': 1,
+                            'endIndex': end_index
+                        }
+                    }
+                })
+            requests.append({
+                'insertText': {
+                    'location': {'index': 1},
+                    'text': content
+                }
+            })
+
+        docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={'requests': requests}
+        ).execute()
+
+        # Get doc info for response
+        drive_service = build('drive', 'v3', credentials=creds)
+        file_meta = drive_service.files().get(fileId=doc_id, fields='name, webViewLink').execute()
+
+        action = "appended to" if append else "updated"
+        return f"Content {action} successfully!\nDocument: {file_meta.get('name')}\nLink: {file_meta.get('webViewLink', 'N/A')}"
+
+    except Exception as e:
+        if "SERVICE_DISABLED" in str(e):
+            return "Error: Google Docs API is not enabled. Enable it at: https://console.developers.google.com/apis/api/docs.googleapis.com"
+        return f"Error updating document: {e}"
+
+
+def drive_delete_file(file_id: str) -> str:
+    """Delete a file or folder from Google Drive."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+
+        # Get file name first for confirmation message
+        file_meta = service.files().get(fileId=file_id, fields='name').execute()
+        name = file_meta.get('name', 'Unknown')
+
+        service.files().delete(fileId=file_id).execute()
+
+        return f"Successfully deleted: {name} (ID: {file_id})"
+
+    except Exception as e:
+        return f"Error deleting file: {e}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CLI for authentication
 # ─────────────────────────────────────────────────────────────────────────────

@@ -521,6 +521,82 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                 "required": ["local_path"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_create_folder",
+            "description": "Create a new folder in Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the new folder"},
+                    "parent_id": {"type": "string", "description": "Optional parent folder ID to create inside"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_create_doc",
+            "description": "Create a new Google Doc in Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the new document"},
+                    "folder_id": {"type": "string", "description": "Optional folder ID to create inside"},
+                    "content": {"type": "string", "description": "Optional initial content for the document"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_create_sheet",
+            "description": "Create a new Google Sheet in Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name for the new spreadsheet"},
+                    "folder_id": {"type": "string", "description": "Optional folder ID to create inside"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_update_doc",
+            "description": "Write or append content to an existing Google Doc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doc_id": {"type": "string", "description": "The Google Doc ID"},
+                    "content": {"type": "string", "description": "The content to write to the document"},
+                    "append": {"type": "boolean", "description": "If true, append to existing content. If false (default), replace all content."}
+                },
+                "required": ["doc_id", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_delete",
+            "description": "Delete a file or folder from Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string", "description": "The Google Drive file or folder ID to delete"}
+                },
+                "required": ["file_id"]
+            }
+        }
     }
 ]
 
@@ -1302,5 +1378,20 @@ def execute_tool(name: str, arguments: dict) -> str:
     elif name == "drive_upload":
         from google_tools import drive_upload_file
         return drive_upload_file(arguments.get("local_path", ""), arguments.get("folder_id"))
+    elif name == "drive_create_folder":
+        from google_tools import drive_create_folder
+        return drive_create_folder(arguments.get("name", ""), arguments.get("parent_id"))
+    elif name == "drive_create_doc":
+        from google_tools import drive_create_doc
+        return drive_create_doc(arguments.get("name", ""), arguments.get("folder_id"), arguments.get("content", ""))
+    elif name == "drive_create_sheet":
+        from google_tools import drive_create_sheet
+        return drive_create_sheet(arguments.get("name", ""), arguments.get("folder_id"))
+    elif name == "drive_update_doc":
+        from google_tools import drive_update_doc
+        return drive_update_doc(arguments.get("doc_id", ""), arguments.get("content", ""), arguments.get("append", False))
+    elif name == "drive_delete":
+        from google_tools import drive_delete_file
+        return drive_delete_file(arguments.get("file_id", ""))
     else:
         return f"Error: Unknown tool: {name}"
