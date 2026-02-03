@@ -35,6 +35,9 @@ from keys import KeyManager
 # Global reference to app for output
 _app = None
 
+# Track last MAUDE response for /copy command
+_last_response = ""
+
 
 class TUIConsole:
     """Console that writes to Textual RichLog when app is running, otherwise stdout."""
@@ -278,8 +281,10 @@ def handle_command(cmd: str) -> str:
     if command == "help":
         return """MAUDE Commands:
 
-/help    - Show this help
-/model   - Show current model configuration
+/help      - Show this help
+/model     - Show current model configuration
+/copy      - Copy last response to file (~/.config/maude/last_response.txt)
+/copymode  - Show how to copy text in tmux
 
 Tools available:
 - search_directory, search_file, read_file, write_file, edit_file
@@ -306,6 +311,25 @@ Vision URL:   {VISION_URL}
 Frontier:     {frontier_info}
 
 Set MAUDE_MODEL env var to use a different local model."""
+    elif command == "copy":
+        global _last_response
+        if not _last_response:
+            return "No response to copy yet."
+        copy_path = Path.home() / ".config" / "maude" / "last_response.txt"
+        copy_path.parent.mkdir(parents=True, exist_ok=True)
+        copy_path.write_text(_last_response)
+        return f"Last response saved to: {copy_path}\n\nTo view: cat {copy_path}"
+    elif command == "copymode":
+        return """To copy text in tmux:
+
+1. Enter copy mode:  Ctrl+B [
+2. Navigate with arrow keys or Page Up/Down
+3. Start selection:  Space
+4. Move to end of selection
+5. Copy:            Enter
+6. Paste:           Ctrl+B ]
+
+Or hold Shift while selecting with mouse to bypass tmux."""
     else:
         return f"Unknown command: /{command}\nType /help for available commands."
 
@@ -524,6 +548,8 @@ class MaudeApp(App):
         self.call_from_thread(self.stop_spinner)
 
         if response:
+            global _last_response
+            _last_response = response
             self.messages.append({"role": "assistant", "content": response})
             # Log for sync (after processing complete)
             append_chat_log("cli", "user", user_input)
