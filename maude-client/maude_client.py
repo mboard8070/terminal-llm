@@ -21,6 +21,7 @@ from config import (
     CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
 )
 from client_tools import TOOLS, execute_tool
+from heartbeat import start_heartbeat, stop_heartbeat
 
 # API endpoint
 API_URL = f"http://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
@@ -354,34 +355,46 @@ def main():
         print("\nThen restart this client.")
         sys.exit(1)
 
+    # Start heartbeat
+    print("Starting heartbeat...", end=" ", flush=True)
+    try:
+        start_heartbeat()
+        print("OK")
+    except Exception as e:
+        print(f"Warning: {e}")
+
     print("\nType 'quit' to exit, 'clear' to reset conversation.\n")
 
-    while True:
-        try:
-            user_input = input("\nYou: ").strip()
+    try:
+        while True:
+            try:
+                user_input = input("\nYou: ").strip()
 
-            if not user_input:
-                continue
+                if not user_input:
+                    continue
 
-            if user_input.lower() == 'quit':
-                print("Goodbye!")
+                if user_input.lower() == 'quit':
+                    print("Goodbye!")
+                    break
+
+                if user_input.lower() == 'clear':
+                    messages.clear()
+                    print("Conversation cleared.")
+                    continue
+
+                print("\nMAUDE: ", end="", flush=True)
+                for chunk in stream_chat(user_input):
+                    print(chunk, end="", flush=True)
+                print()
+
+            except KeyboardInterrupt:
+                print("\n\nGoodbye!")
                 break
-
-            if user_input.lower() == 'clear':
-                messages.clear()
-                print("Conversation cleared.")
-                continue
-
-            print("\nMAUDE: ", end="", flush=True)
-            for chunk in stream_chat(user_input):
-                print(chunk, end="", flush=True)
-            print()
-
-        except KeyboardInterrupt:
-            print("\n\nGoodbye!")
-            break
-        except EOFError:
-            break
+            except EOFError:
+                break
+    finally:
+        # Stop heartbeat on exit
+        stop_heartbeat()
 
 
 if __name__ == "__main__":
