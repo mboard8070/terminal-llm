@@ -760,7 +760,27 @@ class MaudeApp(App):
         # Start spinner
         self.call_from_thread(self.start_spinner)
 
-        response = chat(self.client, self.messages)
+        # Auto-route: check if a subagent should handle this directly
+        response = None
+        try:
+            from auto_router import route_message
+            decision = route_message(user_input, self.messages[-10:])
+            if decision.subagent and decision.confidence >= 0.5:
+                console.print(f"[dim cyan]  routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})[/dim cyan]")
+                from execution import execute_subagent
+                response = execute_subagent(
+                    decision.subagent,
+                    user_input,
+                    prefer_cloud=decision.prefer_cloud
+                )
+        except ImportError:
+            pass
+        except Exception as e:
+            console.print(f"[dim yellow]  routing skipped: {e}[/dim yellow]")
+
+        # Fall back to main tool-calling chat loop
+        if not response:
+            response = chat(self.client, self.messages)
 
         # Stop spinner
         self.call_from_thread(self.stop_spinner)
@@ -901,6 +921,26 @@ def main():
         # Start Telegram bot in background thread
         telegram_thread = threading.Thread(target=run_telegram_in_background, daemon=True)
         telegram_thread.start()
+
+    # Start proactive heartbeat in background
+    try:
+        from heartbeat import get_heartbeat
+        hb = get_heartbeat()
+        if hb.enabled:
+            hb.set_tool_executor(execute_tool)
+
+            def _run_heartbeat():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(hb.start())
+                loop.run_forever()
+
+            heartbeat_thread = threading.Thread(target=_run_heartbeat, daemon=True)
+            heartbeat_thread.start()
+    except ImportError:
+        pass
+    except Exception:
+        pass  # Heartbeat is optional
 
     app = MaudeApp()
     app.run()

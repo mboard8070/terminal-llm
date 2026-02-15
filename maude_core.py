@@ -600,6 +600,21 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
     }
 ]
 
+# Add browser automation tools
+try:
+    from browser import get_browser_tool_definitions
+    TOOLS.extend(get_browser_tool_definitions())
+except ImportError:
+    pass  # Playwright not installed — browser tools unavailable
+
+# Add skill-based tools (social media, etc.)
+try:
+    from skills import get_skill_manager
+    _skill_mgr = get_skill_manager()
+    TOOLS.extend(_skill_mgr.get_tool_definitions())
+except Exception:
+    pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Implementations
@@ -1397,5 +1412,21 @@ def execute_tool(name: str, arguments: dict) -> str:
     elif name == "drive_delete":
         from google_tools import drive_delete_file
         return drive_delete_file(arguments.get("file_id", ""))
+    # Browser automation tools
+    elif name.startswith("browser_"):
+        try:
+            from browser import execute_browser_tool
+            return execute_browser_tool(name, arguments)
+        except ImportError:
+            return "Error: Browser automation requires Playwright. Install with: pip install playwright && playwright install chromium"
+    # Skill-based tools (social media, etc.)
+    elif name.startswith("skill_"):
+        try:
+            from skills import get_skill_manager
+            skill_name = name[6:]  # Strip "skill_" prefix
+            mgr = get_skill_manager()
+            return mgr.execute_skill(skill_name, **arguments)
+        except ImportError:
+            return f"Error: Skills framework not available"
     else:
         return f"Error: Unknown tool: {name}"

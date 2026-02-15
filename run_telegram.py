@@ -99,6 +99,27 @@ async def maude_callback(msg: IncomingMessage) -> str:
     print(f">>> {msg.username}: {msg.text}", flush=True)
 
     try:
+        # Auto-route: check if a subagent should handle this directly
+        try:
+            from auto_router import route_message
+            decision = route_message(msg.text)
+            if decision.subagent and decision.confidence >= 0.5:
+                print(f">>> routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})", flush=True)
+                from execution import execute_subagent
+                reply = execute_subagent(
+                    decision.subagent,
+                    msg.text,
+                    prefer_cloud=decision.prefer_cloud
+                )
+                if reply and not reply.startswith("Error:"):
+                    append_chat_log("telegram", "user", msg.text)
+                    append_chat_log("telegram", "assistant", reply)
+                    return reply
+        except ImportError:
+            pass
+        except Exception:
+            pass  # Fall through to main loop
+
         client = get_client()
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -257,10 +278,28 @@ async def main(standalone: bool = True):
     # Start sync task for CLI messages
     sync_task = asyncio.create_task(sync_cli_messages(gateway))
 
+    # Start proactive heartbeat
+    heartbeat_task = None
+    try:
+        from heartbeat import get_heartbeat
+        hb = get_heartbeat()
+        if hb.enabled:
+            hb.set_tool_executor(execute_tool)
+            hb.set_gateway(gateway)
+            heartbeat_task = asyncio.create_task(hb.start())
+            if standalone:
+                print("Heartbeat: enabled", flush=True)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
     try:
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
+        if heartbeat_task:
+            heartbeat_task.cancel()
         sync_task.cancel()
         await telegram.disconnect()
 
