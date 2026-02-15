@@ -292,15 +292,20 @@ def chat(client, messages: list):
         try:
             start_time = time.time()
 
+            # Reduce max_tokens after tool results to prevent reasoning loops
+            has_tool_results = any(m.get("role") == "tool" for m in messages)
+            max_tokens = 2048 if has_tool_results else 4096
+
             # Non-streaming request for TUI compatibility
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=4096,
+                max_tokens=max_tokens,
                 tools=active_tools,
                 tool_choice="auto",
-                extra_body={"num_ctx": NUM_CTX}
+                extra_body={"num_ctx": NUM_CTX},
+                timeout=120
             )
 
             elapsed_time = time.time() - start_time
