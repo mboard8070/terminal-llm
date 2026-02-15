@@ -21,7 +21,7 @@ from channels.telegram import create_telegram_channel
 
 # Use shared MAUDE core
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message
 
 # Get config from maude_core
 LOCAL_URL = maude_core.LOCAL_URL
@@ -134,13 +134,14 @@ async def maude_callback(msg: IncomingMessage) -> str:
         ]
 
         reset_rate_limits()  # Reset per-turn limits
+        active_tools = get_tools_for_message(msg.text)
 
         # Allow up to 5 tool iterations
         for _ in range(5):
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=messages,
-                tools=TOOLS,
+                tools=active_tools,
                 tool_choice="auto",
                 temperature=0.7,
                 max_tokens=1024
