@@ -48,6 +48,8 @@ SCOPES = [
     'https://www.googleapis.com/auth/presentations',
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/contacts',
+    'https://www.googleapis.com/auth/youtube',
+    'https://www.googleapis.com/auth/youtube.force-ssl',
 ]
 
 
@@ -1570,6 +1572,463 @@ def sheets_clear(spreadsheet_id: str, range: str) -> str:
 
     except Exception as e:
         return f"Error clearing range: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# YouTube Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def youtube_search(query: str, max_results: int = 5, video_type: str = "video") -> str:
+    """Search YouTube for videos, channels, or playlists."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.search().list(
+            part='snippet',
+            q=query,
+            maxResults=max_results,
+            type=video_type
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return f"No results found for query: '{query}'"
+
+        output = []
+        for item in items:
+            snippet = item.get('snippet', {})
+            title = snippet.get('title', 'Unknown')
+            channel = snippet.get('channelTitle', 'Unknown')
+            published = snippet.get('publishedAt', 'Unknown')
+
+            kind = item.get('id', {}).get('kind', '')
+            if 'video' in kind:
+                video_id = item['id'].get('videoId', '')
+                url = f"https://youtube.com/watch?v={video_id}"
+                output.append(f"Title: {title}")
+                output.append(f"  Channel: {channel}")
+                output.append(f"  Published: {published}")
+                output.append(f"  Video ID: {video_id}")
+                output.append(f"  URL: {url}")
+            elif 'channel' in kind:
+                channel_id = item['id'].get('channelId', '')
+                url = f"https://youtube.com/channel/{channel_id}"
+                output.append(f"Title: {title}")
+                output.append(f"  Channel ID: {channel_id}")
+                output.append(f"  Published: {published}")
+                output.append(f"  URL: {url}")
+            elif 'playlist' in kind:
+                playlist_id = item['id'].get('playlistId', '')
+                url = f"https://youtube.com/playlist?list={playlist_id}"
+                output.append(f"Title: {title}")
+                output.append(f"  Channel: {channel}")
+                output.append(f"  Published: {published}")
+                output.append(f"  Playlist ID: {playlist_id}")
+                output.append(f"  URL: {url}")
+
+            output.append("")
+
+        return f"Found {len(items)} results for '{query}':\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error searching YouTube: {e}"
+
+
+def youtube_get_video(video_id: str) -> str:
+    """Get detailed information about a YouTube video."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.videos().list(
+            part='snippet,statistics,contentDetails',
+            id=video_id
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return f"No video found with ID: {video_id}"
+
+        video = items[0]
+        snippet = video.get('snippet', {})
+        statistics = video.get('statistics', {})
+        content_details = video.get('contentDetails', {})
+
+        title = snippet.get('title', 'Unknown')
+        channel = snippet.get('channelTitle', 'Unknown')
+        published = snippet.get('publishedAt', 'Unknown')
+        description = snippet.get('description', '')
+        if len(description) > 500:
+            description = description[:500] + "..."
+
+        view_count = statistics.get('viewCount', 'N/A')
+        like_count = statistics.get('likeCount', 'N/A')
+        comment_count = statistics.get('commentCount', 'N/A')
+        duration = content_details.get('duration', 'N/A')
+        url = f"https://youtube.com/watch?v={video_id}"
+
+        output = [
+            f"Title: {title}",
+            f"Channel: {channel}",
+            f"Published: {published}",
+            f"Duration: {duration}",
+            f"Views: {view_count}",
+            f"Likes: {like_count}",
+            f"Comments: {comment_count}",
+            f"URL: {url}",
+            "",
+            f"Description:",
+            description
+        ]
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting video info: {e}"
+
+
+def youtube_get_channel(channel_id: str) -> str:
+    """Get information about a YouTube channel."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.channels().list(
+            part='snippet,statistics,contentDetails',
+            id=channel_id
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return f"No channel found with ID: {channel_id}"
+
+        channel = items[0]
+        snippet = channel.get('snippet', {})
+        statistics = channel.get('statistics', {})
+
+        title = snippet.get('title', 'Unknown')
+        description = snippet.get('description', '')
+        if len(description) > 500:
+            description = description[:500] + "..."
+
+        subscriber_count = statistics.get('subscriberCount', 'N/A')
+        video_count = statistics.get('videoCount', 'N/A')
+        view_count = statistics.get('viewCount', 'N/A')
+        url = f"https://youtube.com/channel/{channel_id}"
+
+        output = [
+            f"Channel: {title}",
+            f"Channel ID: {channel_id}",
+            f"Subscribers: {subscriber_count}",
+            f"Videos: {video_count}",
+            f"Total Views: {view_count}",
+            f"URL: {url}",
+            "",
+            f"Description:",
+            description
+        ]
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting channel info: {e}"
+
+
+def youtube_list_playlists(channel_id: str = None, max_results: int = 10) -> str:
+    """List playlists for a channel or the authenticated user."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        if channel_id:
+            results = service.playlists().list(
+                part='snippet,contentDetails',
+                channelId=channel_id,
+                maxResults=max_results
+            ).execute()
+        else:
+            results = service.playlists().list(
+                part='snippet,contentDetails',
+                mine=True,
+                maxResults=max_results
+            ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return "No playlists found."
+
+        output = []
+        for item in items:
+            snippet = item.get('snippet', {})
+            content_details = item.get('contentDetails', {})
+
+            title = snippet.get('title', 'Unknown')
+            playlist_id = item.get('id', 'Unknown')
+            item_count = content_details.get('itemCount', 'N/A')
+            description = snippet.get('description', '')
+            if len(description) > 200:
+                description = description[:200] + "..."
+
+            output.append(f"Title: {title}")
+            output.append(f"  Playlist ID: {playlist_id}")
+            output.append(f"  Items: {item_count}")
+            if description:
+                output.append(f"  Description: {description}")
+            output.append("")
+
+        return f"Found {len(items)} playlists:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error listing playlists: {e}"
+
+
+def youtube_get_playlist_items(playlist_id: str, max_results: int = 20) -> str:
+    """List videos in a YouTube playlist."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.playlistItems().list(
+            part='snippet',
+            playlistId=playlist_id,
+            maxResults=max_results
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return f"No items found in playlist: {playlist_id}"
+
+        output = []
+        for item in items:
+            snippet = item.get('snippet', {})
+            position = snippet.get('position', 'N/A')
+            title = snippet.get('title', 'Unknown')
+            channel = snippet.get('videoOwnerChannelTitle', 'Unknown')
+            video_id = snippet.get('resourceId', {}).get('videoId', '')
+            url = f"https://youtube.com/watch?v={video_id}"
+
+            output.append(f"{position}. {title}")
+            output.append(f"   Video ID: {video_id}")
+            output.append(f"   Channel: {channel}")
+            output.append(f"   URL: {url}")
+            output.append("")
+
+        return f"Playlist {playlist_id} - {len(items)} items:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting playlist items: {e}"
+
+
+def youtube_create_playlist(title: str, description: str = "", privacy: str = "private") -> str:
+    """Create a new YouTube playlist."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        result = service.playlists().insert(
+            part='snippet,status',
+            body={
+                'snippet': {
+                    'title': title,
+                    'description': description
+                },
+                'status': {
+                    'privacyStatus': privacy
+                }
+            }
+        ).execute()
+
+        playlist_id = result.get('id', 'Unknown')
+        url = f"https://youtube.com/playlist?list={playlist_id}"
+
+        return f"Playlist created successfully!\nTitle: {title}\nPlaylist ID: {playlist_id}\nPrivacy: {privacy}\nURL: {url}"
+
+    except Exception as e:
+        return f"Error creating playlist: {e}"
+
+
+def youtube_add_to_playlist(playlist_id: str, video_id: str) -> str:
+    """Add a video to a YouTube playlist."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        result = service.playlistItems().insert(
+            part='snippet',
+            body={
+                'snippet': {
+                    'playlistId': playlist_id,
+                    'resourceId': {
+                        'kind': 'youtube#video',
+                        'videoId': video_id
+                    }
+                }
+            }
+        ).execute()
+
+        item_id = result.get('id', 'Unknown')
+
+        return f"Video added to playlist successfully!\nPlaylist ID: {playlist_id}\nVideo ID: {video_id}\nPlaylist Item ID: {item_id}"
+
+    except Exception as e:
+        return f"Error adding video to playlist: {e}"
+
+
+def youtube_get_comments(video_id: str, max_results: int = 10) -> str:
+    """Get comments on a YouTube video."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.commentThreads().list(
+            part='snippet',
+            videoId=video_id,
+            maxResults=max_results,
+            order='relevance'
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return f"No comments found for video: {video_id}"
+
+        output = []
+        for item in items:
+            top_comment = item.get('snippet', {}).get('topLevelComment', {}).get('snippet', {})
+            author = top_comment.get('authorDisplayName', 'Unknown')
+            text = top_comment.get('textDisplay', '')
+            if len(text) > 200:
+                text = text[:200] + "..."
+            like_count = top_comment.get('likeCount', 0)
+            published = top_comment.get('publishedAt', 'Unknown')
+
+            output.append(f"Author: {author}")
+            output.append(f"  Comment: {text}")
+            output.append(f"  Likes: {like_count}")
+            output.append(f"  Published: {published}")
+            output.append("")
+
+        return f"Found {len(items)} comments for video {video_id}:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting comments: {e}"
+
+
+def youtube_post_comment(video_id: str, text: str) -> str:
+    """Post a comment on a YouTube video."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        result = service.commentThreads().insert(
+            part='snippet',
+            body={
+                'snippet': {
+                    'videoId': video_id,
+                    'topLevelComment': {
+                        'snippet': {
+                            'textOriginal': text
+                        }
+                    }
+                }
+            }
+        ).execute()
+
+        comment_id = result.get('id', 'Unknown')
+
+        return f"Comment posted successfully!\nVideo ID: {video_id}\nComment ID: {comment_id}\nText: {text}"
+
+    except Exception as e:
+        return f"Error posting comment: {e}"
+
+
+def youtube_my_channel() -> str:
+    """Get the authenticated user's YouTube channel info."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('youtube', 'v3', credentials=creds)
+
+        results = service.channels().list(
+            part='snippet,statistics,contentDetails',
+            mine=True
+        ).execute()
+
+        items = results.get('items', [])
+
+        if not items:
+            return "No YouTube channel found for the authenticated user."
+
+        channel = items[0]
+        snippet = channel.get('snippet', {})
+        statistics = channel.get('statistics', {})
+        content_details = channel.get('contentDetails', {})
+
+        title = snippet.get('title', 'Unknown')
+        channel_id = channel.get('id', 'Unknown')
+        subscriber_count = statistics.get('subscriberCount', 'N/A')
+        video_count = statistics.get('videoCount', 'N/A')
+        view_count = statistics.get('viewCount', 'N/A')
+        uploads_playlist = content_details.get('relatedPlaylists', {}).get('uploads', 'N/A')
+
+        output = [
+            f"Channel: {title}",
+            f"Channel ID: {channel_id}",
+            f"Subscribers: {subscriber_count}",
+            f"Videos: {video_count}",
+            f"Total Views: {view_count}",
+            f"Uploads Playlist ID: {uploads_playlist}",
+        ]
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting channel info: {e}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
