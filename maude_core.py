@@ -1240,19 +1240,22 @@ except Exception:
 
 # Core tools always sent (file ops, web, shell, AI delegation)
 _CORE_TOOL_NAMES = {
-    "read_file", "write_file", "list_directory", "get_working_directory",
-    "change_directory", "run_command", "web_browse", "web_search", "web_view",
-    "view_image", "search_file", "search_directory", "edit_file",
-    "ask_frontier", "send_to_claude", "schedule_task",
+    "read_file", "write_file", "list_directory",
+    "change_directory", "run_command", "web_browse", "web_search",
+    "search_file", "search_directory", "edit_file",
+    "ask_frontier",
 }
 
 # Tool groups activated by keyword detection
 _TOOL_GROUPS = {
-    "google": {
-        "keywords": ["gmail", "email", "drive", "google", "doc", "document"],
-        "tools": {"gmail_list", "gmail_read", "gmail_send", "drive_list", "drive_search",
-                  "drive_read", "drive_upload", "drive_create_folder", "drive_create_doc",
-                  "drive_create_sheet", "drive_update_doc", "drive_delete"},
+    "gmail": {
+        "keywords": ["gmail", "email", "inbox", "mail"],
+        "tools": {"gmail_list", "gmail_read", "gmail_send"},
+    },
+    "drive": {
+        "keywords": ["drive", "google doc", "upload", "google drive"],
+        "tools": {"drive_list", "drive_search", "drive_read", "drive_upload",
+                  "drive_create_doc", "drive_delete"},
     },
     "sheets": {
         "keywords": ["sheet", "spreadsheet", "csv", "table", "cells", "rows", "columns"],
@@ -1275,10 +1278,9 @@ _TOOL_GROUPS = {
                   "contacts_delete", "contacts_search"},
     },
     "youtube": {
-        "keywords": ["youtube", "video", "playlist", "channel", "subscribe", "comment on video"],
+        "keywords": ["youtube", "playlist", "channel", "subscribe"],
         "tools": {"youtube_search", "youtube_get_video", "youtube_get_channel",
-                  "youtube_list_playlists", "youtube_get_playlist_items",
-                  "youtube_create_playlist", "youtube_add_to_playlist",
+                  "youtube_list_playlists", "youtube_create_playlist",
                   "youtube_get_comments", "youtube_post_comment", "youtube_my_channel"},
     },
     "substack": {
