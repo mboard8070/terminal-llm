@@ -28,7 +28,7 @@ import pyfiglet
 
 # MAUDE core - shared tools
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message
 
 # Voice mode
 from voice import VoiceMode, VoiceConfig, check_voice_dependencies
@@ -276,6 +276,10 @@ def chat(client, messages: list):
     consecutive_duplicates = 0
     reset_rate_limits()  # Reset per-turn limits in maude_core
 
+    # Get relevant tools based on user's latest message
+    user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+    active_tools = get_tools_for_message(user_msg)
+
     while True:
         tool_iteration += 1
         if tool_iteration > max_tool_iterations:
@@ -294,7 +298,7 @@ def chat(client, messages: list):
                 messages=messages,
                 temperature=0.2,
                 max_tokens=4096,
-                tools=TOOLS,
+                tools=active_tools,
                 tool_choice="auto",
                 extra_body={"num_ctx": NUM_CTX}
             )
