@@ -12,6 +12,8 @@ Setup:
 import os
 import base64
 import json
+import datetime
+import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from email.mime.text import MIMEText
@@ -45,6 +47,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/presentations',
     'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/contacts',
 ]
 
 
@@ -560,6 +563,1013 @@ def drive_delete_file(file_id: str) -> str:
 
     except Exception as e:
         return f"Error deleting file: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Contacts Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def contacts_list(max_results: int = 20, query: str = None) -> str:
+    """List contacts, optionally filtered by a search query."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('people', 'v1', credentials=creds)
+
+        if query:
+            results = service.people().searchContacts(
+                query=query,
+                readMask='names,emailAddresses,phoneNumbers',
+                pageSize=max_results
+            ).execute()
+            contacts = [r['person'] for r in results.get('results', []) if 'person' in r]
+        else:
+            results = service.people().connections().list(
+                resourceName='people/me',
+                pageSize=max_results,
+                personFields='names,emailAddresses,phoneNumbers'
+            ).execute()
+            contacts = results.get('connections', [])
+
+        if not contacts:
+            return f"No contacts found." if not query else f"No contacts found for query: '{query}'"
+
+        output = []
+        for person in contacts:
+            names = person.get('names', [])
+            name = names[0].get('displayName', 'Unknown') if names else 'Unknown'
+
+            emails = person.get('emailAddresses', [])
+            email_list = ', '.join(e.get('value', '') for e in emails) if emails else 'None'
+
+            phones = person.get('phoneNumbers', [])
+            phone_list = ', '.join(p.get('value', '') for p in phones) if phones else 'None'
+
+            resource_name = person.get('resourceName', 'Unknown')
+
+            output.append(f"Name: {name}")
+            output.append(f"  Emails: {email_list}")
+            output.append(f"  Phones: {phone_list}")
+            output.append(f"  Resource: {resource_name}")
+            output.append("")
+
+        return f"Found {len(contacts)} contacts:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error listing contacts: {e}"
+
+
+def contacts_get(resource_name: str) -> str:
+    """Get detailed info for a single contact by resource name."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('people', 'v1', credentials=creds)
+
+        person = service.people().get(
+            resourceName=resource_name,
+            personFields='names,emailAddresses,phoneNumbers,addresses,organizations,birthdays,biographies,urls'
+        ).execute()
+
+        output = [f"Contact Details ({resource_name})", "=" * 40]
+
+        # Names
+        names = person.get('names', [])
+        if names:
+            name = names[0]
+            output.append(f"Name: {name.get('displayName', 'Unknown')}")
+            if name.get('givenName'):
+                output.append(f"  Given Name: {name['givenName']}")
+            if name.get('familyName'):
+                output.append(f"  Family Name: {name['familyName']}")
+
+        # Emails
+        emails = person.get('emailAddresses', [])
+        if emails:
+            output.append("Emails:")
+            for email in emails:
+                label = email.get('type', 'other')
+                output.append(f"  [{label}] {email.get('value', '')}")
+
+        # Phone numbers
+        phones = person.get('phoneNumbers', [])
+        if phones:
+            output.append("Phone Numbers:")
+            for phone in phones:
+                label = phone.get('type', 'other')
+                output.append(f"  [{label}] {phone.get('value', '')}")
+
+        # Addresses
+        addresses = person.get('addresses', [])
+        if addresses:
+            output.append("Addresses:")
+            for addr in addresses:
+                label = addr.get('type', 'other')
+                formatted = addr.get('formattedValue', '')
+                output.append(f"  [{label}] {formatted}")
+
+        # Organizations
+        orgs = person.get('organizations', [])
+        if orgs:
+            output.append("Organizations:")
+            for org in orgs:
+                org_name = org.get('name', '')
+                title = org.get('title', '')
+                if org_name and title:
+                    output.append(f"  {org_name} - {title}")
+                elif org_name:
+                    output.append(f"  {org_name}")
+                elif title:
+                    output.append(f"  {title}")
+
+        # Birthdays
+        birthdays = person.get('birthdays', [])
+        if birthdays:
+            bday = birthdays[0].get('date', {})
+            month = bday.get('month', '')
+            day = bday.get('day', '')
+            year = bday.get('year', '')
+            if year:
+                output.append(f"Birthday: {year}-{month:02d}-{day:02d}" if isinstance(month, int) else f"Birthday: {year}-{month}-{day}")
+            elif month and day:
+                output.append(f"Birthday: {month}/{day}")
+
+        # Biographies
+        bios = person.get('biographies', [])
+        if bios:
+            output.append(f"Notes: {bios[0].get('value', '')}")
+
+        # URLs
+        urls = person.get('urls', [])
+        if urls:
+            output.append("URLs:")
+            for url in urls:
+                label = url.get('type', 'other')
+                output.append(f"  [{label}] {url.get('value', '')}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting contact: {e}"
+
+
+def contacts_create(given_name: str, family_name: str = "", email: str = None, phone: str = None, organization: str = None) -> str:
+    """Create a new contact."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('people', 'v1', credentials=creds)
+
+        person = {
+            'names': [{'givenName': given_name, 'familyName': family_name}]
+        }
+
+        if email:
+            person['emailAddresses'] = [{'value': email}]
+
+        if phone:
+            person['phoneNumbers'] = [{'value': phone}]
+
+        if organization:
+            person['organizations'] = [{'name': organization}]
+
+        result = service.people().createContact(body=person).execute()
+        resource_name = result.get('resourceName', 'Unknown')
+
+        return f"Contact created successfully!\nName: {given_name} {family_name}\nResource: {resource_name}"
+
+    except Exception as e:
+        return f"Error creating contact: {e}"
+
+
+def contacts_update(resource_name: str, given_name: str = None, family_name: str = None, email: str = None, phone: str = None) -> str:
+    """Update an existing contact."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('people', 'v1', credentials=creds)
+
+        # Get current contact to retrieve etag
+        current = service.people().get(
+            resourceName=resource_name,
+            personFields='names,emailAddresses,phoneNumbers'
+        ).execute()
+
+        etag = current.get('etag')
+
+        # Build update body
+        person = {'etag': etag}
+
+        # Names
+        if given_name is not None or family_name is not None:
+            current_names = current.get('names', [{}])
+            name = current_names[0] if current_names else {}
+            updated_name = {}
+            updated_name['givenName'] = given_name if given_name is not None else name.get('givenName', '')
+            updated_name['familyName'] = family_name if family_name is not None else name.get('familyName', '')
+            person['names'] = [updated_name]
+        else:
+            person['names'] = current.get('names', [])
+
+        # Emails
+        if email is not None:
+            person['emailAddresses'] = [{'value': email}]
+        else:
+            person['emailAddresses'] = current.get('emailAddresses', [])
+
+        # Phone numbers
+        if phone is not None:
+            person['phoneNumbers'] = [{'value': phone}]
+        else:
+            person['phoneNumbers'] = current.get('phoneNumbers', [])
+
+        result = service.people().updateContact(
+            resourceName=resource_name,
+            body=person,
+            updatePersonFields='names,emailAddresses,phoneNumbers'
+        ).execute()
+
+        updated_names = result.get('names', [])
+        display_name = updated_names[0].get('displayName', 'Unknown') if updated_names else 'Unknown'
+
+        return f"Contact updated successfully!\nName: {display_name}\nResource: {resource_name}"
+
+    except Exception as e:
+        return f"Error updating contact: {e}"
+
+
+def contacts_delete(resource_name: str) -> str:
+    """Delete a contact by resource name."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('people', 'v1', credentials=creds)
+
+        service.people().deleteContact(resourceName=resource_name).execute()
+
+        return f"Contact deleted successfully: {resource_name}"
+
+    except Exception as e:
+        return f"Error deleting contact: {e}"
+
+
+def contacts_search(query: str) -> str:
+    """Search contacts by name, email, or phone number."""
+    return contacts_list(query=query)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Calendar Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def calendar_list_events(max_results: int = 10, time_min: str = None, time_max: str = None, calendar_id: str = "primary") -> str:
+    """List upcoming events from Google Calendar."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        # Default time_min to now if not provided
+        if not time_min:
+            time_min = datetime.datetime.utcnow().isoformat() + 'Z'
+
+        kwargs = {
+            'calendarId': calendar_id,
+            'timeMin': time_min,
+            'maxResults': max_results,
+            'singleEvents': True,
+            'orderBy': 'startTime',
+        }
+        if time_max:
+            kwargs['timeMax'] = time_max
+
+        results = service.events().list(**kwargs).execute()
+        events = results.get('items', [])
+
+        if not events:
+            return "No upcoming events found."
+
+        output = []
+        for event in events:
+            start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', 'Unknown'))
+            end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', 'Unknown'))
+            summary = event.get('summary', '(No title)')
+            location = event.get('location', '')
+            description = event.get('description', '')
+
+            output.append(f"Event: {summary}")
+            output.append(f"  ID: {event.get('id', 'Unknown')}")
+            output.append(f"  Start: {start}")
+            output.append(f"  End: {end}")
+            if location:
+                output.append(f"  Location: {location}")
+            if description:
+                truncated = description[:200] + "..." if len(description) > 200 else description
+                output.append(f"  Description: {truncated}")
+            output.append("")
+
+        return f"Found {len(events)} events:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error listing calendar events: {e}"
+
+
+def calendar_create_event(summary: str, start: str, end: str, description: str = None, location: str = None, calendar_id: str = "primary") -> str:
+    """Create an event in Google Calendar."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        event_body = {
+            'summary': summary,
+            'start': {'dateTime': start},
+            'end': {'dateTime': end},
+        }
+        if description:
+            event_body['description'] = description
+        if location:
+            event_body['location'] = location
+
+        event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+
+        return f"Event created successfully!\nSummary: {event.get('summary')}\nID: {event.get('id')}\nLink: {event.get('htmlLink', 'N/A')}"
+
+    except Exception as e:
+        return f"Error creating calendar event: {e}"
+
+
+def calendar_update_event(event_id: str, summary: str = None, start: str = None, end: str = None, description: str = None, location: str = None, calendar_id: str = "primary") -> str:
+    """Update an existing event in Google Calendar."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        # Get the existing event
+        event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+
+        # Update only the fields that are provided
+        if summary is not None:
+            event['summary'] = summary
+        if start is not None:
+            event['start'] = {'dateTime': start}
+        if end is not None:
+            event['end'] = {'dateTime': end}
+        if description is not None:
+            event['description'] = description
+        if location is not None:
+            event['location'] = location
+
+        updated_event = service.events().update(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=event
+        ).execute()
+
+        return f"Event updated successfully!\nSummary: {updated_event.get('summary')}\nID: {updated_event.get('id')}\nLink: {updated_event.get('htmlLink', 'N/A')}"
+
+    except Exception as e:
+        return f"Error updating calendar event: {e}"
+
+
+def calendar_delete_event(event_id: str, calendar_id: str = "primary") -> str:
+    """Delete an event from Google Calendar."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+        return f"Event deleted successfully. (ID: {event_id})"
+
+    except Exception as e:
+        return f"Error deleting calendar event: {e}"
+
+
+def calendar_search_events(query: str, max_results: int = 10, calendar_id: str = "primary") -> str:
+    """Search for events by text in Google Calendar."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        time_min = datetime.datetime.utcnow().isoformat() + 'Z'
+
+        results = service.events().list(
+            calendarId=calendar_id,
+            q=query,
+            timeMin=time_min,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy='startTime',
+        ).execute()
+
+        events = results.get('items', [])
+
+        if not events:
+            return f"No events found matching: '{query}'"
+
+        output = []
+        for event in events:
+            start = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', 'Unknown'))
+            end = event.get('end', {}).get('dateTime', event.get('end', {}).get('date', 'Unknown'))
+            summary = event.get('summary', '(No title)')
+            location = event.get('location', '')
+            description = event.get('description', '')
+
+            output.append(f"Event: {summary}")
+            output.append(f"  ID: {event.get('id', 'Unknown')}")
+            output.append(f"  Start: {start}")
+            output.append(f"  End: {end}")
+            if location:
+                output.append(f"  Location: {location}")
+            if description:
+                truncated = description[:200] + "..." if len(description) > 200 else description
+                output.append(f"  Description: {truncated}")
+            output.append("")
+
+        return f"Found {len(events)} events matching '{query}':\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error searching calendar events: {e}"
+
+
+def calendar_list_calendars() -> str:
+    """List all available calendars."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+
+        results = service.calendarList().list().execute()
+        calendars = results.get('items', [])
+
+        if not calendars:
+            return "No calendars found."
+
+        output = []
+        for cal in calendars:
+            primary = " (PRIMARY)" if cal.get('primary') else ""
+            output.append(f"Calendar: {cal.get('summary', 'Unknown')}{primary}")
+            output.append(f"  ID: {cal.get('id', 'Unknown')}")
+            output.append(f"  Access Role: {cal.get('accessRole', 'Unknown')}")
+            output.append("")
+
+        return f"Found {len(calendars)} calendars:\n\n" + "\n".join(output)
+
+    except Exception as e:
+        return f"Error listing calendars: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Slides Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def slides_get_presentation(presentation_id: str) -> str:
+    """Get presentation metadata and slide count."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('slides', 'v1', credentials=creds)
+
+        presentation = service.presentations().get(
+            presentationId=presentation_id
+        ).execute()
+
+        title = presentation.get('title', 'Untitled')
+        slides = presentation.get('slides', [])
+
+        output = [
+            f"Title: {title}",
+            f"Presentation ID: {presentation_id}",
+            f"Number of slides: {len(slides)}",
+            ""
+        ]
+
+        for i, slide in enumerate(slides):
+            slide_id = slide.get('objectId', 'unknown')
+            output.append(f"Slide {i + 1}: (objectId: {slide_id})")
+
+            # Look for title text in shape elements
+            page_elements = slide.get('pageElements', [])
+            for element in page_elements:
+                shape = element.get('shape', {})
+                if 'text' in shape:
+                    text_content = []
+                    for text_element in shape['text'].get('textElements', []):
+                        text_run = text_element.get('textRun', {})
+                        if 'content' in text_run:
+                            text_content.append(text_run['content'].strip())
+                    combined = ' '.join(t for t in text_content if t)
+                    if combined:
+                        output.append(f"  Title/Text: {combined}")
+
+            output.append("")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting presentation: {e}"
+
+
+def slides_get_slide(presentation_id: str, slide_index: int = 0) -> str:
+    """Get content from a specific slide (0-indexed)."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('slides', 'v1', credentials=creds)
+
+        presentation = service.presentations().get(
+            presentationId=presentation_id
+        ).execute()
+
+        slides = presentation.get('slides', [])
+
+        if slide_index < 0 or slide_index >= len(slides):
+            return f"Error: Slide index {slide_index} out of range. Presentation has {len(slides)} slides (0-{len(slides) - 1})."
+
+        slide = slides[slide_index]
+        slide_id = slide.get('objectId', 'unknown')
+
+        output = [
+            f"Slide {slide_index + 1} (objectId: {slide_id})",
+            f"Presentation: {presentation.get('title', 'Untitled')}",
+            ""
+        ]
+
+        page_elements = slide.get('pageElements', [])
+        shape_num = 0
+
+        for element in page_elements:
+            shape = element.get('shape', {})
+            if 'text' in shape:
+                shape_num += 1
+                element_id = element.get('objectId', 'unknown')
+                output.append(f"Shape {shape_num} (objectId: {element_id}):")
+
+                text_content = []
+                for text_element in shape['text'].get('textElements', []):
+                    text_run = text_element.get('textRun', {})
+                    if 'content' in text_run:
+                        text_content.append(text_run['content'])
+
+                combined = ''.join(text_content).strip()
+                if combined:
+                    output.append(f"  {combined}")
+                else:
+                    output.append("  (empty)")
+                output.append("")
+
+        if shape_num == 0:
+            output.append("(No text shapes found on this slide)")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error getting slide content: {e}"
+
+
+def slides_create_presentation(title: str, folder_id: str = None) -> str:
+    """Create a new Google Slides presentation."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('slides', 'v1', credentials=creds)
+
+        presentation = service.presentations().create(
+            body={'title': title}
+        ).execute()
+
+        pres_id = presentation.get('presentationId', '')
+        pres_url = f"https://docs.google.com/presentation/d/{pres_id}/edit"
+
+        result = f"Presentation created successfully!\nTitle: {title}\nID: {pres_id}\nURL: {pres_url}"
+
+        # If folder_id provided, move via Drive API
+        if folder_id:
+            try:
+                drive_service = build('drive', 'v3', credentials=creds)
+                # Get current parents to remove
+                file = drive_service.files().get(
+                    fileId=pres_id,
+                    fields='parents'
+                ).execute()
+                previous_parents = ",".join(file.get('parents', []))
+
+                drive_service.files().update(
+                    fileId=pres_id,
+                    addParents=folder_id,
+                    removeParents=previous_parents,
+                    fields='id, parents'
+                ).execute()
+                result += f"\nMoved to folder: {folder_id}"
+            except Exception as e:
+                result += f"\nNote: Presentation created but could not move to folder: {e}"
+
+        return result
+
+    except Exception as e:
+        return f"Error creating presentation: {e}"
+
+
+def slides_add_slide(presentation_id: str, layout: str = "BLANK") -> str:
+    """Add a new slide to a presentation."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('slides', 'v1', credentials=creds)
+
+        requests = [
+            {
+                'createSlide': {
+                    'slideLayoutReference': {
+                        'predefinedLayout': layout
+                    }
+                }
+            }
+        ]
+
+        response = service.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={'requests': requests}
+        ).execute()
+
+        # Extract the new slide's object ID from the response
+        create_slide_response = response.get('replies', [{}])[0].get('createSlide', {})
+        new_slide_id = create_slide_response.get('objectId', 'unknown')
+
+        return f"Slide added successfully!\nNew slide objectId: {new_slide_id}\nLayout: {layout}\nPresentation ID: {presentation_id}"
+
+    except Exception as e:
+        return f"Error adding slide: {e}"
+
+
+def slides_add_text(presentation_id: str, slide_id: str, text: str, x: float = 100, y: float = 100, width: float = 400, height: float = 300) -> str:
+    """Add a text box to a slide."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('slides', 'v1', credentials=creds)
+
+        # Generate a unique object ID for the text box
+        textbox_id = f"textbox_{uuid.uuid4().hex[:8]}"
+
+        # Convert points to EMU (English Metric Units): 1 point = 12700 EMU
+        emu_x = int(x * 12700)
+        emu_y = int(y * 12700)
+        emu_width = int(width * 12700)
+        emu_height = int(height * 12700)
+
+        requests = [
+            {
+                'createShape': {
+                    'objectId': textbox_id,
+                    'shapeType': 'TEXT_BOX',
+                    'elementProperties': {
+                        'pageObjectId': slide_id,
+                        'size': {
+                            'width': {'magnitude': emu_width, 'unit': 'EMU'},
+                            'height': {'magnitude': emu_height, 'unit': 'EMU'}
+                        },
+                        'transform': {
+                            'scaleX': 1,
+                            'scaleY': 1,
+                            'translateX': emu_x,
+                            'translateY': emu_y,
+                            'unit': 'EMU'
+                        }
+                    }
+                }
+            },
+            {
+                'insertText': {
+                    'objectId': textbox_id,
+                    'text': text,
+                    'insertionIndex': 0
+                }
+            }
+        ]
+
+        service.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={'requests': requests}
+        ).execute()
+
+        return f"Text box added successfully!\nTextbox ID: {textbox_id}\nSlide: {slide_id}\nText: {text[:100]}{'...' if len(text) > 100 else ''}\nPosition: ({x}, {y}) Size: {width}x{height} points"
+
+    except Exception as e:
+        return f"Error adding text box: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Sheets Functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+def sheets_read(spreadsheet_id: str, range: str = "Sheet1") -> str:
+    """Read data from a Google Sheets spreadsheet."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        # Get spreadsheet title
+        spreadsheet = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields='properties.title'
+        ).execute()
+        title = spreadsheet.get('properties', {}).get('title', 'Unknown')
+
+        # Get values
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=range
+        ).execute()
+
+        values = result.get('values', [])
+
+        if not values:
+            return f"Spreadsheet: {title}\nRange: {range}\n\nNo data found."
+
+        # Format as table
+        output = []
+        output.append(f"Spreadsheet: {title}")
+        output.append(f"Range: {range}")
+        output.append(f"Rows: {len(values)}")
+        output.append("")
+
+        # Calculate column widths for alignment
+        col_count = max(len(row) for row in values)
+        col_widths = [0] * col_count
+        for row in values:
+            for i, cell in enumerate(row):
+                col_widths[i] = max(col_widths[i], len(str(cell)))
+
+        # Build table rows
+        for row_idx, row in enumerate(values):
+            # Pad row to full column count
+            padded_row = list(row) + [''] * (col_count - len(row))
+            formatted = ' | '.join(
+                str(cell).ljust(col_widths[i]) for i, cell in enumerate(padded_row)
+            )
+            output.append(formatted)
+
+            # Add separator after header row
+            if row_idx == 0:
+                separator = '-+-'.join('-' * col_widths[i] for i in range(col_count))
+                output.append(separator)
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error reading spreadsheet: {e}"
+
+
+def sheets_write(spreadsheet_id: str, range: str, values: list) -> str:
+    """Write data to a Google Sheets spreadsheet. Values is a list of lists (rows)."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        body = {'values': values}
+
+        result = service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=range,
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+
+        updated_cells = result.get('updatedCells', 0)
+        updated_rows = result.get('updatedRows', 0)
+        updated_range = result.get('updatedRange', range)
+
+        return (
+            f"Data written successfully!\n"
+            f"Range: {updated_range}\n"
+            f"Rows updated: {updated_rows}\n"
+            f"Cells updated: {updated_cells}"
+        )
+
+    except Exception as e:
+        return f"Error writing to spreadsheet: {e}"
+
+
+def sheets_append(spreadsheet_id: str, range: str, values: list) -> str:
+    """Append rows to a Google Sheets spreadsheet. Values is a list of lists (rows)."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        body = {'values': values}
+
+        result = service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=range,
+            valueInputOption='USER_ENTERED',
+            body=body
+        ).execute()
+
+        updates = result.get('updates', {})
+        updated_range = updates.get('updatedRange', range)
+        updated_rows = updates.get('updatedRows', 0)
+        updated_cells = updates.get('updatedCells', 0)
+
+        return (
+            f"Data appended successfully!\n"
+            f"Range: {updated_range}\n"
+            f"Rows appended: {updated_rows}\n"
+            f"Cells updated: {updated_cells}"
+        )
+
+    except Exception as e:
+        return f"Error appending to spreadsheet: {e}"
+
+
+def sheets_create(title: str, folder_id: str = None) -> str:
+    """Create a new Google Sheets spreadsheet."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        spreadsheet_body = {
+            'properties': {
+                'title': title
+            }
+        }
+
+        spreadsheet = service.spreadsheets().create(
+            body=spreadsheet_body,
+            fields='spreadsheetId,spreadsheetUrl,properties.title'
+        ).execute()
+
+        spreadsheet_id = spreadsheet.get('spreadsheetId')
+        spreadsheet_url = spreadsheet.get('spreadsheetUrl')
+
+        # Move to folder if specified
+        if folder_id:
+            drive_service = build('drive', 'v3', credentials=creds)
+            # Get current parents
+            file = drive_service.files().get(
+                fileId=spreadsheet_id,
+                fields='parents'
+            ).execute()
+            previous_parents = ','.join(file.get('parents', []))
+
+            # Move to new folder
+            drive_service.files().update(
+                fileId=spreadsheet_id,
+                addParents=folder_id,
+                removeParents=previous_parents,
+                fields='id, parents'
+            ).execute()
+
+        result = (
+            f"Spreadsheet created successfully!\n"
+            f"Title: {title}\n"
+            f"ID: {spreadsheet_id}\n"
+            f"URL: {spreadsheet_url}"
+        )
+
+        if folder_id:
+            result += f"\nMoved to folder: {folder_id}"
+
+        return result
+
+    except Exception as e:
+        return f"Error creating spreadsheet: {e}"
+
+
+def sheets_list_sheets(spreadsheet_id: str) -> str:
+    """List all sheet tabs in a Google Sheets spreadsheet."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        spreadsheet = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields='properties.title,sheets.properties'
+        ).execute()
+
+        title = spreadsheet.get('properties', {}).get('title', 'Unknown')
+        sheets = spreadsheet.get('sheets', [])
+
+        if not sheets:
+            return f"Spreadsheet: {title}\n\nNo sheets found."
+
+        output = []
+        output.append(f"Spreadsheet: {title}")
+        output.append(f"Total sheets: {len(sheets)}")
+        output.append("")
+
+        for sheet in sheets:
+            props = sheet.get('properties', {})
+            output.append(f"Sheet: {props.get('title', 'Unknown')}")
+            output.append(f"  ID: {props.get('sheetId', 'N/A')}")
+            output.append(f"  Index: {props.get('index', 'N/A')}")
+            output.append(f"  Type: {props.get('sheetType', 'N/A')}")
+            grid_props = props.get('gridProperties', {})
+            if grid_props:
+                output.append(f"  Rows: {grid_props.get('rowCount', 'N/A')}")
+                output.append(f"  Columns: {grid_props.get('columnCount', 'N/A')}")
+            output.append("")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error listing sheets: {e}"
+
+
+def sheets_clear(spreadsheet_id: str, range: str) -> str:
+    """Clear a range of cells in a Google Sheets spreadsheet."""
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    try:
+        creds = get_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+
+        result = service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=range,
+            body={}
+        ).execute()
+
+        cleared_range = result.get('clearedRange', range)
+
+        return f"Range cleared successfully!\nCleared range: {cleared_range}"
+
+    except Exception as e:
+        return f"Error clearing range: {e}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

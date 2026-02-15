@@ -597,6 +597,372 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                 "required": ["file_id"]
             }
         }
+    },
+    # Google Sheets tools
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_read",
+            "description": "Read data from a Google Sheets spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "The Google Sheets spreadsheet ID"},
+                    "range": {"type": "string", "description": "Cell range to read (e.g., 'Sheet1!A1:D10'). Default: 'Sheet1'"}
+                },
+                "required": ["spreadsheet_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_write",
+            "description": "Write data to a Google Sheets spreadsheet (overwrites existing data in range).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "The Google Sheets spreadsheet ID"},
+                    "range": {"type": "string", "description": "Cell range to write to (e.g., 'Sheet1!A1')"},
+                    "values": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "2D array of values (rows of columns)"}
+                },
+                "required": ["spreadsheet_id", "range", "values"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_append",
+            "description": "Append rows to a Google Sheets spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "The Google Sheets spreadsheet ID"},
+                    "range": {"type": "string", "description": "Range to append after (e.g., 'Sheet1!A1')"},
+                    "values": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}, "description": "2D array of rows to append"}
+                },
+                "required": ["spreadsheet_id", "range", "values"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_create",
+            "description": "Create a new Google Sheets spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Name for the new spreadsheet"},
+                    "folder_id": {"type": "string", "description": "Optional Drive folder ID to create inside"}
+                },
+                "required": ["title"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_list_sheets",
+            "description": "List all sheet tabs in a Google Sheets spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "The Google Sheets spreadsheet ID"}
+                },
+                "required": ["spreadsheet_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_clear",
+            "description": "Clear a range of cells in a Google Sheets spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "The Google Sheets spreadsheet ID"},
+                    "range": {"type": "string", "description": "Cell range to clear (e.g., 'Sheet1!A1:D10')"}
+                },
+                "required": ["spreadsheet_id", "range"]
+            }
+        }
+    },
+    # Google Calendar tools
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_list_events",
+            "description": "List upcoming Google Calendar events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_results": {"type": "integer", "description": "Maximum events to return (default 10)"},
+                    "time_min": {"type": "string", "description": "Start time filter (ISO format, e.g., '2025-01-15T00:00:00Z'). Default: now"},
+                    "time_max": {"type": "string", "description": "End time filter (ISO format)"},
+                    "calendar_id": {"type": "string", "description": "Calendar ID (default: 'primary')"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_create_event",
+            "description": "Create a new Google Calendar event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "Event title"},
+                    "start": {"type": "string", "description": "Start time (ISO format, e.g., '2025-01-15T10:00:00-05:00')"},
+                    "end": {"type": "string", "description": "End time (ISO format)"},
+                    "description": {"type": "string", "description": "Event description"},
+                    "location": {"type": "string", "description": "Event location"},
+                    "calendar_id": {"type": "string", "description": "Calendar ID (default: 'primary')"}
+                },
+                "required": ["summary", "start", "end"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_update_event",
+            "description": "Update an existing Google Calendar event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string", "description": "The event ID to update"},
+                    "summary": {"type": "string", "description": "New event title"},
+                    "start": {"type": "string", "description": "New start time (ISO format)"},
+                    "end": {"type": "string", "description": "New end time (ISO format)"},
+                    "description": {"type": "string", "description": "New description"},
+                    "location": {"type": "string", "description": "New location"},
+                    "calendar_id": {"type": "string", "description": "Calendar ID (default: 'primary')"}
+                },
+                "required": ["event_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_delete_event",
+            "description": "Delete a Google Calendar event.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "event_id": {"type": "string", "description": "The event ID to delete"},
+                    "calendar_id": {"type": "string", "description": "Calendar ID (default: 'primary')"}
+                },
+                "required": ["event_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_search_events",
+            "description": "Search Google Calendar events by text.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search text"},
+                    "max_results": {"type": "integer", "description": "Maximum events to return (default 10)"},
+                    "calendar_id": {"type": "string", "description": "Calendar ID (default: 'primary')"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calendar_list_calendars",
+            "description": "List all available Google Calendars.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    # Google Slides tools
+    {
+        "type": "function",
+        "function": {
+            "name": "slides_get_presentation",
+            "description": "Get Google Slides presentation metadata and slide list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "presentation_id": {"type": "string", "description": "The Google Slides presentation ID"}
+                },
+                "required": ["presentation_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "slides_get_slide",
+            "description": "Get text content from a specific slide in a Google Slides presentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "presentation_id": {"type": "string", "description": "The Google Slides presentation ID"},
+                    "slide_index": {"type": "integer", "description": "Slide index (0-based). Default: 0"}
+                },
+                "required": ["presentation_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "slides_create_presentation",
+            "description": "Create a new Google Slides presentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Title for the new presentation"},
+                    "folder_id": {"type": "string", "description": "Optional Drive folder ID to create inside"}
+                },
+                "required": ["title"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "slides_add_slide",
+            "description": "Add a new slide to a Google Slides presentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "presentation_id": {"type": "string", "description": "The Google Slides presentation ID"},
+                    "layout": {"type": "string", "description": "Slide layout: BLANK, TITLE, TITLE_AND_BODY, TITLE_AND_TWO_COLUMNS, TITLE_ONLY, SECTION_HEADER. Default: BLANK"}
+                },
+                "required": ["presentation_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "slides_add_text",
+            "description": "Add a text box to a slide in a Google Slides presentation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "presentation_id": {"type": "string", "description": "The Google Slides presentation ID"},
+                    "slide_id": {"type": "string", "description": "The slide object ID to add text to"},
+                    "text": {"type": "string", "description": "The text content to add"},
+                    "x": {"type": "number", "description": "X position in points (default 100)"},
+                    "y": {"type": "number", "description": "Y position in points (default 100)"},
+                    "width": {"type": "number", "description": "Text box width in points (default 400)"},
+                    "height": {"type": "number", "description": "Text box height in points (default 300)"}
+                },
+                "required": ["presentation_id", "slide_id", "text"]
+            }
+        }
+    },
+    # Google Contacts tools
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_list",
+            "description": "List Google Contacts. Optionally search by name or email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_results": {"type": "integer", "description": "Maximum contacts to return (default 20)"},
+                    "query": {"type": "string", "description": "Search query to filter contacts"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_get",
+            "description": "Get detailed info for a single Google Contact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource_name": {"type": "string", "description": "Contact resource name (e.g., 'people/c1234567890')"}
+                },
+                "required": ["resource_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_create",
+            "description": "Create a new Google Contact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "given_name": {"type": "string", "description": "First name"},
+                    "family_name": {"type": "string", "description": "Last name"},
+                    "email": {"type": "string", "description": "Email address"},
+                    "phone": {"type": "string", "description": "Phone number"},
+                    "organization": {"type": "string", "description": "Company/organization name"}
+                },
+                "required": ["given_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_update",
+            "description": "Update an existing Google Contact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource_name": {"type": "string", "description": "Contact resource name (e.g., 'people/c1234567890')"},
+                    "given_name": {"type": "string", "description": "New first name"},
+                    "family_name": {"type": "string", "description": "New last name"},
+                    "email": {"type": "string", "description": "New email address"},
+                    "phone": {"type": "string", "description": "New phone number"}
+                },
+                "required": ["resource_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_delete",
+            "description": "Delete a Google Contact.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "resource_name": {"type": "string", "description": "Contact resource name (e.g., 'people/c1234567890')"}
+                },
+                "required": ["resource_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contacts_search",
+            "description": "Search Google Contacts by name or email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            }
+        }
     }
 ]
 
@@ -1412,6 +1778,119 @@ def execute_tool(name: str, arguments: dict) -> str:
     elif name == "drive_delete":
         from google_tools import drive_delete_file
         return drive_delete_file(arguments.get("file_id", ""))
+    # Google Sheets tools
+    elif name == "sheets_read":
+        from google_tools import sheets_read
+        return sheets_read(arguments.get("spreadsheet_id", ""), arguments.get("range", "Sheet1"))
+    elif name == "sheets_write":
+        from google_tools import sheets_write
+        return sheets_write(arguments.get("spreadsheet_id", ""), arguments.get("range", ""), arguments.get("values", []))
+    elif name == "sheets_append":
+        from google_tools import sheets_append
+        return sheets_append(arguments.get("spreadsheet_id", ""), arguments.get("range", ""), arguments.get("values", []))
+    elif name == "sheets_create":
+        from google_tools import sheets_create
+        return sheets_create(arguments.get("title", ""), arguments.get("folder_id"))
+    elif name == "sheets_list_sheets":
+        from google_tools import sheets_list_sheets
+        return sheets_list_sheets(arguments.get("spreadsheet_id", ""))
+    elif name == "sheets_clear":
+        from google_tools import sheets_clear
+        return sheets_clear(arguments.get("spreadsheet_id", ""), arguments.get("range", ""))
+    # Google Calendar tools
+    elif name == "calendar_list_events":
+        from google_tools import calendar_list_events
+        return calendar_list_events(
+            arguments.get("max_results", 10),
+            arguments.get("time_min"),
+            arguments.get("time_max"),
+            arguments.get("calendar_id", "primary")
+        )
+    elif name == "calendar_create_event":
+        from google_tools import calendar_create_event
+        return calendar_create_event(
+            arguments.get("summary", ""),
+            arguments.get("start", ""),
+            arguments.get("end", ""),
+            arguments.get("description"),
+            arguments.get("location"),
+            arguments.get("calendar_id", "primary")
+        )
+    elif name == "calendar_update_event":
+        from google_tools import calendar_update_event
+        return calendar_update_event(
+            arguments.get("event_id", ""),
+            arguments.get("summary"),
+            arguments.get("start"),
+            arguments.get("end"),
+            arguments.get("description"),
+            arguments.get("location"),
+            arguments.get("calendar_id", "primary")
+        )
+    elif name == "calendar_delete_event":
+        from google_tools import calendar_delete_event
+        return calendar_delete_event(arguments.get("event_id", ""), arguments.get("calendar_id", "primary"))
+    elif name == "calendar_search_events":
+        from google_tools import calendar_search_events
+        return calendar_search_events(arguments.get("query", ""), arguments.get("max_results", 10), arguments.get("calendar_id", "primary"))
+    elif name == "calendar_list_calendars":
+        from google_tools import calendar_list_calendars
+        return calendar_list_calendars()
+    # Google Slides tools
+    elif name == "slides_get_presentation":
+        from google_tools import slides_get_presentation
+        return slides_get_presentation(arguments.get("presentation_id", ""))
+    elif name == "slides_get_slide":
+        from google_tools import slides_get_slide
+        return slides_get_slide(arguments.get("presentation_id", ""), arguments.get("slide_index", 0))
+    elif name == "slides_create_presentation":
+        from google_tools import slides_create_presentation
+        return slides_create_presentation(arguments.get("title", ""), arguments.get("folder_id"))
+    elif name == "slides_add_slide":
+        from google_tools import slides_add_slide
+        return slides_add_slide(arguments.get("presentation_id", ""), arguments.get("layout", "BLANK"))
+    elif name == "slides_add_text":
+        from google_tools import slides_add_text
+        return slides_add_text(
+            arguments.get("presentation_id", ""),
+            arguments.get("slide_id", ""),
+            arguments.get("text", ""),
+            arguments.get("x", 100),
+            arguments.get("y", 100),
+            arguments.get("width", 400),
+            arguments.get("height", 300)
+        )
+    # Google Contacts tools
+    elif name == "contacts_list":
+        from google_tools import contacts_list
+        return contacts_list(arguments.get("max_results", 20), arguments.get("query"))
+    elif name == "contacts_get":
+        from google_tools import contacts_get
+        return contacts_get(arguments.get("resource_name", ""))
+    elif name == "contacts_create":
+        from google_tools import contacts_create
+        return contacts_create(
+            arguments.get("given_name", ""),
+            arguments.get("family_name", ""),
+            arguments.get("email"),
+            arguments.get("phone"),
+            arguments.get("organization")
+        )
+    elif name == "contacts_update":
+        from google_tools import contacts_update
+        return contacts_update(
+            arguments.get("resource_name", ""),
+            arguments.get("given_name"),
+            arguments.get("family_name"),
+            arguments.get("email"),
+            arguments.get("phone")
+        )
+    elif name == "contacts_delete":
+        from google_tools import contacts_delete
+        return contacts_delete(arguments.get("resource_name", ""))
+    elif name == "contacts_search":
+        from google_tools import contacts_search
+        return contacts_search(arguments.get("query", ""))
     # Browser automation tools
     elif name.startswith("browser_"):
         try:
