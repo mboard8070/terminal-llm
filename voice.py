@@ -517,6 +517,43 @@ class VoiceMode:
         self._active = False
         self._talk_mode = False
 
+        # UI callbacks for TUI integration
+        self._on_status: Optional[Callable[[str], None]] = None
+        self._on_transcription: Optional[Callable[[str], None]] = None
+        self._on_response: Optional[Callable[[str], None]] = None
+
+    def set_ui_callbacks(
+        self,
+        on_status: Callable[[str], None] = None,
+        on_transcription: Callable[[str], None] = None,
+        on_response: Callable[[str], None] = None
+    ):
+        """Set callbacks for TUI integration."""
+        self._on_status = on_status
+        self._on_transcription = on_transcription
+        self._on_response = on_response
+
+    def _notify_status(self, status: str):
+        """Notify UI of status change."""
+        if self._on_status:
+            self._on_status(status)
+        else:
+            console.print(f"[dim cyan]{status}[/dim cyan]")
+
+    def _notify_transcription(self, text: str):
+        """Notify UI of transcription."""
+        if self._on_transcription:
+            self._on_transcription(text)
+        else:
+            console.print(f"[green]You:[/green] {text}")
+
+    def _notify_response(self, text: str):
+        """Notify UI of response."""
+        if self._on_response:
+            self._on_response(text)
+        else:
+            console.print(f"[magenta]MAUDE:[/magenta] {text}")
+
     async def initialize(self):
         """Initialize voice components based on configured backend."""
         console.print(f"[dim]Initializing voice mode ({self.config.backend.value})...[/dim]")
@@ -555,7 +592,7 @@ class VoiceMode:
         """
         if self.config.backend == VoiceBackend.PERSONAPLEX:
             # PersonaPlex handles this internally
-            console.print("[yellow]Use talk_mode() for PersonaPlex[/yellow]")
+            self._notify_status("Use talk_mode() for PersonaPlex")
             return None
 
         # Whisper pipeline
@@ -566,8 +603,8 @@ class VoiceMode:
         if not audio_data:
             return None
 
+        self._notify_status("Transcribing...")
         text = self.whisper.transcribe_bytes(audio_data)
-        console.print(f"[dim]Heard: {text}[/dim]")
         return text
 
     async def speak(self, text: str):
@@ -652,28 +689,32 @@ class VoiceMode:
         while self._talk_mode:
             try:
                 # Listen
+                self._notify_status("Listening...")
                 text = await self.listen()
                 if not text:
                     continue
 
                 # Check for exit commands
                 if text.lower().strip() in ["stop", "exit", "quit", "goodbye"]:
+                    self._notify_status("Ending voice mode...")
                     await self.speak("Goodbye!")
                     break
 
-                console.print(f"[green]You:[/green] {text}")
+                self._notify_transcription(text)
 
                 # Process with MAUDE
+                self._notify_status("Processing...")
                 response = maude_callback(text)
-                console.print(f"[magenta]MAUDE:[/magenta] {response}")
+                self._notify_response(response)
 
                 # Speak response
+                self._notify_status("Speaking...")
                 await self.speak(response)
 
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
+                self._notify_status(f"Error: {e}")
 
     def stop_talk_mode(self):
         """Stop talk mode."""

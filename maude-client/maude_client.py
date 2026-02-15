@@ -13,8 +13,11 @@ import os
 import sys
 import json
 import time
+import asyncio
+import tempfile
+import subprocess
 import requests
-from typing import Optional, Generator
+from typing import Optional, Generator, Callable
 
 from config import (
     SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
@@ -22,6 +25,300 @@ from config import (
 )
 from client_tools import TOOLS, execute_tool
 from heartbeat import start_heartbeat, stop_heartbeat
+
+
+# ─────────────────────────────────────────────────────────────────
+# Voice Mode Support
+# ─────────────────────────────────────────────────────────────────
+
+class VoiceMode:
+    """Voice mode for Mac client with server-side transcription."""
+
+    # Transcription server port (via SSH tunnel)
+    TRANSCRIPTION_PORT = 30001
+
+    def __init__(self):
+        self.whisper_model = None
+        self._active = False
+        self._use_server = True  # Default to server-side transcription
+
+    def check_dependencies(self) -> dict:
+        """Check which voice dependencies are available."""
+        deps = {}
+
+        # Check sounddevice
+        try:
+            import sounddevice
+            deps["sounddevice"] = True
+        except ImportError:
+            deps["sounddevice"] = False
+
+        # Check server transcription
+        try:
+            resp = requests.get(
+                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
+                timeout=2
+            )
+            deps["server_transcription"] = resp.status_code == 200
+        except:
+            deps["server_transcription"] = False
+
+        # Check local whisper (fallback)
+        try:
+            from faster_whisper import WhisperModel
+            deps["local_whisper"] = "faster-whisper"
+        except ImportError:
+            try:
+                import whisper
+                deps["local_whisper"] = "whisper"
+            except ImportError:
+                deps["local_whisper"] = False
+
+        # Check TTS (macOS 'say' command)
+        deps["tts"] = subprocess.run(
+            ["which", "say"], capture_output=True
+        ).returncode == 0
+
+        return deps
+
+    def check_server_available(self) -> bool:
+        """Check if transcription server is available."""
+        try:
+            resp = requests.get(
+                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
+                timeout=2
+            )
+            return resp.status_code == 200
+        except:
+            return False
+
+    def load_whisper(self):
+        """Load local Whisper model (fallback)."""
+        if self.whisper_model is not None:
+            return
+
+        try:
+            from faster_whisper import WhisperModel
+            print("Loading local Whisper (faster-whisper)...", end=" ", flush=True)
+            self.whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            self._whisper_type = "faster"
+            print("OK")
+        except ImportError:
+            try:
+                import whisper
+                print("Loading local Whisper...", end=" ", flush=True)
+                self.whisper_model = whisper.load_model("tiny")
+                self._whisper_type = "original"
+                print("OK")
+            except ImportError:
+                raise RuntimeError("Neither faster-whisper nor whisper installed")
+
+    def record_audio(self, silence_threshold=0.02, silence_duration=1.5) -> bytes:
+        """Record audio until silence detected."""
+        import sounddevice as sd
+        import numpy as np
+
+        sample_rate = 16000
+        chunk_duration = 0.5
+        chunk_samples = int(chunk_duration * sample_rate)
+        max_silence_chunks = int(silence_duration / chunk_duration)
+
+        print("🎤 Listening... (speak now)")
+
+        chunks = []
+        silence_chunks = 0
+
+        while True:
+            chunk = sd.rec(chunk_samples, samplerate=sample_rate, channels=1, dtype=np.int16)
+            sd.wait()
+
+            amplitude = np.abs(chunk).mean() / 32768.0
+
+            if amplitude > silence_threshold:
+                chunks.append(chunk)
+                silence_chunks = 0
+            elif chunks:
+                chunks.append(chunk)
+                silence_chunks += 1
+                if silence_chunks >= max_silence_chunks:
+                    break
+
+        if not chunks:
+            return b""
+
+        # Convert to WAV bytes
+        recording = np.concatenate(chunks)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            import scipy.io.wavfile as wavfile
+            wavfile.write(temp_path, sample_rate, recording)
+            with open(temp_path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(temp_path)
+
+    def transcribe_server(self, audio_bytes: bytes) -> Optional[str]:
+        """Transcribe audio using server GPU."""
+        try:
+            files = {"audio": ("audio.wav", audio_bytes, "audio/wav")}
+            resp = requests.post(
+                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/transcribe",
+                files=files,
+                timeout=30
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("text", "")
+            else:
+                print(f"[Server error: {resp.status_code}]")
+                return None
+        except Exception as e:
+            print(f"[Server transcription failed: {e}]")
+            return None
+
+    def transcribe_local(self, audio_bytes: bytes) -> str:
+        """Transcribe audio locally (fallback)."""
+        self.load_whisper()
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(audio_bytes)
+            temp_path = f.name
+
+        try:
+            if self._whisper_type == "faster":
+                segments, _ = self.whisper_model.transcribe(temp_path)
+                return " ".join(seg.text for seg in segments).strip()
+            else:
+                result = self.whisper_model.transcribe(temp_path)
+                return result["text"].strip()
+        finally:
+            os.unlink(temp_path)
+
+    def transcribe(self, audio_bytes: bytes) -> str:
+        """Transcribe audio - try server first, fall back to local."""
+        if self._use_server and self.check_server_available():
+            result = self.transcribe_server(audio_bytes)
+            if result is not None:
+                return result
+            print("[Falling back to local transcription]")
+
+        return self.transcribe_local(audio_bytes)
+
+    def speak(self, text: str):
+        """Speak text using macOS 'say' command."""
+        try:
+            # Clean text for speech (remove markdown, etc.)
+            clean_text = text.replace("**", "").replace("*", "").replace("`", "")
+            subprocess.run(["say", clean_text], check=True)
+        except FileNotFoundError:
+            print(f"[TTS unavailable] {text}")
+
+    def listen_and_transcribe(self) -> Optional[str]:
+        """Record audio and return transcribed text."""
+        audio = self.record_audio()
+        if not audio:
+            return None
+
+        if self._use_server:
+            print("🔄 Transcribing (server GPU)...")
+        else:
+            print("🔄 Transcribing (local)...")
+        text = self.transcribe(audio)
+        return text
+
+
+# Global voice mode instance
+_voice_mode = None
+
+
+def get_voice_mode() -> VoiceMode:
+    """Get or create voice mode instance."""
+    global _voice_mode
+    if _voice_mode is None:
+        _voice_mode = VoiceMode()
+    return _voice_mode
+
+
+def handle_voice_command(args: list, chat_func: Callable) -> bool:
+    """
+    Handle /voice commands.
+    Returns True if command was handled, False otherwise.
+    """
+    if not args:
+        print("""
+Voice Commands:
+  /voice deps   - Check voice dependencies
+  /voice start  - Single voice interaction
+  /voice talk   - Continuous voice conversation (say 'stop' to end)
+""")
+        return True
+
+    action = args[0].lower()
+    vm = get_voice_mode()
+
+    if action == "deps":
+        deps = vm.check_dependencies()
+        print("\nVoice Dependencies:")
+        for dep, status in deps.items():
+            if status is True:
+                print(f"  {dep}: OK")
+            elif status is False:
+                print(f"  {dep}: MISSING")
+            else:
+                print(f"  {dep}: {status}")
+        return True
+
+    elif action == "start":
+        try:
+            text = vm.listen_and_transcribe()
+            if text:
+                print(f"\n📝 You said: {text}")
+                print("\nMAUDE: ", end="", flush=True)
+                response_text = ""
+                for chunk in chat_func(text):
+                    print(chunk, end="", flush=True)
+                    response_text += chunk
+                print()
+                # Speak the response
+                vm.speak(response_text)
+        except Exception as e:
+            print(f"\n[Voice error: {e}]")
+        return True
+
+    elif action == "talk":
+        print("\n🎙️ Talk mode started. Say 'stop', 'exit', or 'quit' to end.\n")
+        try:
+            while True:
+                text = vm.listen_and_transcribe()
+                if not text:
+                    continue
+
+                print(f"\n📝 You said: {text}")
+
+                # Check for exit commands
+                if text.lower().strip() in ["stop", "exit", "quit", "goodbye"]:
+                    vm.speak("Goodbye!")
+                    print("\n👋 Talk mode ended.")
+                    break
+
+                print("\nMAUDE: ", end="", flush=True)
+                response_text = ""
+                for chunk in chat_func(text):
+                    print(chunk, end="", flush=True)
+                    response_text += chunk
+                print()
+
+                # Speak the response
+                vm.speak(response_text)
+
+        except KeyboardInterrupt:
+            print("\n\n👋 Talk mode interrupted.")
+        return True
+
+    return False
 
 # API endpoint
 API_URL = f"http://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
@@ -363,7 +660,7 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    print("\nType 'quit' to exit, 'clear' to reset conversation.\n")
+    print("\nType 'quit' to exit, 'clear' to reset, '/voice' for voice mode.\n")
 
     try:
         while True:
@@ -380,6 +677,24 @@ def main():
                 if user_input.lower() == 'clear':
                     messages.clear()
                     print("Conversation cleared.")
+                    continue
+
+                # Handle /voice commands
+                if user_input.startswith("/voice"):
+                    parts = user_input.split()[1:] if len(user_input.split()) > 1 else []
+                    handle_voice_command(parts, stream_chat)
+                    continue
+
+                # Handle /help
+                if user_input == "/help":
+                    print("""
+Commands:
+  quit          - Exit MAUDE
+  clear         - Clear conversation history
+  /voice deps   - Check voice dependencies
+  /voice start  - Single voice interaction
+  /voice talk   - Continuous voice mode
+""")
                     continue
 
                 print("\nMAUDE: ", end="", flush=True)

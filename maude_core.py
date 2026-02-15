@@ -1050,11 +1050,11 @@ def tool_view_image(path: str, question: str = None) -> str:
 def tool_ask_frontier(question: str, context: str = None, provider: str = None) -> str:
     """Escalate a question to a frontier cloud model."""
     try:
-        from frontier import ask_frontier, list_available_providers
+        from frontier import ask_frontier, list_available_providers, RateLimitError
 
         available = list_available_providers()
         if not available:
-            return "Error: No frontier providers configured. Set API keys in .env"
+            return "Error: No frontier providers configured. Set API keys with /keys set <provider> <key>"
 
         provider_name = provider if provider in available else None
         log("Escalating to frontier model...")
@@ -1069,6 +1069,10 @@ def tool_ask_frontier(question: str, context: str = None, provider: str = None) 
         log(f"{response.provider}: {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f}")
 
         return f"[Expert response from {response.provider}]\n\n{response.content}"
+
+    except RateLimitError as e:
+        wait_msg = f" Try again in {e.retry_after}s." if e.retry_after else " Wait a minute and try again."
+        return f"[Rate limit] {e.provider} free tier limit reached.{wait_msg} Local models are still available."
 
     except Exception as e:
         return f"Error calling frontier model: {e}"

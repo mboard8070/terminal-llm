@@ -54,6 +54,42 @@ STRATEGY:
 3. Keep responses concise for mobile"""
 
 
+def _escalate_to_frontier(user_question: str) -> str:
+    """Escalate a question to Claude/Gemini when the local model can't handle it."""
+    try:
+        from frontier import ask_frontier, list_available_providers, RateLimitError
+
+        available = list_available_providers()
+        if not available:
+            return "I wasn't able to handle that locally and no cloud models are configured."
+
+        priority = ["claude", "gemini", "openai", "grok", "mistral"]
+        errors = []
+        for provider in priority:
+            if provider not in available:
+                continue
+            try:
+                print(f">>> Escalating to {provider}...", flush=True)
+                response = ask_frontier(
+                    query=user_question,
+                    provider_name=provider,
+                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise — this is for Telegram."
+                )
+                print(f">>> ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})", flush=True)
+                return response.content
+            except RateLimitError:
+                errors.append(f"{provider}: rate limited")
+                continue
+            except Exception as e:
+                errors.append(f"{provider}: {e}")
+                continue
+
+        return f"I tried escalating to cloud models but they're all unavailable ({', '.join(errors)})."
+
+    except ImportError:
+        return "I wasn't able to handle that request. Could you give me more detail?"
+
+
 def get_client():
     return OpenAI(base_url=LOCAL_URL, api_key="not-needed")
 
@@ -88,7 +124,7 @@ async def maude_callback(msg: IncomingMessage) -> str:
             if not assistant_msg.tool_calls:
                 reply = assistant_msg.content or ""
                 if not reply.strip():
-                    reply = "I found some information but couldn't summarize it. Try rephrasing your question."
+                    reply = _escalate_to_frontier(msg.text)
                 print(f">>> MAUDE: {reply[:100]}...", flush=True)
                 # Log for sync (after processing complete)
                 append_chat_log("telegram", "user", msg.text)
@@ -119,7 +155,8 @@ async def maude_callback(msg: IncomingMessage) -> str:
                     "content": result
                 })
 
-        return "Still processing... try again in a moment."
+        # Local model exhausted tool iterations — escalate to frontier
+        return _escalate_to_frontier(msg.text)
 
     except Exception as e:
         print(f">>> Error: {e}", flush=True)
