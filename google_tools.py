@@ -35,13 +35,16 @@ CONFIG_DIR = Path.home() / ".config" / "maude"
 CREDENTIALS_FILE = CONFIG_DIR / "credentials.json"
 TOKEN_FILE = CONFIG_DIR / "google_token.json"
 
-# Scopes for Gmail and Drive
+# Scopes for Gmail, Drive, Sheets, Slides, and Calendar
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.compose',
     'https://www.googleapis.com/auth/drive.readonly',
     'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/presentations',
+    'https://www.googleapis.com/auth/calendar',
 ]
 
 
