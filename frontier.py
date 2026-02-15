@@ -5,10 +5,21 @@ Provides unified access to cloud LLMs: Claude, GPT, Gemini, Grok, Mistral.
 """
 
 import os
+import logging
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from providers import PROVIDERS, Provider, ProviderConfig, get_api_key
+
+log = logging.getLogger(__name__)
+
+
+class RateLimitError(Exception):
+    """Raised when a provider's rate limit (e.g. free tier) is reached."""
+    def __init__(self, provider: str, message: str, retry_after: Optional[int] = None):
+        self.provider = provider
+        self.retry_after = retry_after
+        super().__init__(message)
 
 
 @dataclass
@@ -61,6 +72,7 @@ def ask_frontier(
 
     Raises:
         ValueError: If no providers are available
+        RateLimitError: If the provider's rate limit is reached
         Exception: On API errors
     """
     # Select provider
@@ -145,6 +157,7 @@ def _call_google(
 ) -> FrontierResponse:
     """Call Google Gemini API."""
     import google.generativeai as genai
+    from google.api_core.exceptions import ResourceExhausted, TooManyRequests
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(
@@ -160,7 +173,23 @@ def _call_google(
         role = "user" if msg["role"] == "user" else "model"
         gemini_messages.append({"role": role, "parts": [msg["content"]]})
 
-    response = model.generate_content(gemini_messages)
+    try:
+        response = model.generate_content(gemini_messages)
+    except (ResourceExhausted, TooManyRequests) as e:
+        error_str = str(e)
+        # Parse retry-after if present
+        retry_after = None
+        if "retry" in error_str.lower():
+            import re
+            match = re.search(r'(\d+)\s*s(?:ec)?', error_str)
+            if match:
+                retry_after = int(match.group(1))
+
+        raise RateLimitError(
+            provider=config.name,
+            message=f"Gemini free tier limit reached. {f'Try again in {retry_after}s.' if retry_after else 'Try again in a minute.'}",
+            retry_after=retry_after
+        ) from e
 
     # Gemini token counting
     input_tokens = response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0

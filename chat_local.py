@@ -13,6 +13,7 @@ load_dotenv()
 import time
 import json
 from pathlib import Path
+from typing import Optional
 from openai import OpenAI
 
 # Textual TUI framework
@@ -28,6 +29,9 @@ import pyfiglet
 # MAUDE core - shared tools
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since
+
+# Voice mode
+from voice import VoiceMode, VoiceConfig, check_voice_dependencies
 
 # Minimal imports
 from keys import KeyManager
@@ -63,6 +67,94 @@ class TUIConsole:
 
 
 console = TUIConsole()
+
+
+class VoiceController:
+    """Manages voice mode state and lifecycle for TUI integration."""
+
+    def __init__(self, app: 'MaudeApp'):
+        self.app = app
+        self.voice_mode: Optional[VoiceMode] = None
+        self._active = False
+
+    def create_maude_callback(self):
+        """Create a synchronous callback that wraps chat() for voice mode."""
+        def callback(text: str) -> str:
+            # Add user message to shared history
+            self.app.messages.append({"role": "user", "content": text})
+
+            # Call chat() - this handles all tool execution
+            response = chat(self.app.client, self.app.messages)
+
+            if response:
+                # Add to shared history
+                self.app.messages.append({"role": "assistant", "content": response})
+                # Log for sync
+                append_chat_log("voice", "user", text)
+                append_chat_log("voice", "assistant", response)
+                return response
+            return "I encountered an error processing your request."
+
+        return callback
+
+    async def initialize(self):
+        """Initialize voice mode components."""
+        if self.voice_mode is None:
+            self.voice_mode = VoiceMode()
+
+            # Set UI callbacks for TUI integration
+            self.voice_mode.set_ui_callbacks(
+                on_status=lambda s: self.app.call_from_thread(self.app.update_voice_status, s),
+                on_transcription=lambda t: self.app.call_from_thread(
+                    self.app.write_output, f"\n[bold green]YOU (voice) >[/bold green] {t}"
+                ),
+                on_response=lambda r: self.app.call_from_thread(
+                    self.app.write_output, f"[bold magenta]MAUDE:[/bold magenta] {r}"
+                )
+            )
+
+            await self.voice_mode.initialize()
+        self._active = True
+
+    async def run_single(self):
+        """Run a single voice listen/respond cycle."""
+        if not self._active:
+            await self.initialize()
+
+        self.app.call_from_thread(self.app.update_voice_status, "Listening...")
+        text = await self.voice_mode.listen()
+
+        if text:
+            self.app.call_from_thread(
+                self.app.write_output, f"\n[bold green]YOU (voice) >[/bold green] {text}"
+            )
+            self.app.call_from_thread(self.app.update_voice_status, "Processing...")
+
+            callback = self.create_maude_callback()
+            response = callback(text)
+
+            self.app.call_from_thread(self.app.update_voice_status, "Speaking...")
+            await self.voice_mode.speak(response)
+
+        self.app.call_from_thread(self.app.update_voice_status, "")
+
+    async def run_talk_mode(self):
+        """Run continuous voice conversation mode."""
+        if not self._active:
+            await self.initialize()
+
+        callback = self.create_maude_callback()
+        await self.voice_mode.talk_mode(callback)
+        self.app.call_from_thread(self.app.update_voice_status, "")
+
+    def stop(self):
+        """Stop voice mode."""
+        if self.voice_mode:
+            self.voice_mode.stop_talk_mode()
+        self._active = False
+        if self.app:
+            self.app.call_from_thread(self.app.update_voice_status, "")
+
 
 # Set up logging callback for maude_core to use TUI console
 def tui_log(message: str):
@@ -137,6 +229,43 @@ def print_separator():
     console.print("─" * console.width, style="dim cyan")
 
 
+def _escalate_to_frontier(user_question: str) -> str:
+    """Escalate a question to Claude/Gemini when the local model gets stuck."""
+    try:
+        from frontier import ask_frontier, list_available_providers, RateLimitError
+
+        available = list_available_providers()
+        if not available:
+            return "I wasn't able to handle that locally and no cloud models are configured. Could you give me more detail so I can try a different approach?"
+
+        # Try providers in priority order: Claude first, then Gemini, then others
+        priority = ["claude", "gemini", "openai", "grok", "mistral"]
+        errors = []
+        for provider in priority:
+            if provider not in available:
+                continue
+            try:
+                console.print(f"[dim cyan]  Asking {provider}...[/dim cyan]")
+                response = ask_frontier(
+                    query=user_question,
+                    provider_name=provider,
+                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise."
+                )
+                console.print(f"[dim cyan]  ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})[/dim cyan]")
+                return response.content
+            except RateLimitError as e:
+                errors.append(f"{provider}: rate limited")
+                continue
+            except Exception as e:
+                errors.append(f"{provider}: {e}")
+                continue
+
+        return f"I tried escalating to cloud models but they're all unavailable right now ({', '.join(errors)}). Could you try again in a moment?"
+
+    except ImportError:
+        return "I wasn't able to handle that locally. Could you give me more detail so I can try a different approach?"
+
+
 def chat(client, messages: list):
     """Send chat request to local LLM with tool support."""
     global show_thinking
@@ -150,8 +279,12 @@ def chat(client, messages: list):
     while True:
         tool_iteration += 1
         if tool_iteration > max_tool_iterations:
-            console.print("[dim yellow](max tool iterations reached)[/dim yellow]")
-            break
+            console.print("[dim yellow](max tool iterations reached — escalating to frontier model...)[/dim yellow]")
+            user_question = next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                "Help me with my request"
+            )
+            return _escalate_to_frontier(user_question)
         try:
             start_time = time.time()
 
@@ -217,11 +350,16 @@ def chat(client, messages: list):
                     if call_signature in recent_tool_calls:
                         consecutive_duplicates += 1
                         console.print(f"[dim yellow]  [{func_name}] (skipped duplicate)[/dim yellow]")
-                        result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user.)"
+                        result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user with the best answer you can based on information gathered so far.)"
                         # Break out if too many duplicates in a row
                         if consecutive_duplicates >= 3:
-                            console.print("[dim yellow](breaking loop - too many duplicate calls)[/dim yellow]")
-                            return "I attempted to complete this task but got stuck in a loop. Please try rephrasing your request or ask me something else."
+                            console.print("[dim yellow](escalating to frontier model...)[/dim yellow]")
+                            # Extract the user's original question from messages
+                            user_question = next(
+                                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                                "Help me with my request"
+                            )
+                            return _escalate_to_frontier(user_question)
                     else:
                         consecutive_duplicates = 0  # Reset on successful new call
                         recent_tool_calls.append(call_signature)
@@ -281,10 +419,15 @@ def handle_command(cmd: str) -> str:
     if command == "help":
         return """MAUDE Commands:
 
-/help      - Show this help
-/model     - Show current model configuration
-/copy      - Copy last response to file (~/.config/maude/last_response.txt)
-/copymode  - Show how to copy text in tmux
+/help         - Show this help
+/model        - Show current model configuration
+/copy         - Copy last response to file (~/.config/maude/last_response.txt)
+/copymode     - Show how to copy text in tmux
+/voice start  - Single voice listen/respond
+/voice talk   - Continuous voice conversation
+/voice stop   - Stop voice mode
+/voice config - Show voice configuration
+/voice deps   - Check voice dependencies
 
 Tools available:
 - search_directory, search_file, read_file, write_file, edit_file
@@ -330,6 +473,41 @@ Set MAUDE_MODEL env var to use a different local model."""
 6. Paste:           Ctrl+B ]
 
 Or hold Shift while selecting with mouse to bypass tmux."""
+    elif command == "voice":
+        subcommand = parts[1].lower() if len(parts) > 1 else ""
+
+        if subcommand == "deps":
+            deps = check_voice_dependencies()
+            lines = ["Voice Dependencies:"]
+            for dep, available in deps.items():
+                status = "[green]OK[/green]" if available else "[red]MISSING[/red]"
+                lines.append(f"  {dep}: {status}")
+            return "\n".join(lines)
+
+        elif subcommand == "config":
+            return """Voice Configuration:
+
+Backend: whisper_local (Whisper STT + TTS)
+TTS Provider: piper (fallback: espeak)
+Whisper Model: base
+
+Use /voice start for single interaction
+Use /voice talk for continuous conversation"""
+
+        elif subcommand in ["start", "talk", "stop"]:
+            # Return special signal for async handling
+            return f"__VOICE_ACTION__{subcommand}"
+
+        else:
+            return """Voice Commands:
+
+/voice start  - Single voice listen/respond
+/voice talk   - Continuous voice conversation
+/voice stop   - Stop voice mode
+/voice config - Show voice configuration
+/voice deps   - Check voice dependencies
+
+Say "stop", "exit", or "quit" during talk mode to end."""
     else:
         return f"Unknown command: /{command}\nType /help for available commands."
 
@@ -392,8 +570,18 @@ class MaudeApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+c", "handle_interrupt", "Quit/Stop Voice"),
     ]
+
+    def action_handle_interrupt(self):
+        """Handle Ctrl+C: stop voice during voice mode, exit otherwise."""
+        if self._voice_active and self.voice_controller:
+            self.voice_controller.stop()
+            self._voice_active = False
+            self.write_output("\n[dim yellow]Voice mode interrupted.[/dim yellow]")
+            self.update_voice_status("")
+        else:
+            self.exit()
 
     def __init__(self):
         super().__init__()
@@ -402,6 +590,9 @@ class MaudeApp(App):
         self.spinner_frame = 0
         self.spinner_timer = None
         self.thinking_line_count = 0
+        # Voice mode
+        self.voice_controller: Optional[VoiceController] = None
+        self._voice_active = False
         # For sync: start from end of log file
         import os
         log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
@@ -465,6 +656,17 @@ class MaudeApp(App):
         if hasattr(self, 'output_log'):
             self.output_log.write(text)
 
+    def update_voice_status(self, status: str):
+        """Update status bar for voice mode."""
+        try:
+            status_widget = self.query_one("#status", Static)
+            if status:
+                status_widget.update(Text(f"🎤 {status}", style="cyan"))
+            else:
+                status_widget.update("")
+        except:
+            pass
+
     def check_telegram_messages(self):
         """Check for Telegram messages and display them."""
         try:
@@ -503,7 +705,23 @@ class MaudeApp(App):
         if user_input.startswith("/"):
             result = handle_command(user_input)
             if result:
-                self.write_output(f"\n{result}")
+                # Check for voice action signals
+                if result.startswith("__VOICE_ACTION__"):
+                    action = result.replace("__VOICE_ACTION__", "")
+                    if action == "start":
+                        self.write_output("[dim]Starting voice mode...[/dim]")
+                        self.voice_start_worker()
+                    elif action == "talk":
+                        self.write_output("[dim]Starting talk mode... Say 'stop' to end.[/dim]")
+                        self.voice_talk_worker()
+                    elif action == "stop":
+                        if self.voice_controller:
+                            self.voice_controller.stop()
+                            self.write_output("[dim]Voice mode stopped.[/dim]")
+                        else:
+                            self.write_output("[dim]Voice mode not active.[/dim]")
+                else:
+                    self.write_output(f"\n{result}")
             return
 
         # Process with LLM in background
@@ -555,6 +773,43 @@ class MaudeApp(App):
             append_chat_log("cli", "user", user_input)
             append_chat_log("cli", "assistant", response)
 
+    @work(thread=True)
+    def voice_start_worker(self):
+        """Single voice interaction in background thread."""
+        self._voice_active = True
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Initialize voice controller if needed
+            if self.voice_controller is None:
+                self.voice_controller = VoiceController(self)
+
+            loop.run_until_complete(self.voice_controller.run_single())
+        except Exception as e:
+            self.call_from_thread(self.write_output, f"[red]Voice error: {e}[/red]")
+        finally:
+            loop.close()
+            self._voice_active = False
+
+    @work(thread=True)
+    def voice_talk_worker(self):
+        """Continuous voice mode in background thread."""
+        self._voice_active = True
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Initialize voice controller if needed
+            if self.voice_controller is None:
+                self.voice_controller = VoiceController(self)
+
+            loop.run_until_complete(self.voice_controller.run_talk_mode())
+        except Exception as e:
+            self.call_from_thread(self.write_output, f"[red]Voice error: {e}[/red]")
+        finally:
+            loop.close()
+            self._voice_active = False
+            self.call_from_thread(self.write_output, "[dim]Talk mode ended.[/dim]")
+
 
 def run_telegram_in_background():
     """Run Telegram bot in a background thread."""
@@ -569,7 +824,76 @@ def run_telegram_in_background():
         pass  # Silently continue - TUI keeps working
 
 
+def run_transcription_server():
+    """Run transcription server in a background thread."""
+    try:
+        from fastapi import FastAPI, UploadFile, File
+        from fastapi.responses import JSONResponse
+        import uvicorn
+        import tempfile
+
+        app = FastAPI()
+        whisper_model = None
+        whisper_type = None
+
+        def get_whisper():
+            nonlocal whisper_model, whisper_type
+            if whisper_model is not None:
+                return whisper_model, whisper_type
+
+            try:
+                from faster_whisper import WhisperModel
+                whisper_model = WhisperModel("base", device="cuda", compute_type="float16")
+                whisper_type = "faster"
+            except:
+                try:
+                    import whisper
+                    whisper_model = whisper.load_model("base")
+                    whisper_type = "original"
+                except:
+                    raise RuntimeError("No Whisper available")
+            return whisper_model, whisper_type
+
+        @app.get("/health")
+        def health():
+            return {"status": "ok", "service": "transcription"}
+
+        @app.post("/transcribe")
+        async def transcribe(audio: UploadFile = File(...)):
+            model, wtype = get_whisper()
+
+            suffix = ".wav"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                content = await audio.read()
+                f.write(content)
+                temp_path = f.name
+
+            try:
+                if wtype == "faster":
+                    segments, _ = model.transcribe(temp_path)
+                    text = " ".join(seg.text for seg in segments).strip()
+                else:
+                    result = model.transcribe(temp_path)
+                    text = result["text"].strip()
+                return JSONResponse({"text": text, "success": True})
+            finally:
+                import os
+                os.unlink(temp_path)
+
+        # Run on port 30001
+        uvicorn.run(app, host="0.0.0.0", port=30001, log_level="warning")
+
+    except ImportError:
+        pass  # FastAPI not installed
+    except Exception:
+        pass  # Silently continue
+
+
 def main():
+    # Start transcription server in background
+    transcription_thread = threading.Thread(target=run_transcription_server, daemon=True)
+    transcription_thread.start()
+
     # Check if Telegram should be enabled
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
 
