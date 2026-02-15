@@ -521,3 +521,68 @@ def send_to_server_maude(message: str) -> str:
             return f"Error sending to server MAUDE: {result.stderr}"
     except Exception as e:
         return f"Error: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic Tool Filtering and Fast Dispatch
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re as _re
+
+# Core tools always sent
+_CORE_TOOL_NAMES = {
+    "read_file", "write_file", "list_directory", "run_command",
+    "search_files", "edit_file",
+}
+
+# Server tools activated by keyword
+_SERVER_TOOL_NAMES = {
+    "upload_to_server", "download_from_server", "list_server_files",
+    "run_server_command", "send_to_server_maude",
+}
+
+_SERVER_KEYWORDS = ["server", "spark", "upload", "download", "remote", "ssh", "server maude"]
+
+# Build lookup
+_TOOL_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
+
+def get_tools_for_message(message: str) -> list:
+    """Return filtered tools relevant to the user's message."""
+    msg_lower = message.lower()
+    active = set(_CORE_TOOL_NAMES)
+
+    for kw in _SERVER_KEYWORDS:
+        if kw in msg_lower:
+            active.update(_SERVER_TOOL_NAMES)
+            break
+
+    return [t for t in TOOLS if t["function"]["name"] in active]
+
+# Fast dispatch patterns
+_FAST_PATTERNS = [
+    (_re.compile(r'\b(?:list|show|what.?s in)\b.*\b(?:director|folder|files)\b', _re.I),
+     "list_directory", lambda m, msg: {"path": "."}),
+    (_re.compile(r'\b(?:list|show)\b.*\bserver\b.*\b(?:files|director)\b', _re.I),
+     "list_server_files", lambda m, msg: {"path": ""}),
+    (_re.compile(r'\b(?:upload|send)\b.*\b(?:to server|to spark)\b', _re.I),
+     None, None),  # Skip — needs path from user
+    (_re.compile(r'\b(?:download|get)\b.*\b(?:from server|from spark)\b', _re.I),
+     None, None),  # Skip — needs path from user
+]
+
+def fast_dispatch(message: str):
+    """Try to match message to a direct tool call. Returns (name, args, result) or None."""
+    msg = message.strip()
+    for pattern, tool_name, arg_builder in _FAST_PATTERNS:
+        if tool_name is None:
+            continue
+        match = pattern.search(msg)
+        if match:
+            try:
+                args = arg_builder(match, msg)
+                result = execute_tool(tool_name, args)
+                if result and not result.startswith("Error:"):
+                    return tool_name, args, result
+            except Exception:
+                continue
+    return None

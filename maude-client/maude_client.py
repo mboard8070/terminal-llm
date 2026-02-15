@@ -23,7 +23,7 @@ from config import (
     SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
     CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
 )
-from client_tools import TOOLS, execute_tool
+from client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
 from heartbeat import start_heartbeat, stop_heartbeat
 
 
@@ -329,27 +329,23 @@ messages = []
 # System prompt
 SYSTEM_PROMPT = f"""You are MAUDE (Multi-Agent Unified Dispatch Engine), a helpful AI assistant.
 
-You are running as a CLIENT on the user's local machine (Mac or PC), connected to
-a Spark server for inference. You have access to:
+You are running as a CLIENT on the user's Mac, connected to a Spark server for inference.
 
-LOCAL TOOLS (operate on the user's machine):
-- read_file, write_file, edit_file - Local file operations
-- list_directory - Browse local filesystem
-- search_files - Search local files
-- run_command - Run local shell commands
+LOCAL TOOLS (operate on Mac):
+- read_file, write_file, edit_file: Local file operations
+- list_directory, search_files: Browse and search local files
+- run_command: Run local shell commands
 
-SERVER TOOLS (operate on Spark server):
-- upload_to_server - Send local files to server
-- download_from_server - Get files from server
-- list_server_files - Browse server filesystem
-- run_server_command - Run commands on server
-- send_to_server_maude - Message the server MAUDE instance
+SERVER TOOLS (operate on Spark):
+- upload_to_server, download_from_server: Transfer files
+- list_server_files: Browse server filesystem
+- run_server_command: Run commands on server
+- send_to_server_maude: Message the server MAUDE instance
 
-When the user asks to work with files, clarify if they mean LOCAL files or SERVER files.
-Use the appropriate tools based on context.
+The server MAUDE also has: Gmail, Google Drive, Sheets, Calendar, Slides, Contacts, YouTube, Substack, browser automation, social media posting, web search, and more. Use send_to_server_maude to delegate those tasks.
 
 Current client: {CLIENT_NAME}
-"""
+Be concise and helpful."""
 
 
 def check_server_connection() -> bool:
@@ -368,11 +364,19 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     """Send message and stream the response."""
     messages.append({"role": "user", "content": user_message})
 
+    # Fast dispatch — try direct tool call first
+    result = fast_dispatch(user_message)
+    if result:
+        tool_name, args, tool_result = result
+        yield f"\n[{tool_name}]\n{tool_result}\n"
+        messages.append({"role": "assistant", "content": f"[Used {tool_name}]\n{tool_result}"})
+        return
+
     # Build request
     payload = {
         "model": MODEL_NAME,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": TOOLS,
+        "tools": get_tools_for_message(user_message),
         "tool_choice": "auto",
         "temperature": TEMPERATURE,
         "max_tokens": 4096,
@@ -488,7 +492,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
     payload = {
         "model": MODEL_NAME,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": TOOLS,
+        "tools": get_tools_for_message(""),
         "tool_choice": "auto",
         "temperature": TEMPERATURE,
         "max_tokens": 4096,
@@ -694,6 +698,12 @@ Commands:
   /voice deps   - Check voice dependencies
   /voice start  - Single voice interaction
   /voice talk   - Continuous voice mode
+
+Features:
+  - Dynamic tool filtering: Only relevant tools sent per message
+  - Fast dispatch: Common queries (list files, etc.) skip the LLM
+  - Server delegation: Ask MAUDE to use Gmail, Drive, Calendar, etc.
+    via the server MAUDE instance (mention 'server' in your message)
 """)
                     continue
 
