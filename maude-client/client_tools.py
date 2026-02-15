@@ -541,7 +541,13 @@ _SERVER_TOOL_NAMES = {
     "run_server_command", "send_to_server_maude",
 }
 
-_SERVER_KEYWORDS = ["server", "spark", "upload", "download", "remote", "ssh", "server maude"]
+_SERVER_KEYWORDS = [
+    "server", "spark", "upload", "download", "remote", "ssh", "server maude",
+    # Services only available on server — trigger send_to_server_maude
+    "gmail", "email", "inbox", "drive", "google doc", "sheets", "spreadsheet",
+    "calendar", "event", "slides", "presentation", "contacts", "youtube",
+    "substack", "browser", "tweet", "bluesky", "linkedin", "social media",
+]
 
 # Build lookup
 _TOOL_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
