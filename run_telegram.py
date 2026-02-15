@@ -21,7 +21,7 @@ from channels.telegram import create_telegram_channel
 
 # Use shared MAUDE core
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
 
 # Get config from maude_core
 LOCAL_URL = maude_core.LOCAL_URL
@@ -106,6 +106,32 @@ async def maude_callback(msg: IncomingMessage) -> str:
     print(f">>> {msg.username}: {msg.text}", flush=True)
 
     try:
+        # Fast path: direct tool dispatch without LLM reasoning
+        try:
+            result = fast_dispatch(msg.text)
+            if result:
+                tool_name, args, tool_result = result
+                print(f">>> → {tool_name}", flush=True)
+                client = get_client()
+                summary_messages = [
+                    {"role": "system", "content": "You are MAUDE. A tool was already called. Summarize the result concisely for mobile/Telegram."},
+                    {"role": "user", "content": msg.text},
+                    {"role": "user", "content": f"Tool result:\n{tool_result[:2000]}\n\nSummarize briefly."}
+                ]
+                try:
+                    summary = client.chat.completions.create(
+                        model=MODEL, messages=summary_messages,
+                        temperature=0.2, max_tokens=512
+                    )
+                    reply = summary.choices[0].message.content or tool_result[:1000]
+                except Exception:
+                    reply = tool_result[:1000]
+                append_chat_log("telegram", "user", msg.text)
+                append_chat_log("telegram", "assistant", reply)
+                return reply
+        except Exception:
+            pass
+
         # Auto-route: check if a subagent should handle this directly
         try:
             from auto_router import route_message
