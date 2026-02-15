@@ -963,6 +963,258 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                 "required": ["query"]
             }
         }
+    },
+    # YouTube tools
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_search",
+            "description": "Search YouTube for videos, channels, or playlists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {"type": "integer", "description": "Maximum results (default 5)"},
+                    "video_type": {"type": "string", "description": "Type: 'video', 'channel', or 'playlist'. Default: 'video'"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_get_video",
+            "description": "Get detailed info about a YouTube video (title, stats, description, duration).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "video_id": {"type": "string", "description": "The YouTube video ID"}
+                },
+                "required": ["video_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_get_channel",
+            "description": "Get YouTube channel info and stats.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {"type": "string", "description": "The YouTube channel ID"}
+                },
+                "required": ["channel_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_list_playlists",
+            "description": "List YouTube playlists. If no channel_id, lists your own playlists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "channel_id": {"type": "string", "description": "Channel ID (omit for your own playlists)"},
+                    "max_results": {"type": "integer", "description": "Maximum results (default 10)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_get_playlist_items",
+            "description": "List videos in a YouTube playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string", "description": "The playlist ID"},
+                    "max_results": {"type": "integer", "description": "Maximum results (default 20)"}
+                },
+                "required": ["playlist_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_create_playlist",
+            "description": "Create a new YouTube playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Playlist title"},
+                    "description": {"type": "string", "description": "Playlist description"},
+                    "privacy": {"type": "string", "description": "Privacy: 'public', 'private', or 'unlisted'. Default: 'private'"}
+                },
+                "required": ["title"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_add_to_playlist",
+            "description": "Add a video to a YouTube playlist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "playlist_id": {"type": "string", "description": "The playlist ID"},
+                    "video_id": {"type": "string", "description": "The video ID to add"}
+                },
+                "required": ["playlist_id", "video_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_get_comments",
+            "description": "Get comments on a YouTube video.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "video_id": {"type": "string", "description": "The video ID"},
+                    "max_results": {"type": "integer", "description": "Maximum comments (default 10)"}
+                },
+                "required": ["video_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_post_comment",
+            "description": "Post a comment on a YouTube video.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "video_id": {"type": "string", "description": "The video ID to comment on"},
+                    "text": {"type": "string", "description": "Comment text"}
+                },
+                "required": ["video_id", "text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_my_channel",
+            "description": "Get your own YouTube channel info and stats.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    # Substack tools
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_create_draft",
+            "description": "Create a draft post on Substack newsletter.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Post title"},
+                    "body": {"type": "string", "description": "Post body text (plain text, double newlines for paragraphs)"},
+                    "subtitle": {"type": "string", "description": "Post subtitle"},
+                    "audience": {"type": "string", "description": "Audience: 'everyone' (free) or 'only_paid'. Default: 'everyone'"}
+                },
+                "required": ["title", "body"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_list_drafts",
+            "description": "List draft posts on Substack.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum drafts to return (default 10)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_list_posts",
+            "description": "List published Substack posts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximum posts to return (default 10)"},
+                    "offset": {"type": "integer", "description": "Offset for pagination (default 0)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_get_post",
+            "description": "Get a specific Substack post or draft by ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "post_id": {"type": "string", "description": "The post or draft ID"}
+                },
+                "required": ["post_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_update_draft",
+            "description": "Update an existing Substack draft.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string", "description": "The draft ID to update"},
+                    "title": {"type": "string", "description": "New title"},
+                    "body": {"type": "string", "description": "New body text"},
+                    "subtitle": {"type": "string", "description": "New subtitle"}
+                },
+                "required": ["draft_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_delete_draft",
+            "description": "Delete a Substack draft.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_id": {"type": "string", "description": "The draft ID to delete"}
+                },
+                "required": ["draft_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "substack_get_stats",
+            "description": "Get Substack publication statistics (subscribers, posts, etc.).",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
     }
 ]
 
@@ -1891,6 +2143,59 @@ def execute_tool(name: str, arguments: dict) -> str:
     elif name == "contacts_search":
         from google_tools import contacts_search
         return contacts_search(arguments.get("query", ""))
+    # YouTube tools
+    elif name == "youtube_search":
+        from google_tools import youtube_search
+        return youtube_search(arguments.get("query", ""), arguments.get("max_results", 5), arguments.get("video_type", "video"))
+    elif name == "youtube_get_video":
+        from google_tools import youtube_get_video
+        return youtube_get_video(arguments.get("video_id", ""))
+    elif name == "youtube_get_channel":
+        from google_tools import youtube_get_channel
+        return youtube_get_channel(arguments.get("channel_id", ""))
+    elif name == "youtube_list_playlists":
+        from google_tools import youtube_list_playlists
+        return youtube_list_playlists(arguments.get("channel_id"), arguments.get("max_results", 10))
+    elif name == "youtube_get_playlist_items":
+        from google_tools import youtube_get_playlist_items
+        return youtube_get_playlist_items(arguments.get("playlist_id", ""), arguments.get("max_results", 20))
+    elif name == "youtube_create_playlist":
+        from google_tools import youtube_create_playlist
+        return youtube_create_playlist(arguments.get("title", ""), arguments.get("description", ""), arguments.get("privacy", "private"))
+    elif name == "youtube_add_to_playlist":
+        from google_tools import youtube_add_to_playlist
+        return youtube_add_to_playlist(arguments.get("playlist_id", ""), arguments.get("video_id", ""))
+    elif name == "youtube_get_comments":
+        from google_tools import youtube_get_comments
+        return youtube_get_comments(arguments.get("video_id", ""), arguments.get("max_results", 10))
+    elif name == "youtube_post_comment":
+        from google_tools import youtube_post_comment
+        return youtube_post_comment(arguments.get("video_id", ""), arguments.get("text", ""))
+    elif name == "youtube_my_channel":
+        from google_tools import youtube_my_channel
+        return youtube_my_channel()
+    # Substack tools
+    elif name == "substack_create_draft":
+        from substack_tools import substack_create_draft
+        return substack_create_draft(arguments.get("title", ""), arguments.get("body", ""), arguments.get("subtitle", ""), arguments.get("audience", "everyone"))
+    elif name == "substack_list_drafts":
+        from substack_tools import substack_list_drafts
+        return substack_list_drafts(arguments.get("limit", 10))
+    elif name == "substack_list_posts":
+        from substack_tools import substack_list_posts
+        return substack_list_posts(arguments.get("limit", 10), arguments.get("offset", 0))
+    elif name == "substack_get_post":
+        from substack_tools import substack_get_post
+        return substack_get_post(arguments.get("post_id", ""))
+    elif name == "substack_update_draft":
+        from substack_tools import substack_update_draft
+        return substack_update_draft(arguments.get("draft_id", ""), arguments.get("title"), arguments.get("body"), arguments.get("subtitle"))
+    elif name == "substack_delete_draft":
+        from substack_tools import substack_delete_draft
+        return substack_delete_draft(arguments.get("draft_id", ""))
+    elif name == "substack_get_stats":
+        from substack_tools import substack_get_stats
+        return substack_get_stats()
     # Browser automation tools
     elif name.startswith("browser_"):
         try:
