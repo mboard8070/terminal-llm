@@ -467,21 +467,25 @@ Set MAUDE_MODEL env var to use a different local model."""
         global _last_response
         if not _last_response:
             return "No response to copy yet."
+        # Try clipboard first
+        import shutil
+        copied = False
+        for clip_cmd in ["xclip -selection clipboard", "xsel --clipboard", "pbcopy", "wl-copy"]:
+            binary = clip_cmd.split()[0]
+            if shutil.which(binary):
+                try:
+                    subprocess.run(clip_cmd.split(), input=_last_response.encode(), timeout=5)
+                    copied = True
+                    break
+                except Exception:
+                    continue
+        # Always save to file too
         copy_path = Path.home() / ".config" / "maude" / "last_response.txt"
         copy_path.parent.mkdir(parents=True, exist_ok=True)
         copy_path.write_text(_last_response)
-        return f"Last response saved to: {copy_path}\n\nTo view: cat {copy_path}"
-    elif command == "copymode":
-        return """To copy text in tmux:
-
-1. Enter copy mode:  Ctrl+B [
-2. Navigate with arrow keys or Page Up/Down
-3. Start selection:  Space
-4. Move to end of selection
-5. Copy:            Enter
-6. Paste:           Ctrl+B ]
-
-Or hold Shift while selecting with mouse to bypass tmux."""
+        if copied:
+            return "Copied to clipboard!"
+        return f"Saved to: {copy_path}\n(Install xclip for direct clipboard: sudo apt install xclip)\n\nTip: Hold Shift + click-drag to select text in the TUI."
     elif command == "voice":
         subcommand = parts[1].lower() if len(parts) > 1 else ""
 
