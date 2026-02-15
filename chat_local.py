@@ -28,7 +28,7 @@ import pyfiglet
 
 # MAUDE core - shared tools
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message
+from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
 
 # Voice mode
 from voice import VoiceMode, VoiceConfig, check_voice_dependencies
@@ -768,23 +768,51 @@ class MaudeApp(App):
         # Start spinner
         self.call_from_thread(self.start_spinner)
 
-        # Auto-route: check if a subagent should handle this directly
+        # Fast path: direct tool dispatch without LLM reasoning
         response = None
         try:
-            from auto_router import route_message
-            decision = route_message(user_input, self.messages[-10:])
-            if decision.subagent and decision.confidence >= 0.5:
-                console.print(f"[dim cyan]  routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})[/dim cyan]")
-                from execution import execute_subagent
-                response = execute_subagent(
-                    decision.subagent,
-                    user_input,
-                    prefer_cloud=decision.prefer_cloud
-                )
-        except ImportError:
-            pass
+            result = fast_dispatch(user_input)
+            if result:
+                tool_name, args, tool_result = result
+                console.print(f"[dim cyan]  → {tool_name}[/dim cyan]")
+                # Give the LLM just the result to summarize (no tool definitions needed)
+                summary_messages = [
+                    {"role": "system", "content": "You are MAUDE. The user asked a question and a tool was already called. Summarize the result concisely."},
+                    {"role": "user", "content": user_input},
+                    {"role": "assistant", "content": f"I used {tool_name} and got this result:"},
+                    {"role": "user", "content": f"Tool result:\n{tool_result[:3000]}\n\nSummarize this for me."}
+                ]
+                try:
+                    summary = self.client.chat.completions.create(
+                        model=MODEL,
+                        messages=summary_messages,
+                        temperature=0.2,
+                        max_tokens=1024,
+                        extra_body={"num_ctx": NUM_CTX}
+                    )
+                    response = summary.choices[0].message.content
+                except Exception:
+                    response = tool_result[:2000]
         except Exception as e:
-            console.print(f"[dim yellow]  routing skipped: {e}[/dim yellow]")
+            console.print(f"[dim yellow]  fast dispatch skipped: {e}[/dim yellow]")
+
+        # Auto-route: check if a subagent should handle this directly
+        if not response:
+            try:
+                from auto_router import route_message
+                decision = route_message(user_input, self.messages[-10:])
+                if decision.subagent and decision.confidence >= 0.5:
+                    console.print(f"[dim cyan]  routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})[/dim cyan]")
+                    from execution import execute_subagent
+                    response = execute_subagent(
+                        decision.subagent,
+                        user_input,
+                        prefer_cloud=decision.prefer_cloud
+                    )
+            except ImportError:
+                pass
+            except Exception as e:
+                console.print(f"[dim yellow]  routing skipped: {e}[/dim yellow]")
 
         # Fall back to main tool-calling chat loop
         if not response:
