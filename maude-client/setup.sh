@@ -28,15 +28,15 @@ echo
 echo "Creating config directory..."
 mkdir -p ~/.maude/transfers
 
-# Check SSH key
+# Check Tailscale connectivity
 echo
-echo "Checking SSH connection to Spark server..."
-if ssh -o BatchMode=yes -o ConnectTimeout=5 mboard76@spark-e26c echo "OK" 2>/dev/null; then
-    echo "SSH connection OK"
+echo "Checking Tailscale connection to Spark server..."
+if ping -c 1 -W 3 spark-e26c > /dev/null 2>&1; then
+    echo "Tailscale connection OK"
 else
-    echo "Warning: Cannot connect to Spark server automatically."
-    echo "Make sure you have SSH key authentication set up:"
-    echo "  ssh-copy-id mboard76@spark-e26c"
+    echo "Warning: Cannot reach spark-e26c via Tailscale."
+    echo "Make sure Tailscale is installed and connected:"
+    echo "  https://tailscale.com/download"
 fi
 
 # Create launcher script
@@ -46,13 +46,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cat > ~/.maude/start_client.sh << EOF
 #!/bin/bash
-# MAUDE Client Launcher
+# MAUDE Client Launcher (via Tailscale)
 
-# Start SSH tunnel in background if not already running
-if ! pgrep -f "ssh.*30000:localhost:30000.*spark-e26c" > /dev/null; then
-    echo "Starting SSH tunnel..."
-    ssh -L 30000:localhost:30000 mboard76@spark-e26c -N &
-    sleep 2
+# Check Tailscale connectivity
+if ! ping -c 1 -W 2 spark-e26c > /dev/null 2>&1; then
+    echo "Error: Cannot reach spark-e26c. Is Tailscale connected?"
+    exit 1
 fi
 
 # Run client
@@ -95,4 +94,4 @@ echo
 echo "Or manually:"
 echo "  ~/.maude/start_client.sh"
 echo
-echo "The client will automatically start the SSH tunnel if needed."
+echo "Make sure Tailscale is connected before running."

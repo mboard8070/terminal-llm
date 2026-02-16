@@ -7,11 +7,16 @@ import subprocess
 import json
 from pathlib import Path
 from typing import Optional
-from config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR
+from config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, FILE_SERVER_URL
+import requests as _requests
 
 # Ensure transfer directory exists
 TRANSFER_DIR = Path(LOCAL_TRANSFER_DIR).expanduser()
 TRANSFER_DIR.mkdir(parents=True, exist_ok=True)
+
+# Ensure shared directory exists
+SHARED_DIR = Path(LOCAL_SHARED_DIR).expanduser()
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
 
 # Tool definitions for the LLM
 TOOLS = [
@@ -111,7 +116,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "upload_to_server",
-            "description": "Upload a local file to the Spark server.",
+            "description": "Upload/push a local file to the Spark server. Use when user says 'upload', 'push', or 'send to server'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -126,7 +131,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "download_from_server",
-            "description": "Download a file from the Spark server.",
+            "description": "Download/pull a file from the Spark server. Use when user says 'pull', 'download', 'grab', or 'fetch from server'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -141,7 +146,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_server_files",
-            "description": "List files in a directory on the Spark server.",
+            "description": "List files in a directory on the Spark server. Use to find files before pulling/downloading.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -176,6 +181,45 @@ TOOLS = [
                     "message": {"type": "string", "description": "Message to send to server MAUDE"}
                 },
                 "required": ["message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_shared",
+            "description": "List files in the shared folder (auto-synced between client and server). Check here first when looking for files from the server.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sync_shared",
+            "description": "Trigger an immediate sync of the shared folder between client and server.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pull_shared",
+            "description": "Pull/download a specific file from the server's shared folder. Use when user says 'pull', 'grab', or 'download' a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Name of the file in the server's shared folder"},
+                    "local_path": {"type": "string", "description": "Local destination path (defaults to ~/.maude/shared/)"}
+                },
+                "required": ["filename"]
             }
         }
     }
@@ -226,6 +270,15 @@ def execute_tool(name: str, arguments: dict) -> str:
             return run_server_command(arguments["command"])
         elif name == "send_to_server_maude":
             return send_to_server_maude(arguments["message"])
+        elif name == "list_shared":
+            return list_shared()
+        elif name == "sync_shared":
+            return sync_shared()
+        elif name == "pull_shared":
+            return pull_shared(
+                arguments.get("filename", ""),
+                arguments.get("local_path")
+            )
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -382,97 +435,36 @@ def run_command(command: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def upload_to_server(local_path: str, remote_path: str = None) -> str:
-    """Upload a file to the Spark server."""
+    """Upload a file to the Spark server via HTTP file server."""
     local_path = os.path.expanduser(local_path)
     if not os.path.exists(local_path):
         return f"Error: Local file not found: {local_path}"
 
     filename = os.path.basename(local_path)
-    if remote_path:
-        dest = f"{SERVER_SSH_HOST}:{SERVER_WORK_DIR}/{remote_path}"
-    else:
-        dest = f"{SERVER_SSH_HOST}:{SERVER_WORK_DIR}/transfers/{filename}"
 
     try:
-        # Ensure remote transfers directory exists
-        subprocess.run(
-            ["ssh", SERVER_SSH_HOST, f"mkdir -p {SERVER_WORK_DIR}/transfers"],
-            capture_output=True,
-            timeout=10
-        )
-
-        result = subprocess.run(
-            ["scp", local_path, dest],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-
-        if result.returncode == 0:
-            return f"Uploaded {local_path} to server: {dest}"
+        with open(local_path, "rb") as f:
+            data = f.read()
+        r = _requests.post(f"{FILE_SERVER_URL}/upload/{filename}", data=data, timeout=120)
+        if r.status_code == 200:
+            return f"Uploaded '{filename}' to server transfers folder ({len(data):,} bytes)"
         else:
-            return f"Error uploading: {result.stderr}"
-    except subprocess.TimeoutExpired:
-        return "Error: Upload timed out"
+            return f"Error uploading: {r.json().get('error', r.text)}"
+    except _requests.ConnectionError:
+        return "Error: Can't reach file server. Make sure Tailscale is connected and the server is running."
     except Exception as e:
         return f"Error: {e}"
 
 
 def download_from_server(remote_path: str, local_path: str = None) -> str:
-    """Download a file from the Spark server."""
+    """Download a file from the server's shared folder via HTTP."""
     filename = os.path.basename(remote_path)
-
-    if local_path:
-        local_path = os.path.expanduser(local_path)
-    else:
-        local_path = str(TRANSFER_DIR / filename)
-
-    # Handle relative paths on server
-    if not remote_path.startswith('/') and not remote_path.startswith('~'):
-        remote_path = f"{SERVER_WORK_DIR}/{remote_path}"
-
-    source = f"{SERVER_SSH_HOST}:{remote_path}"
-
-    try:
-        result = subprocess.run(
-            ["scp", source, local_path],
-            capture_output=True,
-            text=True,
-            timeout=120
-        )
-
-        if result.returncode == 0:
-            return f"Downloaded to {local_path}"
-        else:
-            return f"Error downloading: {result.stderr}"
-    except subprocess.TimeoutExpired:
-        return "Error: Download timed out"
-    except Exception as e:
-        return f"Error: {e}"
+    return pull_shared(filename, local_path)
 
 
 def list_server_files(path: str = None) -> str:
-    """List files on the server."""
-    if path:
-        if not path.startswith('/') and not path.startswith('~'):
-            path = f"{SERVER_WORK_DIR}/{path}"
-    else:
-        path = SERVER_WORK_DIR
-
-    try:
-        result = subprocess.run(
-            ["ssh", SERVER_SSH_HOST, f"ls -la {path}"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if result.returncode == 0:
-            return f"Server files at {path}:\n{result.stdout}"
-        else:
-            return f"Error: {result.stderr}"
-    except Exception as e:
-        return f"Error: {e}"
+    """List files on the server's shared folder."""
+    return list_shared()
 
 
 def run_server_command(command: str) -> str:
@@ -524,6 +516,80 @@ def send_to_server_maude(message: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared Folder Operations
+# ─────────────────────────────────────────────────────────────────────────────
+
+def list_shared() -> str:
+    """List files in the server's shared folder via HTTP file server."""
+    try:
+        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5)
+        data = r.json()
+        if "error" in data:
+            return f"Error: {data['error']}"
+        files = data.get("files", [])
+        if not files:
+            return "Shared folder on server is empty."
+        entries = []
+        for f in files:
+            if f["is_dir"]:
+                entries.append(f"  [DIR]  {f['name']}/")
+            else:
+                size = f["size"]
+                entries.append(f"  [FILE] {f['name']} ({size:,} bytes)")
+        return "Server shared folder:\n" + "\n".join(entries)
+    except _requests.ConnectionError:
+        return "Error: Can't reach file server. Make sure Tailscale is connected and the server is running."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def pull_shared(filename: str, local_path: str = None) -> str:
+    """Pull a file from the server's shared folder via HTTP."""
+    dest_dir = Path(LOCAL_SHARED_DIR).expanduser()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if local_path:
+        dest = Path(os.path.expanduser(local_path))
+    else:
+        dest = dest_dir / filename
+
+    try:
+        r = _requests.get(f"{FILE_SERVER_URL}/download/{filename}", timeout=120, stream=True)
+        if r.status_code == 404:
+            return f"Error: '{filename}' not found on server. Use list_shared to see available files."
+        r.raise_for_status()
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        size = dest.stat().st_size
+        return f"Pulled '{filename}' to {dest} ({size:,} bytes)"
+    except _requests.ConnectionError:
+        return "Error: Can't reach file server. Make sure Tailscale is connected and the server is running."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def sync_shared() -> str:
+    """Pull all files from server shared folder."""
+    try:
+        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5)
+        data = r.json()
+        files = data.get("files", [])
+        if not files:
+            return "Nothing to sync — server shared folder is empty."
+        pulled = []
+        for f in files:
+            if not f["is_dir"]:
+                result = pull_shared(f["name"])
+                pulled.append(result)
+        return "Sync complete:\n" + "\n".join(pulled)
+    except _requests.ConnectionError:
+        return "Error: Can't reach file server. Make sure Tailscale is connected and the server is running."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Tool Filtering and Fast Dispatch
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -532,7 +598,7 @@ import re as _re
 # Core tools always sent
 _CORE_TOOL_NAMES = {
     "read_file", "write_file", "list_directory", "run_command",
-    "search_files", "edit_file",
+    "search_files", "edit_file", "list_shared", "sync_shared", "pull_shared",
 }
 
 # Server tools activated by keyword
@@ -543,6 +609,8 @@ _SERVER_TOOL_NAMES = {
 
 _SERVER_KEYWORDS = [
     "server", "spark", "upload", "download", "remote", "ssh", "server maude",
+    "pull", "push", "fetch", "grab", "send to server", "get from server",
+    "shared folder", "shared", "transfer", "sync",
     # Services only available on server — trigger send_to_server_maude
     "gmail", "email", "inbox", "drive", "google doc", "sheets", "spreadsheet",
     "calendar", "event", "slides", "presentation", "contacts", "youtube",
@@ -565,7 +633,20 @@ def get_tools_for_message(message: str) -> list:
     return [t for t in TOOLS if t["function"]["name"] in active]
 
 # Fast dispatch patterns
+def _extract_filename(match, msg):
+    """Extract filename from a pull/grab/fetch command."""
+    # Get everything after the keyword as the filename
+    keyword_end = match.end()
+    filename = msg[keyword_end:].strip().strip('"').strip("'")
+    if filename:
+        return {"filename": filename}
+    return None
+
 _FAST_PATTERNS = [
+    (_re.compile(r'\b(?:pull|grab|fetch)\s+(.+)', _re.I),
+     "pull_shared", lambda m, msg: {"filename": m.group(1).strip().strip('"').strip("'")}),
+    (_re.compile(r'\b(?:list|show|what.?s in)\b.*\b(?:shared)\b', _re.I),
+     "list_shared", lambda m, msg: {}),
     (_re.compile(r'\b(?:list|show|what.?s in)\b.*\b(?:director|folder|files)\b', _re.I),
      "list_directory", lambda m, msg: {"path": "."}),
     (_re.compile(r'\b(?:list|show)\b.*\bserver\b.*\b(?:files|director)\b', _re.I),

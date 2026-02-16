@@ -2,10 +2,9 @@
 """
 MAUDE Client - Local interface connecting to Spark server for inference.
 
-Run the SSH tunnel first:
-  ssh -L 30000:localhost:30000 mboard76@spark-e26c -N &
+Connects via Tailscale to spark-e26c:30000.
 
-Then run this client:
+Run:
   python maude_client.py
 """
 
@@ -25,6 +24,7 @@ from config import (
 )
 from client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
 from heartbeat import start_heartbeat, stop_heartbeat
+from shared_sync import start_sync, stop_sync, sync_now
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -336,9 +336,22 @@ LOCAL TOOLS (operate on Mac):
 - list_directory, search_files: Browse and search local files
 - run_command: Run local shell commands
 
+FILE TRANSFER TOOLS:
+- pull_shared: Pull/download a file from the server's shared folder. Use this when the user says "pull", "grab", "fetch", or "download" a file. Just needs the filename.
+- upload_to_server: Push/upload a local file to the server.
+- download_from_server: Download a file from any path on the server.
+- list_shared: List files available in the shared folder (shows both local and server).
+- list_server_files: Browse server filesystem.
+- sync_shared: Trigger immediate sync of shared folder.
+
+IMPORTANT: When the user says "pull <filename>" or "download <filename>", use the pull_shared tool with that filename. Do NOT use run_command for file transfers.
+
+SHARED FOLDER:
+- Server shared folder: ~/nvidia-workbench/terminal-llm/shared/
+- Local shared folder: ~/.maude/shared/
+- Use pull_shared to grab specific files, or sync_shared to sync everything.
+
 SERVER TOOLS (operate on Spark):
-- upload_to_server, download_from_server: Transfer files
-- list_server_files: Browse server filesystem
 - run_server_command: Run commands on server
 - send_to_server_maude: Message the server MAUDE instance
 
@@ -481,8 +494,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
                 messages.append({"role": "assistant", "content": full_content})
 
     except requests.exceptions.ConnectionError:
-        yield "\n[Error: Cannot connect to server. Is the SSH tunnel running?]\n"
-        yield "Run: ssh -L 30000:localhost:30000 mboard76@spark-e26c -N &\n"
+        yield "\n[Error: Cannot connect to server. Is Tailscale connected and the server running?]\n"
     except Exception as e:
         yield f"\n[Error: {e}]\n"
 
@@ -651,8 +663,9 @@ def main():
         print("OK")
     else:
         print("FAILED")
-        print("\nCannot connect to server. Make sure the SSH tunnel is running:")
-        print(f"  ssh -L {SERVER_LLM_PORT}:localhost:{SERVER_LLM_PORT} mboard76@spark-e26c -N &")
+        print("\nCannot connect to server. Make sure:")
+        print("  1. Tailscale is connected")
+        print(f"  2. Server is running on spark-e26c:{SERVER_LLM_PORT}")
         print("\nThen restart this client.")
         sys.exit(1)
 
@@ -664,7 +677,15 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    print("\nType 'quit' to exit, 'clear' to reset, '/voice' for voice mode.\n")
+    # Start shared folder sync
+    print("Starting shared folder sync...", end=" ", flush=True)
+    try:
+        start_sync()
+        print("OK")
+    except Exception as e:
+        print(f"Warning: {e}")
+
+    print("\nType 'quit' to exit, 'clear' to reset, '/voice' for voice mode, '/sync' to sync shared folder.\n")
 
     try:
         while True:
@@ -689,6 +710,13 @@ def main():
                     handle_voice_command(parts, stream_chat)
                     continue
 
+                # Handle /sync command
+                if user_input == "/sync":
+                    print("Syncing shared folder...", end=" ", flush=True)
+                    result = sync_now()
+                    print(result)
+                    continue
+
                 # Handle /help
                 if user_input == "/help":
                     print("""
@@ -698,8 +726,10 @@ Commands:
   /voice deps   - Check voice dependencies
   /voice start  - Single voice interaction
   /voice talk   - Continuous voice mode
+  /sync         - Sync shared folder now
 
 Features:
+  - Shared folder: ~/.maude/shared/ auto-syncs with server every 30s
   - Dynamic tool filtering: Only relevant tools sent per message
   - Fast dispatch: Common queries (list files, etc.) skip the LLM
   - Server delegation: Ask MAUDE to use Gmail, Drive, Calendar, etc.
@@ -718,7 +748,8 @@ Features:
             except EOFError:
                 break
     finally:
-        # Stop heartbeat on exit
+        # Stop heartbeat and sync on exit
+        stop_sync()
         stop_heartbeat()
 
 
