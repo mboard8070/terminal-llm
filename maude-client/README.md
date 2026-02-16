@@ -1,38 +1,47 @@
 # MAUDE Client
 
-Local client for MAUDE that connects to the Spark server for LLM inference.
+Local client for MAUDE that connects to the Spark server for LLM inference via Tailscale.
 
 ```
-┌─────────────────────────┐         ┌─────────────────────────────┐
-│   Your Mac/PC           │         │      Spark Server           │
-│                         │  SSH    │                             │
-│  MAUDE Client ──────────┼─tunnel──┼──► Nemotron (LLM)           │
-│  • Local file ops       │         │                             │
-│  • Server file transfer │───scp───┼──► Server filesystem        │
-│  • Server commands      │         │    Server MAUDE (optional)  │
-└─────────────────────────┘         └─────────────────────────────┘
+┌─────────────────────────┐              ┌─────────────────────────────┐
+│   Your Mac/PC           │              │      Spark Server           │
+│                         │  Tailscale   │                             │
+│  MAUDE Client ──────────┼──────────────┼──► Gateway (:30000)         │
+│  • Local file ops       │              │    ├─► Nemotron (LLM)       │
+│  • Server file transfer │              │    ├─► /upload, /download   │
+│  • Server commands      │              │    └─► /list, /shared       │
+└─────────────────────────┘              └─────────────────────────────┘
 ```
 
 ## Quick Start
 
-### 1. Download the client
+### 1. Install Tailscale
+
+Make sure Tailscale is installed and connected on your Mac/PC:
+- https://tailscale.com/download
+
+Verify connectivity:
+```bash
+ping spark-e26c
+```
+
+### 2. Download the client
 
 On your Mac/PC:
 
 ```bash
-mkdir -p ~/maude-client
-scp -r mboard76@spark-e26c:nvidia-workbench/terminal-llm/maude-client/* ~/maude-client/
+scp mboard76@spark-e26c:~/nvidia-workbench/terminal-llm/maude-client.tar.gz .
+tar xzf maude-client.tar.gz
+cd maude-client
 ```
 
-### 2. Run setup
+### 3. Run setup
 
 ```bash
-cd ~/maude-client
-chmod +x setup.sh
 ./setup.sh
 ```
 
-### 3. Start the client
+### 4. Start the client
 
 ```bash
 maude
@@ -48,16 +57,16 @@ Or manually:
 Edit `config.py` to customize:
 
 ```python
-# Server connection
-SERVER_HOST = "localhost"
+# Server connection (via Tailscale)
+SERVER_HOST = "spark-e26c"
 SERVER_LLM_PORT = 30000
+SERVER_FILE_PORT = 30000  # Same port — gateway handles both
+
+# SSH for server commands (optional)
 SERVER_SSH_HOST = "mboard76@spark-e26c"
 
-# Your work directory on the server
-SERVER_WORK_DIR = "~/nvidia-workbench/terminal-llm"
-
 # Client name (shown in logs)
-CLIENT_NAME = "macbook"  # Change this!
+CLIENT_NAME = "maude-client"
 ```
 
 ## Tools
@@ -77,10 +86,13 @@ CLIENT_NAME = "macbook"  # Change this!
 
 | Tool | Description |
 |------|-------------|
-| `upload_to_server` | Send files to Spark |
-| `download_from_server` | Get files from Spark |
-| `list_server_files` | Browse Spark filesystem |
-| `run_server_command` | Run commands on Spark |
+| `upload_to_server` | Push files to server transfers folder |
+| `download_from_server` | Pull files from server shared folder |
+| `list_server_files` | List server shared folder |
+| `list_shared` | List shared folder contents |
+| `pull_shared` | Pull a specific file from shared |
+| `sync_shared` | Sync all files from shared |
+| `run_server_command` | Run commands on Spark via SSH |
 | `send_to_server_maude` | Message server MAUDE |
 
 ## Usage Examples
@@ -94,41 +106,30 @@ CLIENT_NAME = "macbook"  # Change this!
 
 **Transfer files:**
 ```
+"List shared files"
+"Pull pixleus_draft.md from the server"
 "Upload report.pdf to the server"
-"Download the latest results from the server"
-"List files on the server"
+"Sync the shared folder"
 ```
 
 **Server commands:**
 ```
 "Check if Nemotron is running on the server"
 "Run git status on the server"
-"Send a message to server MAUDE"
-```
-
-## SSH Setup
-
-The client needs passwordless SSH access to the server. Set this up once:
-
-```bash
-# Generate SSH key if you don't have one
-ssh-keygen -t ed25519
-
-# Copy to server
-ssh-copy-id mboard76@spark-e26c
 ```
 
 ## Troubleshooting
 
 **Cannot connect to server:**
-- Make sure the Spark server is running Nemotron (`./start_nemo.sh`)
-- Check if SSH tunnel is running: `pgrep -f "ssh.*30000"`
-- Manually start tunnel: `ssh -L 30000:localhost:30000 mboard76@spark-e26c -N &`
+- Make sure Tailscale is connected: `ping spark-e26c`
+- Make sure the server is running: `./start_server.sh` on Spark
+- Verify the gateway is up: `curl http://spark-e26c:30000/health`
 
 **File transfer fails:**
-- Check SSH key is set up: `ssh mboard76@spark-e26c echo OK`
-- Verify paths are correct in `config.py`
+- Check gateway health: `curl http://spark-e26c:30000/health`
+- List files to verify: `curl http://spark-e26c:30000/list`
+- Verify paths in `config.py`
 
 **Slow responses:**
-- Normal - inference runs on server, may take a few seconds
+- Normal — inference runs on server, may take a few seconds
 - Check server load: `ssh mboard76@spark-e26c htop`
