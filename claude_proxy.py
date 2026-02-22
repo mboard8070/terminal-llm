@@ -3,7 +3,7 @@
 Claude Proxy for MAUDE - Uses Clawdbot's OAuth tokens.
 
 This allows MAUDE to use Claude without a separate API key,
-sharing Eddie's OAuth authentication.
+sharing Clawdbot's OAuth authentication.
 """
 
 import os
@@ -51,7 +51,7 @@ def get_claude_client() -> Optional[Anthropic]:
     
     # Check if token is expired (with 5 min buffer)
     if tokens["expires"] < (time.time() * 1000) + 300000:
-        print("Warning: OAuth token may be expired. Eddie needs to refresh it.", file=sys.stderr)
+        print("Warning: OAuth token may be expired. Clawdbot needs to refresh it.", file=sys.stderr)
     
     # Create client with OAuth token
     return Anthropic(api_key=tokens["access_token"])
