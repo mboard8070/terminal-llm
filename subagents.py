@@ -12,7 +12,7 @@ from dataclasses import dataclass
 @dataclass
 class AgentProvider:
     """A single provider option for an agent."""
-    type: str  # "local", "cloud", or "eddie"
+    type: str  # "local" or "cloud"
     model: str = None
     url_env: str = None  # Environment variable for URL (local)
     provider: str = None  # Provider name (cloud)
@@ -109,7 +109,6 @@ Use proper formatting (markdown). Be thorough but not verbose.""",
         description="Complex reasoning, planning, analysis",
         providers=[
             AgentProvider(type="local", model="nemotron", url_env="LLM_SERVER_URL"),
-            AgentProvider(type="eddie", provider="claude"),  # Eddie/Clawdbot bridge
             AgentProvider(type="cloud", provider="claude-opus"),
             AgentProvider(type="cloud", provider="openai-o1"),
         ],

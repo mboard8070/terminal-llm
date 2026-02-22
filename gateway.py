@@ -79,10 +79,10 @@ MODEL_ROUTES = {
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
     },
-    # Codestral — code tasks
+    # Codestral — code tasks (uses separate endpoint + key)
     "codestral-latest": {
         "provider": "mistral",
-        "base_url": "https://api.mistral.ai",
+        "base_url": "https://codestral.mistral.ai",
         "api_key_env": "CODESTRAL_API_KEY",
     },
     # Nemotron — local fallback (llama-server)

@@ -1,0 +1,120 @@
+import { FC, useState, useEffect } from "react";
+
+interface HealthStatus { status: string; llm_port?: number; personaplex_port?: number; gateway_port?: number; }
+interface ModelInfo { id: string; provider: string; available: boolean; }
+
+function getGatewayUrl(): string { return `${window.location.protocol}//${window.location.host}`; }
+
+const THEMES = [
+  { id: "dark", label: "MAUDE Dark", desc: "Default dark theme" },
+  { id: "retro-green", label: "80s Green CRT", desc: "Phosphor green terminal" },
+  { id: "retro-amber", label: "80s Amber CRT", desc: "Amber phosphor terminal" },
+];
+
+function applyTheme(id: string) {
+  document.documentElement.setAttribute("data-theme", id);
+  localStorage.setItem("maude-theme", id);
+}
+
+export const Settings: FC = () => {
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [defaultModel, setDefaultModel] = useState(() => localStorage.getItem("maude-default-model") || "mistral-large-latest");
+  const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem("maude-default-voice") || "NATF2.pt");
+  const [theme, setTheme] = useState(() => localStorage.getItem("maude-theme") || "dark");
+
+  useEffect(() => {
+    fetch(`${getGatewayUrl()}/health`).then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
+    fetch(`${getGatewayUrl()}/models`).then((r) => r.json()).then((d) => setModels(d.models || [])).catch(() => setModels([]));
+  }, []);
+
+  const saveModel = (m: string) => { setDefaultModel(m); localStorage.setItem("maude-default-model", m); };
+  const saveVoice = (v: string) => { setDefaultVoice(v); localStorage.setItem("maude-default-voice", v); };
+
+  return (
+    <div className="no-scrollbar h-full overflow-y-auto bg-maude-bg">
+      <div className="border-b border-maude-border bg-maude-surface px-4 py-3">
+        <h1 className="text-lg font-semibold text-maude-text">Settings</h1>
+      </div>
+
+      <div className="space-y-6 p-4">
+        {/* Connection */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Connection</h2>
+          <div className="space-y-2 rounded-xl bg-maude-surface p-4">
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Spark Status</span>
+              <span className={`flex items-center gap-1.5 text-sm ${health?.status === "ok" ? "text-green-400" : "text-red-400"}`}>
+                <span className={`h-2 w-2 rounded-full ${health?.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
+                {health?.status === "ok" ? "Connected" : "Offline"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className="font-mono text-sm text-maude-muted">{health?.gateway_port || "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className="font-mono text-sm text-maude-muted">{health?.llm_port || "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">PersonaPlex</span><span className="font-mono text-sm text-maude-muted">{health?.personaplex_port || "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{window.location.host}</span></div>
+          </div>
+        </section>
+
+        {/* Theme */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Theme</h2>
+          <div className="space-y-1 rounded-xl bg-maude-surface p-2">
+            {THEMES.map((t) => (
+              <button key={t.id} onClick={() => { setTheme(t.id); applyTheme(t.id); }}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors ${t.id === theme ? "bg-maude-bg text-maude-accent" : "text-maude-text hover:bg-maude-bg"}`}>
+                <span>{t.label}</span><span className="text-xs text-maude-muted">{t.desc}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* Model */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Default Model</h2>
+          <div className="space-y-1 rounded-xl bg-maude-surface p-2">
+            {models.map((m) => (
+              <button key={m.id} onClick={() => saveModel(m.id)}
+                className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors ${m.id === defaultModel ? "bg-maude-bg text-maude-accent" : "text-maude-text hover:bg-maude-bg"}`}>
+                <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${m.available ? "bg-green-400" : "bg-red-400"}`} />{m.id}</div>
+                <span className="text-xs text-maude-muted">{m.provider}</span>
+              </button>
+            ))}
+            {models.length === 0 && <p className="px-3 py-2 text-sm text-maude-muted">Loading models...</p>}
+          </div>
+        </section>
+
+        {/* Voice */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">PersonaPlex Voice</h2>
+          <div className="rounded-xl bg-maude-surface p-4">
+            <select value={defaultVoice} onChange={(e) => saveVoice(e.target.value)}
+              className="w-full rounded-lg bg-maude-bg px-3 py-2.5 text-sm text-maude-text outline-none focus:ring-1 focus:ring-maude-accent">
+              {["NATF0.pt","NATF1.pt","NATF2.pt","NATF3.pt","NATM0.pt","NATM1.pt","NATM2.pt","NATM3.pt"].map((v) => (
+                <option key={v} value={v}>{v.replace(".pt","")}{v === "NATF2.pt" ? " (MAUDE)" : ""}{v === "NATM1.pt" ? " (Male)" : ""}</option>
+              ))}
+            </select>
+          </div>
+        </section>
+
+        {/* Network */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Network</h2>
+          <div className="rounded-xl bg-maude-surface p-4"><p className="text-sm text-maude-muted">WiFi management requires native Android access. Use system settings.</p></div>
+        </section>
+
+        {/* About */}
+        <section>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">About</h2>
+          <div className="space-y-2 rounded-xl bg-maude-surface p-4">
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">1.0.0</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Nemotron</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">PersonaPlex (NATF2)</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Character</span><span className="text-sm font-mono">MAUDE</span></div>
+            <div className="pt-2 text-center text-xs text-maude-muted"><span className="fire-gradient font-bold">MAUDE</span> — Multi-Agent Unified Dispatch Engine</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+};

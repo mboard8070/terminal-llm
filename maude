@@ -39,6 +39,14 @@ else
     echo "Watcher already running"
 fi
 
+# Start File Server if not running
+if ! tmux has-session -t fileserver 2>/dev/null; then
+    echo "Starting File Server (port 30002)..."
+    tmux new-session -d -s fileserver "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 file_server.py; exec bash"
+else
+    echo "File Server already running"
+fi
+
 # Start MAUDE if not running
 if ! tmux has-session -t maude 2>/dev/null; then
     echo "Starting MAUDE..."

@@ -1,0 +1,18 @@
+{
+  "name": "MAUDE",
+  "short_name": "MAUDE",
+  "description": "Multi-Agent Unified Dispatch Engine",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "/assets/maude-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
