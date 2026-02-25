@@ -297,16 +297,19 @@ def chat(client, messages: list):
             max_tokens = 2048 if has_tool_results else 4096
 
             # Non-streaming request for TUI compatibility
-            response = client.chat.completions.create(
+            kwargs = dict(
                 model=MODEL,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=max_tokens,
                 tools=active_tools,
                 tool_choice="auto",
-                extra_body={"num_ctx": NUM_CTX},
-                timeout=120
+                timeout=120,
             )
+            # num_ctx is local-only (llama-server); skip for cloud models
+            if MODEL not in _CLOUD_MODELS:
+                kwargs["extra_body"] = {"num_ctx": NUM_CTX}
+            response = client.chat.completions.create(**kwargs)
 
             elapsed_time = time.time() - start_time
             msg = response.choices[0].message
@@ -410,13 +413,15 @@ def chat(client, messages: list):
             if "tool" in error_msg.lower() or "function" in error_msg.lower():
                 console.print("[dim yellow]Tools not supported, falling back to basic chat...[/dim yellow]")
                 try:
-                    response = client.chat.completions.create(
+                    fb_kwargs = dict(
                         model=MODEL,
                         messages=[m for m in messages if "tool_calls" not in m and m.get("role") != "tool"],
                         temperature=0.2,
                         max_tokens=1024,
-                        extra_body={"num_ctx": NUM_CTX}
                     )
+                    if MODEL not in _CLOUD_MODELS:
+                        fb_kwargs["extra_body"] = {"num_ctx": NUM_CTX}
+                    response = client.chat.completions.create(**fb_kwargs)
                     msg = response.choices[0].message
                     if msg.content:
                         console.print(f"[bold magenta]MAUDE:[/bold magenta] {msg.content}")
@@ -436,15 +441,29 @@ AVAILABLE_MODELS = {
     "codestral": "codestral-latest",
 }
 
+# Cloud models route through the gateway; local models go direct
+GATEWAY_URL = "http://localhost:30000/v1"
+
+_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest"}
+
 def _switch_model(name: str) -> str:
-    """Switch the active model at runtime."""
+    """Switch the active model at runtime, routing cloud models via gateway."""
     global MODEL
     key = name.lower().strip()
     if key not in AVAILABLE_MODELS:
         return f"Unknown model: {name}\nAvailable: {', '.join(AVAILABLE_MODELS.keys())}"
     MODEL = AVAILABLE_MODELS[key]
     maude_core.MODEL = MODEL
-    return f"Switched to {key} ({MODEL})"
+
+    # Point the client at the right endpoint
+    if MODEL in _CLOUD_MODELS:
+        base_url = GATEWAY_URL
+    else:
+        base_url = LOCAL_URL
+    if _app and hasattr(_app, 'client'):
+        _app.client = OpenAI(base_url=base_url, api_key="not-needed")
+
+    return f"Switched to {key} ({MODEL}) via {'gateway' if MODEL in _CLOUD_MODELS else 'local'}"
 
 
 def handle_command(cmd: str) -> str:
