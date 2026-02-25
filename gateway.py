@@ -694,34 +694,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             pass
 
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
-        """Send content as SSE data chunks. Headers must already be sent."""
-        words = content.split(" ") if content else [""]
-        chunks = []
-        current = ""
-        for word in words:
-            current += (" " if current else "") + word
-            if len(current) > 20:
-                chunks.append(current)
-                current = ""
-        if current:
-            chunks.append(current)
-
-        for i, chunk_text in enumerate(chunks):
-            spacer = " " if i < len(chunks) - 1 else ""
-            sse_data = json.dumps({
-                "id": chunk_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model_name,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": chunk_text + spacer},
-                    "finish_reason": None,
-                }]
-            })
-            line = f"data: {sse_data}\n\n".encode()
-            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
-            self.wfile.flush()
+        """Send content as a single SSE data event. Headers must already be sent."""
+        sse_data = json.dumps({
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": content},
+                "finish_reason": None,
+            }]
+        })
+        line = f"data: {sse_data}\n\n".encode()
+        self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+        self.wfile.flush()
 
     def _send_sse_done(self, model_name: str, chunk_id: str, created: int):
         """Send finish + [DONE] events and close chunked encoding."""
@@ -777,7 +764,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "The image path is provided in the message. Do NOT tell the user to upload it — it is "
             "already here. If the user asks to 'upload to the server' or 'save to the server', "
             "the file is already on the server in the shared/ folder. You can move or copy it "
-            "elsewhere if they want, but acknowledge it is already present."
+            "elsewhere if they want, but acknowledge it is already present. "
+            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "(list, search, read, upload, create docs), Sheets (read, write, create), Calendar "
+            "(list, create, update events), Contacts, YouTube, and Slides. Use these tools when "
+            "the user asks about their email, documents, spreadsheets, schedule, or contacts."
         )
         messages = list(req.get("messages", []))
         for msg in messages:
@@ -803,6 +794,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._start_sse_headers()
             sse_started = True
 
+        # Create connection once, reuse across all tool-loop iterations
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=120)
+
         for iteration in range(max_iterations):
             # Build non-streaming request for tool loop
             loop_req = {
@@ -819,12 +817,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
             llm_start = time.time()
 
             try:
-                if use_ssl:
-                    ctx = ssl.create_default_context()
-                    conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
-                else:
-                    conn = http.client.HTTPConnection(host, port, timeout=120)
-
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {api_key}",
@@ -834,7 +826,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 conn.request("POST", api_path, body=body, headers=headers)
                 resp = conn.getresponse()
                 resp_body = resp.read()
-                conn.close()
 
                 if resp.status != 200:
                     try:
@@ -843,6 +834,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         err = {"error": resp_body.decode(errors="replace")}
                     if not sse_started:
                         self._json_response(err, resp.status)
+                    conn.close()
                     return
 
                 result = json.loads(resp_body)
@@ -853,10 +845,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
             except ConnectionRefusedError:
                 if not sse_started:
                     self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
+                conn.close()
                 return
             except Exception as e:
                 if not sse_started:
                     self._json_response({"error": f"Tool loop error: {e}"}, 502)
+                conn.close()
                 return
 
             # Emit LLM call trace
@@ -951,6 +945,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._send_sse_done(resolved_name, chunk_id, created)
             else:
                 self._send_as_sse(final_content, resolved_name)
+            conn.close()
             return
 
         # Max iterations reached
@@ -974,6 +969,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_sse_done(resolved_name, chunk_id, created)
         else:
             self._send_as_sse(fallback, resolved_name)
+        conn.close()
 
     def _send_as_sse(self, content, model_name):
         """Send a text response to the client as SSE, matching Mistral's streaming format."""
