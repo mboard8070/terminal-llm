@@ -1,4 +1,0 @@
-requests>=2.31.0
-
-# Voice mode (optional)
-# pip install sounddevice scipy faster-whisper
