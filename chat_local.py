@@ -276,6 +276,36 @@ def chat(client, messages: list):
     consecutive_duplicates = 0
     reset_rate_limits()  # Reset per-turn limits in maude_core
 
+    # Cloud models: gateway handles tools, just send a plain request
+    if MODEL in _CLOUD_MODELS:
+        try:
+            start_time = time.time()
+            # Strip any tool_calls/tool messages from history (local-only)
+            clean_msgs = [m for m in messages if "tool_calls" not in m and m.get("role") != "tool"]
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=clean_msgs,
+                temperature=0.2,
+                max_tokens=4096,
+                timeout=300,
+            )
+            elapsed_time = time.time() - start_time
+            msg = response.choices[0].message
+            full_content = msg.content or ""
+            if full_content:
+                token_count = response.usage.completion_tokens if response.usage else 0
+                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+                if _app and hasattr(_app, 'write_typewriter'):
+                    _app.write_typewriter(full_content, prefix="MAUDE: ")
+                    console.print(f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                else:
+                    console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
+                    console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+            return full_content
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return None
+
     # Get relevant tools based on user's latest message
     user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     active_tools = get_tools_for_message(user_msg)
