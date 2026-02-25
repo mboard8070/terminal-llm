@@ -812,14 +812,39 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             # No tool calls — final text response
             final_content = message.get("content", "")
-            self._send_as_sse(final_content, resolved_name)
+            if not req.get("stream"):
+                self._json_response({
+                    "id": f"chatcmpl-tool-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": final_content},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": result.get("usage", {}),
+                })
+            else:
+                self._send_as_sse(final_content, resolved_name)
             return
 
         # Max iterations reached
-        self._send_as_sse(
-            "I've reached the maximum number of tool calls. Here's what I found so far.",
-            resolved_name,
-        )
+        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        if not req.get("stream"):
+            self._json_response({
+                "id": f"chatcmpl-tool-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": resolved_name,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": fallback},
+                    "finish_reason": "stop",
+                }],
+            })
+        else:
+            self._send_as_sse(fallback, resolved_name)
 
     def _send_as_sse(self, content, model_name):
         """Send a text response to the client as SSE, matching Mistral's streaming format."""
@@ -897,8 +922,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             headers = {}
             for key, val in self.headers.items():
-                if key.lower() not in ("host", "transfer-encoding"):
+                if key.lower() not in ("host", "transfer-encoding", "content-length"):
                     headers[key] = val
+            if body is not None:
+                headers["Content-Length"] = str(len(body))
 
             conn.request(self.command, self.path, body=body, headers=headers)
             resp = conn.getresponse()
