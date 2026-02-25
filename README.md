@@ -4,6 +4,23 @@
 
 MAUDE runs locally using Nemotron via llama.cpp, with automatic routing to cloud models (Mistral, Codestral) via a unified gateway. Accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
 
+## Screenshots
+
+### Server TUI
+![Server TUI](docs/screenshots/server-tui.png)
+
+The Textual-based TUI running on DGX Spark — animated fire banner, tool execution trace with args/timing, typewriter response display, and model switching.
+
+### Mac/PC Client
+![Client CLI](docs/screenshots/client-cli.png)
+
+Lightweight CLI connecting via Tailscale — braille spinner while thinking, typewriter text reveal, inline pipeline trace from gateway SSE events.
+
+### Android App
+![Android App](docs/screenshots/android-app.png)
+
+Capacitor PWA with camera integration for photo analysis, typewriter message animation, and model selection.
+
 ## Architecture
 
 ```
