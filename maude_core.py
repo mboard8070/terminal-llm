@@ -6,6 +6,8 @@ the TUI (chat_local.py) and Telegram (run_telegram.py) interfaces.
 """
 
 import os
+import json
+import time
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional, List, Dict, Any
@@ -24,8 +26,58 @@ SESSION_ID = os.environ.get("MAUDE_SESSION_ID", "default")
 # Working directory for file operations
 working_dir = Path.home()
 
-# Cache for web_view results
-_web_view_cache = {}
+# ─── Tool Result Cache ───────────────────────────────────────────────────────
+
+class ToolCache:
+    """TTL-based cache for expensive tool results (web, vision)."""
+
+    # Per-tool TTLs in seconds
+    TTLS = {
+        "web_browse": 1800,   # 30 min
+        "web_search": 1800,   # 30 min
+        "web_view":   1800,   # 30 min
+        "view_image": 300,    # 5 min
+    }
+
+    def __init__(self):
+        self._store: Dict[tuple, tuple] = {}  # (tool, args_key) → (result, expiry)
+
+    @staticmethod
+    def _make_key(tool_name: str, arguments: dict) -> tuple:
+        return (tool_name, json.dumps(arguments, sort_keys=True))
+
+    def get(self, tool_name: str, arguments: dict) -> Optional[str]:
+        """Return cached result or None."""
+        key = self._make_key(tool_name, arguments)
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        result, expiry = entry
+        if time.time() > expiry:
+            del self._store[key]
+            return None
+        return result
+
+    def put(self, tool_name: str, arguments: dict, result: str):
+        """Store a result with tool-specific TTL."""
+        ttl = self.TTLS.get(tool_name)
+        if ttl is None:
+            return  # not a cacheable tool
+        key = self._make_key(tool_name, arguments)
+        self._store[key] = (result, time.time() + ttl)
+
+    def evict_expired(self):
+        """Remove all expired entries."""
+        now = time.time()
+        expired = [k for k, (_, exp) in self._store.items() if now > exp]
+        for k in expired:
+            del self._store[k]
+
+    def clear(self):
+        self._store.clear()
+
+
+_tool_cache = ToolCache()
 
 # Optional logging callback - set by the interface (TUI or Telegram)
 # Signature: log_callback(message: str) -> None
@@ -1822,7 +1874,6 @@ def tool_web_search(query: str, num_results: int = 5) -> str:
 
 def tool_web_view(url: str, question: str = None) -> str:
     """Screenshot a webpage and analyze it with LLaVA."""
-    global _web_view_cache
     import base64
 
     try:
@@ -1833,10 +1884,6 @@ def tool_web_view(url: str, question: str = None) -> str:
     try:
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
-
-        if url in _web_view_cache:
-            log(f"Using cached screenshot of {url}")
-            return _web_view_cache[url] + "\n\n[NOTE: Using cached analysis.]"
 
         log(f"Capturing screenshot of {url}")
 
@@ -1876,7 +1923,6 @@ def tool_web_view(url: str, question: str = None) -> str:
         log("Vision analysis complete")
 
         result = f"Visual analysis of {url}:\n\n{analysis}"
-        _web_view_cache[url] = result
         return result
 
     except Exception as e:
@@ -2268,6 +2314,7 @@ def reset_rate_limits():
     global vision_call_count, web_call_count
     vision_call_count = 0
     web_call_count = 0
+    _tool_cache.evict_expired()
 
 
 def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
@@ -2437,6 +2484,13 @@ def execute_tool(name: str, arguments: dict) -> str:
             return "(Web research limit reached. Use gathered information now.)"
         web_call_count += 1
 
+    # Check tool result cache for expensive operations
+    if name in ToolCache.TTLS:
+        cached = _tool_cache.get(name, arguments)
+        if cached is not None:
+            log(f"[cached result] {name}")
+            return cached + "\n\n[cached result]"
+
     # Dispatch to tool
     if name == "read_file":
         return tool_read_file(arguments.get("path", ""), arguments.get("start_line"), arguments.get("end_line"))
@@ -2457,13 +2511,21 @@ def execute_tool(name: str, arguments: dict) -> str:
     elif name == "run_command":
         return tool_run_command(arguments.get("command", ""))
     elif name == "web_browse":
-        return tool_web_browse(arguments.get("url", ""))
+        result = tool_web_browse(arguments.get("url", ""))
+        _tool_cache.put(name, arguments, result)
+        return result
     elif name == "web_search":
-        return tool_web_search(arguments.get("query", ""), arguments.get("num_results", 5))
+        result = tool_web_search(arguments.get("query", ""), arguments.get("num_results", 5))
+        _tool_cache.put(name, arguments, result)
+        return result
     elif name == "web_view":
-        return tool_web_view(arguments.get("url", ""), arguments.get("question"))
+        result = tool_web_view(arguments.get("url", ""), arguments.get("question"))
+        _tool_cache.put(name, arguments, result)
+        return result
     elif name == "view_image":
-        return tool_view_image(arguments.get("path", ""), arguments.get("question"))
+        result = tool_view_image(arguments.get("path", ""), arguments.get("question"))
+        _tool_cache.put(name, arguments, result)
+        return result
     elif name == "generate_image":
         return tool_generate_image(
             arguments.get("prompt", ""),
