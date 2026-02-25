@@ -870,10 +870,13 @@ def main():
                 # Handle /update command
                 if user_input == "/update":
                     print("Updating MAUDE client...")
+                    # Use clean git env to avoid local hook issues (e.g. checkpoint hooks)
+                    pip_env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TEMPLATE_DIR": ""}
                     result = subprocess.run(
                         [sys.executable, "-m", "pip", "install", "--upgrade",
                          "git+ssh://git@github.com/mboard8070/terminal-llm.git#subdirectory=maude-client"],
-                        capture_output=False
+                        capture_output=False,
+                        env=pip_env
                     )
                     if result.returncode == 0:
                         print("\nUpdate complete. Restarting...")
