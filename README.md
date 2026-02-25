@@ -1,48 +1,161 @@
 # MAUDE
 
-**Multi-Agent Unified Dispatch Engine** — A local AI coding assistant that collaborates with Claude Code.
+**Multi-Agent Unified Dispatch Engine** — An on-device AI assistant running on DGX Spark with cloud model routing, multi-client access, and tool execution.
 
-MAUDE runs on-device using llama.cpp, providing file operations, shell access, web browsing, and vision capabilities. When complex tasks arise, MAUDE delegates to Claude Code running in a companion tmux session, with MAUDE acting as the permission gatekeeper.
+MAUDE runs locally using Nemotron via llama.cpp, with automatic routing to cloud models (Mistral, Codestral) via a unified gateway. Accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  Clients                                                             │
+│                                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
+│  │ Server   │  │ Mac/PC   │  │ Phone    │  │ Telegram │            │
+│  │ TUI      │  │ CLI      │  │ PWA      │  │ Bot      │            │
+│  │chat_local│  │maude-    │  │maude-    │  │run_      │            │
+│  │  .py     │  │ client   │  │ phone    │  │telegram  │            │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘            │
+│       │              │              │              │                  │
+│       │  local       │   Tailscale / HTTPS         │  local          │
+│       │              │              │              │                  │
+│       ▼              ▼              ▼              ▼                  │
+│  ┌───────────────────────────────────────────────────────────────┐   │
+│  │                     GATEWAY (port 30000)                      │   │
+│  │  • Model routing (local ↔ cloud)                              │   │
+│  │  • Server-side tool execution for cloud models                │   │
+│  │  • SSE streaming with pipeline trace events                   │   │
+│  │  • HTTPS with self-signed certs                               │   │
+│  │  • Shared folder / file transfer serving                      │   │
+│  └──────────┬────────────────────────┬───────────────────────────┘   │
+│             │                        │                               │
+│      local models              cloud models                          │
+│             │                        │                               │
+│             ▼                        ▼                                │
+│  ┌──────────────────┐  ┌─────────────────────────────────────┐      │
+│  │ llama.cpp        │  │ Mistral API / Codestral API         │      │
+│  │ (port 30080)     │  │ (tool loop + result caching)        │      │
+│  │ Nemotron 30B     │  └─────────────────────────────────────┘      │
+│  └──────────────────┘                                                │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │                     maude_core.py                             │    │
+│  │  Shared tool implementations: files, shell, web, vision,     │    │
+│  │  image gen, Google, scheduling, shared folder, caching        │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ## Features
 
-- **Multi-Agent Architecture**: MAUDE + Claude Code working together
-- **Textual TUI** with animated banner and async processing
-- **32K context window** for long conversations
-- **File operations**: read, write, edit, search (single file or entire directory)
-- **Shell access**: run commands, manage git, pip, etc.
-- **Web browsing**: fetch and parse web pages, search DuckDuckGo
-- **Vision**: screenshot webpages and analyze images using LLaVA
-- **Claude Code delegation**: complex tasks automatically routed to Claude
-- **Permission proxy**: MAUDE approves/denies Claude's permission requests
-- **Scheduled tasks**: automate recurring tasks with natural language
-- **Google integration**: Gmail and Google Drive access
+- **Multi-client access**: Server TUI, Mac/PC CLI, phone PWA, Telegram bot
+- **Model routing**: Auto-routes between local Nemotron and cloud Mistral/Codestral via gateway
+- **Tool execution**: Files, shell, web browse/search, vision, image generation
+- **Tool result caching**: TTL-based cache (30min web, 5min vision) to reduce redundant calls
+- **Pipeline trace**: Inline display of tool calls, args, result previews, and timing
+- **Typewriter effects**: Word-by-word response reveal on server TUI and client CLI
+- **Shared folder**: Bidirectional rsync between server and clients (`~/.maude/shared/`)
+- **Auto-routing**: Classifies messages and routes to specialized subagents
+- **Frontier delegation**: Escalates to cloud AI (Mistral, Codestral) for complex tasks
+- **Scheduled tasks**: Cron-based automation with natural language scheduling
+- **Google integration**: Gmail, Drive, Sheets, Calendar, Slides, Contacts, YouTube
+- **Voice mode**: Speech input/output via Whisper transcription
+- **Conversation memory**: Persistent context across sessions
 
 ## Models
 
-**Primary Model (MAUDE):**
-- **Nemotron-3-Nano-30B** (Q8_K_XL quantization) via llama.cpp
-- 32K context window, runs on GPU with 99 layers offloaded
+| Model | Type | Use Case |
+|-------|------|----------|
+| **Nemotron-3-Nano-30B** | Local (llama.cpp) | Default — general tasks, tool use |
+| **Mistral Large** | Cloud (API) | Complex reasoning, longer context |
+| **Codestral** | Cloud (API) | Code generation and analysis |
+| **LLaVA 13B** | Local (Ollama) | Vision — image and screenshot analysis |
 
-**Vision Model:**
-- **LLaVA 7B/13B** via Ollama for image and screenshot analysis
+Switch models at runtime with `/model switch mistral` or `/model switch nemotron`.
 
-**Available Alternative Models:**
-- Codestral 22B - optimized for code
-- CodeLlama 7B - lightweight code model
-- Gemma 3 12B - general purpose
-- Mistral Nemo Instruct - general purpose
+## Clients
 
-**Delegation Target:**
-- **Claude Code** (Anthropic) - frontier AI for complex reasoning
+### Server TUI (`chat_local.py`)
+Textual-based terminal UI running directly on the DGX Spark. Full tool access, animated banner, voice mode, typewriter response display.
 
-## Requirements
+```bash
+./maude          # Starts all services + TUI
+```
 
-- Python 3.8+
-- NVIDIA GPU with CUDA support (tested on DGX Spark)
-- Ollama (for LLaVA vision model)
-- Claude Code CLI (`claude`)
-- tmux
+### Mac/PC Client (`maude-client`)
+Pip-installable CLI that connects to the Spark server via Tailscale.
+
+```bash
+pip install "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
+maude            # Connect and chat
+```
+
+Commands: `/help`, `/model`, `/voice`, `/sync`, `/update`, `/version`, `clear`, `quit`
+
+### Phone PWA (`maude-phone`)
+Capacitor-based progressive web app served by the gateway. Camera integration for photo analysis.
+
+### Telegram Bot (`run_telegram.py`)
+Accessible from anywhere via Telegram. Runs as a systemd service on the server.
+
+## Gateway
+
+The gateway (`gateway.py`) runs on port 30000 and is the single entry point for all remote clients.
+
+- **Model routing**: Routes requests to local llama.cpp or cloud APIs based on model name
+- **Tool execution**: Runs server-side tool loops for cloud models (Mistral/Codestral)
+- **SSE trace events**: Streams `tool_call`, `tool_result`, and `llm_call` trace events to clients
+- **File serving**: Serves shared folder files, PWA assets, and generated images
+- **HTTPS**: Self-signed certs for Tailscale connections
+
+## Tools
+
+### File Operations
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file with line numbers (supports ranges) |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Replace specific line ranges |
+| `search_file` | Search within a single file |
+| `search_directory` | Search across all files in a directory |
+| `list_directory` | Browse directory contents |
+| `change_directory` | Navigate filesystem |
+| `run_command` | Execute shell commands (rm, mv, cp, pip, git, etc.) |
+
+### Web & Vision
+| Tool | Description |
+|------|-------------|
+| `web_browse` | Fetch and parse web pages (text extraction) |
+| `web_search` | Search via DuckDuckGo |
+| `web_view` | Screenshot webpage + LLaVA visual analysis |
+| `view_image` | Analyze local images with LLaVA |
+| `generate_image` | Generate images via Flux/ComfyUI |
+
+### Shared Folder & Transfers
+| Tool | Description |
+|------|-------------|
+| `list_shared` | List files in the shared folder |
+| `share_file` | Copy a file into the shared folder for clients |
+| `list_transfers` | List files uploaded by clients |
+| `get_transfer` | Copy a client upload to the working directory |
+
+### Delegation & Automation
+| Tool | Description |
+|------|-------------|
+| `ask_frontier` | Escalate to cloud AI for complex reasoning |
+| `send_to_claude` | Delegate tasks to Claude Code |
+| `schedule_task` | Create/manage cron-based automated tasks |
+
+### Google Integration
+| Tool | Description |
+|------|-------------|
+| `gmail_list` / `gmail_read` / `gmail_send` | Email operations |
+| `drive_list` / `drive_search` / `drive_read` / `drive_upload` / `drive_delete` | Drive operations |
+| `sheets_read` / `sheets_write` / `sheets_create` | Spreadsheet operations |
+| `calendar_list` / `calendar_create` / `calendar_delete_event` | Calendar operations |
+| `slides_create` / `slides_add_slide` | Presentation operations |
+| `contacts_list` / `contacts_search` | Contact operations |
+| `youtube_search` | YouTube search |
 
 ## Installation
 
@@ -57,290 +170,63 @@ pip install -r requirements.txt
 playwright install chromium
 
 # Install LLaVA for vision (via Ollama)
-ollama pull llava:7b
+ollama pull llava:13b
 
-# Install Claude Code (if not already installed)
-# See: https://docs.anthropic.com/en/docs/claude-code
+# Set up API keys for cloud models (optional)
+export MISTRAL_API_KEY="your-key"
+export CODESTRAL_API_KEY="your-key"
 ```
 
 ## Quick Start
 
-**Terminal 1** - Start the agent system:
 ```bash
-ssh -L 3000:localhost:3001 mboard76@spark-e26c
 cd ~/nvidia-workbench/terminal-llm
 ./maude
 ```
 
-The `./maude` command automatically starts 4 tmux sessions:
-- `nemo` - Nemotron inference server (llama.cpp)
-- `maude` - Your main interface (attaches here)
-- `claude` - Claude Code for complex tasks
-- `watcher` - Permission bridge
-
-**Terminal 2** - Watch Claude work (optional):
-```bash
-ssh -L 3000:localhost:3001 mboard76@spark-e26c
-cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude
-```
-
-**Terminal 3** - Watch permission flow (optional):
-```bash
-ssh -L 3000:localhost:3001 mboard76@spark-e26c
-cd ~/nvidia-workbench/terminal-llm && tmux attach -t watcher
-```
-
-Each session is independent - open as many terminals as you want.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         YOU                                     │
-│                          │                                      │
-│                          ▼                                      │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                      MAUDE                               │   │
-│  │              (Nemotron-3-Nano-30B)                       │   │
-│  │                                                          │   │
-│  │  • Handles simple tasks directly                         │   │
-│  │  • Web browsing & search (DuckDuckGo)                    │   │
-│  │  • Vision analysis (LLaVA via Ollama)                    │   │
-│  │  • Delegates complex tasks to Claude                     │   │
-│  │  • Approves/denies Claude's permission requests          │   │
-│  └──────────────────────┬──────────────────────────────────┘   │
-│                         │                                       │
-│            send_to_claude()                                     │
-│                         │                                       │
-│                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                   CLAUDE CODE                            │   │
-│  │              (Anthropic Claude)                          │   │
-│  │                                                          │   │
-│  │  • Complex reasoning & multi-file refactoring            │   │
-│  │  • Git operations, PR creation                           │   │
-│  │  • Deep code analysis                                    │   │
-│  └──────────────────────┬──────────────────────────────────┘   │
-│                         │                                       │
-│              Permission needed?                                 │
-│                         │                                       │
-│                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                PERMISSION WATCHER                        │   │
-│  │                                                          │   │
-│  │  • Detects Claude's permission prompts                   │   │
-│  │  • Forwards to MAUDE for approval                        │   │
-│  │  • Sends response back to Claude                         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Tools
-
-### File Operations
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file with line numbers (supports ranges) |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Replace specific line ranges |
-| `search_file` | Search within a single file |
-| `search_directory` | Search across all files in a directory |
-| `list_directory` | Browse directory contents |
-| `change_directory` | Navigate filesystem |
-| `run_command` | Execute shell commands |
-
-### Web & Vision
-| Tool | Description |
-|------|-------------|
-| `web_browse` | Fetch and parse web pages (text extraction) |
-| `web_search` | Search via DuckDuckGo |
-| `web_view` | Screenshot webpage + LLaVA visual analysis |
-| `view_image` | Analyze local images with LLaVA |
-
-### Delegation & Automation
-| Tool | Description |
-|------|-------------|
-| `send_to_claude` | Delegate tasks to Claude Code |
-| `schedule_task` | Create and manage scheduled automated tasks |
-
-### Google Integration
-| Tool | Description |
-|------|-------------|
-| `gmail_list` | List emails with optional search query |
-| `gmail_read` | Read a specific email by ID |
-| `gmail_send` | Send emails |
-| `drive_list` | List Google Drive files |
-| `drive_search` | Search Drive by name or content |
-| `drive_read` | Read text files from Drive |
-| `drive_upload` | Upload local files to Drive |
-
-## Vision Capabilities
-
-MAUDE can analyze images and webpages using LLaVA (Large Language and Vision Assistant):
-
-**Screenshot & Analyze Webpages:**
-```
-"What does the Apple homepage look like?"
-"Describe the layout of artstation.com/artwork/k4eYxl"
-```
-
-**Analyze Local Images:**
-```
-"What's in the image at ~/screenshots/diagram.png?"
-"Describe this architecture diagram"
-```
-
-Vision requires Ollama running with LLaVA:
-```bash
-ollama serve  # Start Ollama
-ollama pull llava:7b  # Download model
-```
-
-## Claude Code Delegation
-
-MAUDE automatically delegates to Claude when you say things like:
-- "ask Claude to review this code"
-- "have Claude handle the git rebase"
-- "let Claude refactor the authentication module"
-- "delegate to Claude for the architecture decision"
-
-MAUDE also delegates automatically for:
-- Complex multi-file refactoring
-- Git operations beyond simple commits
-- Deep code analysis across large codebases
-- Tasks where MAUDE is uncertain
-
-When Claude needs permission (to run commands, edit files, etc.), the watcher forwards the request to MAUDE. MAUDE decides whether to approve, and the response is sent back to Claude automatically.
-
-## Session Management
-
-After starting with `./maude`, you'll be attached to the MAUDE session.
-
-**From the same terminal:**
-| Command | Action |
-|---------|--------|
-| `Ctrl+B d` | Detach from current session |
-| `tmux attach -t maude` | Reattach to MAUDE |
-| `tmux attach -t claude` | Attach to Claude |
-| `tmux attach -t watcher` | Attach to Watcher |
-| `tmux attach -t nemo` | Attach to Nemotron server |
-
-**From a new SSH session (view multiple at once):**
-```bash
-ssh -L 3000:localhost:3001 mboard76@spark-e26c
-cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude
-```
-
-## Monitoring & Control
-
-```bash
-# Watch activity log
-tail -f ~/.config/maude/activity.log
-
-# Emergency stop (halts the watcher)
-touch ~/.config/maude/stop
-
-# Kill all sessions
-tmux kill-session -t maude
-tmux kill-session -t claude
-tmux kill-session -t watcher
-tmux kill-session -t nemo
-```
-
-## Scheduled Tasks
-
-MAUDE can schedule automated tasks using natural language:
-
-```
-"Remind me every morning at 8am to check the weather"
-"Schedule a daily summary of my tasks at 6pm"
-"Every weekday at 9am, check my calendar"
-```
-
-MAUDE converts these to cron expressions automatically. Manage tasks with:
-- "Show my scheduled tasks"
-- "Disable the weather reminder"
-- "Remove task abc123"
-
-Supported shortcuts: `@hourly`, `@daily`, `@morning`, `@evening`, `@weekly`, `@workdays`
+This starts the inference server, gateway, and TUI. Use `/model switch mistral` to switch to cloud models.
 
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `LLM_SERVER_URL` | `http://localhost:30000/v1` | llama.cpp server endpoint |
-| `MAUDE_MODEL` | `nemotron` | Model name for requests |
-| `MAUDE_NUM_CTX` | `32768` | Context window size |
+| `LLM_SERVER_URL` | `http://localhost:30080/v1` | llama.cpp server endpoint |
+| `MAUDE_MODEL` | `nemotron` | Default model name |
+| `MAUDE_NUM_CTX` | `32768` | Context window size (local models) |
 | `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for LLaVA |
-| `MAUDE_VISION_MODEL` | `llava:7b` | Vision model name |
-
-### Using a Different Model
-
-```bash
-# Use Codestral (better for code)
-./start_codestral.sh  # Instead of start_nemo.sh
-export MAUDE_MODEL="codestral"
-./maude
-
-# Use a model via Ollama
-export LLM_SERVER_URL="http://localhost:11434/v1"
-export MAUDE_MODEL="gemma2:9b"
-./maude
-```
-
-## Google Integration Setup
-
-MAUDE can access your Gmail and Google Drive. One-time setup required:
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create a project and enable **Gmail API** and **Google Drive API**
-3. Configure OAuth consent screen (add yourself as test user)
-4. Create OAuth 2.0 credentials (Desktop app type)
-5. Download the credentials JSON file
-
-**If authenticating from a remote/headless server:**
-
-```bash
-# On your local Mac/PC - copy credentials and run auth helper
-scp ~/Downloads/client_secret_*.json mboard76@spark-e26c:.config/maude/credentials.json
-scp mboard76@spark-e26c:nvidia-workbench/terminal-llm/mac_google_auth.py /tmp/
-python3 /tmp/mac_google_auth.py
-
-# Copy token back to server
-scp /tmp/google_token.json mboard76@spark-e26c:.config/maude/google_token.json
-```
-
-**Test the connection:**
-```bash
-python3 google_tools.py --test
-```
-
-Then ask MAUDE things like:
-- "Check my recent emails"
-- "Search my email for messages about the project"
-- "List my Google Drive files"
-- "Upload report.pdf to my Drive"
+| `MAUDE_VISION_MODEL` | `llava:13b` | Vision model name |
+| `MISTRAL_API_KEY` | — | Mistral API key (for cloud routing) |
+| `CODESTRAL_API_KEY` | — | Codestral API key (for cloud routing) |
 
 ## Project Structure
 
 ```
 terminal-llm/
-├── maude               # Main launcher (starts all agents)
-├── maude_core.py       # Core tools and functionality
-├── chat_local.py       # MAUDE TUI application
-├── claude_watcher.py   # Permission bridge between Claude and MAUDE
-├── google_tools.py     # Gmail and Google Drive integration
-├── mac_google_auth.py  # Helper for OAuth on local Mac/PC
-├── start_nemo.sh       # Nemotron server launcher
-├── start_codestral.sh  # Codestral server launcher
-├── start_claude.sh     # Claude Code standalone launcher
-├── start_maude.sh      # MAUDE standalone launcher
-├── llama.cpp/          # Inference engine
-└── models/             # Downloaded GGUF models
-    ├── Nemotron-3-Nano-30B-A3B-UD-Q8_K_XL.gguf
-    ├── codestral-22b-v0.1-Q6_K.gguf
-    ├── codellama-7b-instruct.Q6_K.gguf
-    └── ...
+├── maude                  # Main launcher
+├── maude_core.py          # Shared tools, caching, rate limiting
+├── chat_local.py          # Server TUI (Textual)
+├── gateway.py             # Gateway — model routing, tool loops, SSE, file serving
+├── auto_router.py         # Message classification and subagent routing
+├── execution.py           # Subagent execution
+├── frontier.py            # Cloud AI escalation
+├── memory.py              # Persistent conversation memory
+├── scheduler.py           # Cron-based task scheduling
+├── google_tools.py        # Google Workspace integration
+├── voice.py               # Voice mode (Whisper)
+├── run_telegram.py        # Telegram bot
+├── maude-client/          # Mac/PC CLI client (pip-installable)
+│   ├── maude_client/
+│   │   ├── cli.py         # Client main loop, spinner, typewriter, SSE trace
+│   │   ├── client_tools.py# Client-side tool implementations
+│   │   ├── shared_sync.py # Bidirectional rsync daemon
+│   │   └── config.py      # Server connection config
+│   └── pyproject.toml
+├── maude-phone/           # Phone PWA (Capacitor + Vite)
+│   ├── src/               # TypeScript/HTML frontend
+│   └── capacitor.config.ts
+├── shared/                # Shared folder (synced to clients)
+├── transfers/             # Client uploads
+└── certs/                 # HTTPS certificates for gateway
 ```
 
 ## License
