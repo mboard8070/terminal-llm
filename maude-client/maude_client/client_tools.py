@@ -7,7 +7,7 @@ import subprocess
 import json
 from pathlib import Path
 from typing import Optional
-from config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, FILE_SERVER_URL
+from maude_client.config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, FILE_SERVER_URL
 import requests as _requests
 
 # Ensure transfer directory exists

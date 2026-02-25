@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import (
+from maude_client.config import (
     SERVER_SSH_HOST, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, SYNC_INTERVAL
 )
 
