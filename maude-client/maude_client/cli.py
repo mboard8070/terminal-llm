@@ -44,7 +44,7 @@ class Spinner:
     def __init__(self, label: str = "thinking"):
         self._label = label
         self._running = False
-        self._thread: threading.Thread | None = None
+        self._thread: Optional[threading.Thread] = None
 
     def start(self):
         self._running = True
