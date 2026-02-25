@@ -674,6 +674,77 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._json_response({"error": f"Provider proxy error: {e}"}, 502)
 
+    def _start_sse_headers(self):
+        """Send SSE response headers for streaming. Call once before any SSE writes."""
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+
+    def _send_trace_sse(self, trace_type: str, data: dict):
+        """Send a trace event via SSE. Headers must already be sent."""
+        payload = json.dumps({"type": trace_type, **data})
+        line = f"event: trace\ndata: {payload}\n\n".encode()
+        try:
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
+        """Send content as SSE data chunks. Headers must already be sent."""
+        words = content.split(" ") if content else [""]
+        chunks = []
+        current = ""
+        for word in words:
+            current += (" " if current else "") + word
+            if len(current) > 20:
+                chunks.append(current)
+                current = ""
+        if current:
+            chunks.append(current)
+
+        for i, chunk_text in enumerate(chunks):
+            spacer = " " if i < len(chunks) - 1 else ""
+            sse_data = json.dumps({
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": chunk_text + spacer},
+                    "finish_reason": None,
+                }]
+            })
+            line = f"data: {sse_data}\n\n".encode()
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+            self.wfile.flush()
+
+    def _send_sse_done(self, model_name: str, chunk_id: str, created: int):
+        """Send finish + [DONE] events and close chunked encoding."""
+        finish_data = json.dumps({
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model_name,
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop",
+            }]
+        })
+        finish_line = f"data: {finish_data}\n\n".encode()
+        self.wfile.write(b"%x\r\n%s\r\n" % (len(finish_line), finish_line))
+
+        done_line = b"data: [DONE]\n\n"
+        self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+
+        self.wfile.write(b"0\r\n\r\n")
+        self.wfile.flush()
+
     def _cloud_model_with_tools(self, req, route, resolved_name):
         """Handle cloud model request with server-side tool execution loop.
 
@@ -724,6 +795,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
         reset_rate_limits()
         max_iterations = 15
         recent_tool_calls = []
+        is_streaming = req.get("stream", False)
+        sse_started = False
+
+        # Start SSE headers immediately for streaming so client gets trace events
+        if is_streaming:
+            self._start_sse_headers()
+            sse_started = True
 
         for iteration in range(max_iterations):
             # Build non-streaming request for tool loop
@@ -738,6 +816,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             }
 
             body = json.dumps(loop_req).encode()
+            llm_start = time.time()
 
             try:
                 if use_ssl:
@@ -762,7 +841,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
-                    self._json_response(err, resp.status)
+                    if not sse_started:
+                        self._json_response(err, resp.status)
                     return
 
                 result = json.loads(resp_body)
@@ -771,11 +851,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 finish_reason = choice.get("finish_reason", "")
 
             except ConnectionRefusedError:
-                self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
+                if not sse_started:
+                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
                 return
             except Exception as e:
-                self._json_response({"error": f"Tool loop error: {e}"}, 502)
+                if not sse_started:
+                    self._json_response({"error": f"Tool loop error: {e}"}, 502)
                 return
+
+            # Emit LLM call trace
+            llm_elapsed = time.time() - llm_start
+            usage = result.get("usage", {})
+            prompt_tok = usage.get("prompt_tokens", 0)
+            compl_tok = usage.get("completion_tokens", 0)
+            if sse_started:
+                self._send_trace_sse("llm_call", {
+                    "prompt_tokens": prompt_tok,
+                    "completion_tokens": compl_tok,
+                    "elapsed": round(llm_elapsed, 2),
+                })
+            print(f"  LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s")
 
             # Check for tool calls
             tool_calls = message.get("tool_calls")
@@ -791,6 +886,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     except (json.JSONDecodeError, ValueError):
                         func_args = {}
 
+                    # Emit tool_call trace
+                    args_preview = json.dumps(func_args, ensure_ascii=False)
+                    if len(args_preview) > 80:
+                        args_preview = args_preview[:80] + "..."
+                    if sse_started:
+                        self._send_trace_sse("tool_call", {
+                            "name": func_name,
+                            "args": args_preview,
+                        })
+
                     # Duplicate detection
                     call_sig = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_sig in recent_tool_calls:
@@ -798,7 +903,20 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     else:
                         recent_tool_calls.append(call_sig)
                         print(f"  [tool] {func_name}({func_args})")
+                        tool_start = time.time()
                         tool_result = execute_tool(func_name, func_args)
+                        tool_elapsed = time.time() - tool_start
+
+                        # Emit tool_result trace
+                        preview = (tool_result or "")[:80].replace("\n", " ").strip()
+                        if len(tool_result or "") > 80:
+                            preview += "..."
+                        if sse_started:
+                            self._send_trace_sse("tool_result", {
+                                "name": func_name,
+                                "preview": preview,
+                                "elapsed": round(tool_elapsed, 2),
+                            })
 
                     # Add tool result to messages
                     messages.append({
@@ -812,7 +930,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             # No tool calls — final text response
             final_content = message.get("content", "")
-            if not req.get("stream"):
+            if not is_streaming:
                 self._json_response({
                     "id": f"chatcmpl-tool-{int(time.time())}",
                     "object": "chat.completion",
@@ -825,13 +943,19 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     }],
                     "usage": result.get("usage", {}),
                 })
+            elif sse_started:
+                # SSE headers already sent — just send content + done
+                chunk_id = f"chatcmpl-tool-{int(time.time())}"
+                created = int(time.time())
+                self._send_content_chunks(final_content, resolved_name, chunk_id, created)
+                self._send_sse_done(resolved_name, chunk_id, created)
             else:
                 self._send_as_sse(final_content, resolved_name)
             return
 
         # Max iterations reached
         fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
-        if not req.get("stream"):
+        if not is_streaming:
             self._json_response({
                 "id": f"chatcmpl-tool-{int(time.time())}",
                 "object": "chat.completion",
@@ -843,6 +967,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "finish_reason": "stop",
                 }],
             })
+        elif sse_started:
+            chunk_id = f"chatcmpl-tool-{int(time.time())}"
+            created = int(time.time())
+            self._send_content_chunks(fallback, resolved_name, chunk_id, created)
+            self._send_sse_done(resolved_name, chunk_id, created)
         else:
             self._send_as_sse(fallback, resolved_name)
 
