@@ -56,6 +56,8 @@ export function useChat(conversationId: string | null = null) {
   const [autoRoute, setAutoRoute] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
   const convIdRef = useRef(conversationId);
+  const contentRef = useRef("");
+  const rafIdRef = useRef(0);
 
   // Keep ref in sync (for save effect)
   convIdRef.current = conversationId;
@@ -154,8 +156,15 @@ export function useChat(conversationId: string | null = null) {
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
                 fullContent += delta;
-                setMessages((prev) =>
-                  prev.map((m) => m.id === assistantMsg.id ? { ...m, content: fullContent } : m));
+                contentRef.current = fullContent;
+                if (!rafIdRef.current) {
+                  rafIdRef.current = requestAnimationFrame(() => {
+                    const snapshot = contentRef.current;
+                    setMessages((prev) =>
+                      prev.map((m) => m.id === assistantMsg.id ? { ...m, content: snapshot } : m));
+                    rafIdRef.current = 0;
+                  });
+                }
               }
             } catch { /* skip malformed SSE */ }
           }
@@ -166,6 +175,17 @@ export function useChat(conversationId: string | null = null) {
             prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${err.message}` } : m));
         }
       } finally {
+        // Flush any pending RAF update with final content
+        if (rafIdRef.current) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = 0;
+        }
+        if (contentRef.current) {
+          const finalContent = contentRef.current;
+          setMessages((prev) =>
+            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: finalContent } : m));
+          contentRef.current = "";
+        }
         setIsStreaming(false);
         abortRef.current = null;
       }
