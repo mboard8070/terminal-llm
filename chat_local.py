@@ -314,9 +314,14 @@ def chat(client, messages: list):
 
             # Show response
             if full_content:
-                console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
                 token_count = response.usage.completion_tokens if response.usage else 0
-                console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+                if _app and hasattr(_app, 'write_typewriter'):
+                    _app.write_typewriter(full_content, prefix="MAUDE: ")
+                    console.print(f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                else:
+                    console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
+                    console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
 
             # Collect tool calls
             tool_calls_data = {}
@@ -372,8 +377,19 @@ def chat(client, messages: list):
                     else:
                         consecutive_duplicates = 0  # Reset on successful new call
                         recent_tool_calls.append(call_signature)
-                        console.print(f"[dim yellow]  [{func_name}][/dim yellow]")
+                        # Args preview — show first key arg
+                        args_preview = json.dumps(func_args, ensure_ascii=False)
+                        if len(args_preview) > 60:
+                            args_preview = args_preview[:60] + "..."
+                        console.print(f"[dim yellow]  [{func_name}] {args_preview}[/dim yellow]")
+                        tool_start = time.time()
                         result = execute_tool(func_name, func_args)
+                        tool_elapsed = time.time() - tool_start
+                        # Result preview
+                        preview = (result or "")[:80].replace("\n", " ").strip()
+                        if len(result or "") > 80:
+                            preview += "..."
+                        console.print(f"[dim]    → {preview} ({tool_elapsed:.1f}s)[/dim]")
 
                     # Add tool result to messages
                     messages.append({
@@ -695,6 +711,29 @@ class MaudeApp(App):
         if hasattr(self, 'output_log'):
             self.output_log.write(text)
 
+    def write_typewriter(self, content: str, prefix: str = ""):
+        """Write content word-by-word to the output log with typewriter effect.
+        Must be called from a worker thread (uses call_from_thread)."""
+        if not hasattr(self, 'output_log'):
+            return
+        text_obj = Text()
+        if prefix:
+            text_obj.append(prefix)
+        # Write initial text object to log
+        self.call_from_thread(self.output_log.write, text_obj)
+
+        # Drip-feed words in groups of 2-3
+        words = content.split()
+        i = 0
+        while i < len(words):
+            group = " ".join(words[i:i+3])
+            if i > 0:
+                group = " " + group
+            text_obj.append(group)
+            self.call_from_thread(self.output_log.refresh)
+            time.sleep(0.02)
+            i += 3
+
     def update_voice_status(self, status: str):
         """Update status bar for voice mode."""
         try:
@@ -833,7 +872,8 @@ class MaudeApp(App):
                 from auto_router import route_message
                 decision = route_message(user_input, self.messages[-10:])
                 if decision.subagent and decision.confidence >= 0.5:
-                    console.print(f"[dim cyan]  routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})[/dim cyan]")
+                    cloud_tag = " [cloud]" if decision.prefer_cloud else ""
+                    console.print(f"[dim cyan]  route: {decision.intent} → {decision.subagent} ({decision.confidence:.0%}){cloud_tag}[/dim cyan]")
                     from execution import execute_subagent
                     response = execute_subagent(
                         decision.subagent,
