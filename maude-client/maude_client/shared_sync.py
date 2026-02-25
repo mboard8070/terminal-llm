@@ -37,13 +37,15 @@ def _ensure_dirs():
     return local
 
 
-def _run_rsync(src: str, dst: str) -> subprocess.CompletedProcess:
+def _run_rsync(src: str, dst: str, delete: bool = False) -> subprocess.CompletedProcess:
     """Run a single rsync command."""
     cmd = [
         "rsync", "-avz", "--update",
         "-e", "ssh",
         src, dst
     ]
+    if delete:
+        cmd.insert(3, "--delete")
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
 
@@ -67,9 +69,9 @@ def sync_now() -> str:
         logger.error(msg)
         return msg
 
-    # Push: local -> server
+    # Push: local -> server (--delete so server-side removals by client are honored)
     try:
-        r = _run_rsync(local_path, remote_path)
+        r = _run_rsync(local_path, remote_path, delete=True)
         if r.returncode == 0:
             pushed = [l for l in r.stdout.splitlines() if not l.startswith("sending") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
             if pushed:
@@ -87,9 +89,9 @@ def sync_now() -> str:
         results.append(f"Push error: {e}")
         logger.error(f"Push error: {e}")
 
-    # Pull: server -> local
+    # Pull: server -> local (--delete so server-side removals propagate to client)
     try:
-        r = _run_rsync(remote_path, local_path)
+        r = _run_rsync(remote_path, local_path, delete=True)
         if r.returncode == 0:
             pulled = [l for l in r.stdout.splitlines() if not l.startswith("receiving") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
             if pulled:
