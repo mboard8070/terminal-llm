@@ -69,27 +69,7 @@ def sync_now() -> str:
         logger.error(msg)
         return msg
 
-    # Push: local -> server (--delete so server-side removals by client are honored)
-    try:
-        r = _run_rsync(local_path, remote_path, delete=True)
-        if r.returncode == 0:
-            pushed = [l for l in r.stdout.splitlines() if not l.startswith("sending") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
-            if pushed:
-                logger.info(f"Pushed: {pushed}")
-                results.append(f"Pushed {len(pushed)} item(s) to server")
-            else:
-                results.append("Push: nothing new")
-        else:
-            logger.warning(f"Push failed: {r.stderr}")
-            results.append(f"Push error: {r.stderr.strip()}")
-    except subprocess.TimeoutExpired:
-        results.append("Push: timed out")
-        logger.error("Push rsync timed out")
-    except Exception as e:
-        results.append(f"Push error: {e}")
-        logger.error(f"Push error: {e}")
-
-    # Pull: server -> local (--delete so server-side removals propagate to client)
+    # Pull first: server -> local (server is authoritative, --delete removes local stale files)
     try:
         r = _run_rsync(remote_path, local_path, delete=True)
         if r.returncode == 0:
@@ -108,6 +88,26 @@ def sync_now() -> str:
     except Exception as e:
         results.append(f"Pull error: {e}")
         logger.error(f"Pull error: {e}")
+
+    # Push second: local -> server (no --delete — server decides what to keep)
+    try:
+        r = _run_rsync(local_path, remote_path)
+        if r.returncode == 0:
+            pushed = [l for l in r.stdout.splitlines() if not l.startswith("sending") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
+            if pushed:
+                logger.info(f"Pushed: {pushed}")
+                results.append(f"Pushed {len(pushed)} item(s) to server")
+            else:
+                results.append("Push: nothing new")
+        else:
+            logger.warning(f"Push failed: {r.stderr}")
+            results.append(f"Push error: {r.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        results.append("Push: timed out")
+        logger.error("Push rsync timed out")
+    except Exception as e:
+        results.append(f"Push error: {e}")
+        logger.error(f"Push error: {e}")
 
     return " | ".join(results)
 
