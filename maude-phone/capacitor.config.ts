@@ -17,7 +17,7 @@ const config: CapacitorConfig = {
   },
   plugins: {
     CapacitorHttp: {
-      enabled: true,
+      enabled: false,  // Disabled: native HTTP breaks SSE streaming (ReadableStream)
     },
   },
 };
