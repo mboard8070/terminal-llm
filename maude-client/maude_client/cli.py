@@ -16,6 +16,7 @@ import time
 import asyncio
 import tempfile
 import subprocess
+import threading
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -29,6 +30,60 @@ from maude_client.config import (
 from maude_client.client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
 from maude_client.heartbeat import start_heartbeat, stop_heartbeat
 from maude_client.shared_sync import start_sync, stop_sync, sync_now
+
+
+# ─────────────────────────────────────────────────────────────────
+# Spinner & Typewriter
+# ─────────────────────────────────────────────────────────────────
+
+_BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+class Spinner:
+    """Braille spinner shown while waiting for first response chunk."""
+
+    def __init__(self, label: str = "thinking"):
+        self._label = label
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self):
+        i = 0
+        while self._running:
+            frame = _BRAILLE[i % len(_BRAILLE)]
+            print(f"\r{frame} {self._label}...", end="", flush=True)
+            time.sleep(0.1)
+            i += 1
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        # Clear spinner line
+        print("\r" + " " * 40 + "\r", end="", flush=True)
+
+
+def typewriter_print(chunk: str):
+    """Print a chunk with typewriter effect for large pieces, instant for small."""
+    if not chunk:
+        return
+    # Skip typewriter for tool output and errors
+    if chunk.startswith("[Tool:") or chunk.startswith("[Error"):
+        print(chunk, end="", flush=True)
+        return
+    # Small chunks (natural streaming) → instant
+    if len(chunk) <= 40:
+        print(chunk, end="", flush=True)
+        return
+    # Large chunks → char-by-char
+    for ch in chunk:
+        print(ch, end="", flush=True)
+        if ch not in ("\n", " "):
+            time.sleep(0.006)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -380,6 +435,22 @@ def check_server_connection() -> bool:
         return False
 
 
+def _format_trace(data: dict) -> str:
+    """Format a trace event for terminal display (dim/muted)."""
+    t = data.get("type", "")
+    if t == "tool_call":
+        return f"\033[2m  [{data.get('name', '')}] {data.get('args', '')}\033[0m\n"
+    elif t == "tool_result":
+        elapsed = data.get("elapsed", 0)
+        return f"\033[2m    \u2192 {data.get('preview', '')} ({elapsed}s)\033[0m\n"
+    elif t == "llm_call":
+        pt = data.get("prompt_tokens", 0)
+        ct = data.get("completion_tokens", 0)
+        elapsed = data.get("elapsed", 0)
+        return f"\033[2m  [{pt}+{ct} tokens, {elapsed}s]\033[0m\n"
+    return ""
+
+
 def stream_chat(user_message: str) -> Generator[str, None, None]:
     """Send message and stream the response."""
     messages.append({"role": "user", "content": user_message})
@@ -410,18 +481,39 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
         full_content = ""
         tool_calls = []
         current_tool_call = None
+        current_event_type = None
 
         for line in response.iter_lines():
             if not line:
                 continue
 
             line = line.decode('utf-8')
+
+            # Track SSE event type
+            if line.startswith('event: '):
+                current_event_type = line[7:].strip()
+                continue
+
             if not line.startswith('data: '):
                 continue
 
             data = line[6:]
             if data == '[DONE]':
                 break
+
+            # Handle trace events
+            if current_event_type == "trace":
+                current_event_type = None
+                try:
+                    trace_data = json.loads(data)
+                    trace_line = _format_trace(trace_data)
+                    if trace_line:
+                        yield trace_line
+                except json.JSONDecodeError:
+                    pass
+                continue
+
+            current_event_type = None
 
             try:
                 chunk = json.loads(data)
@@ -524,18 +616,39 @@ def stream_chat_continuation() -> Generator[str, None, None]:
 
         full_content = ""
         tool_calls = []
+        current_event_type = None
 
         for line in response.iter_lines():
             if not line:
                 continue
 
             line = line.decode('utf-8')
+
+            # Track SSE event type
+            if line.startswith('event: '):
+                current_event_type = line[7:].strip()
+                continue
+
             if not line.startswith('data: '):
                 continue
 
             data = line[6:]
             if data == '[DONE]':
                 break
+
+            # Handle trace events
+            if current_event_type == "trace":
+                current_event_type = None
+                try:
+                    trace_data = json.loads(data)
+                    trace_line = _format_trace(trace_data)
+                    if trace_line:
+                        yield trace_line
+                except json.JSONDecodeError:
+                    pass
+                continue
+
+            current_event_type = None
 
             try:
                 chunk = json.loads(data)
@@ -799,9 +912,18 @@ Features:
 """)
                     continue
 
-                print("\nMAUDE: ", end="", flush=True)
+                spinner = Spinner("thinking")
+                spinner.start()
+                first_chunk = True
                 for chunk in stream_chat(user_input):
-                    print(chunk, end="", flush=True)
+                    if first_chunk:
+                        spinner.stop()
+                        print("MAUDE: ", end="", flush=True)
+                        first_chunk = False
+                    typewriter_print(chunk)
+                if first_chunk:
+                    # No chunks received at all
+                    spinner.stop()
                 print()
 
             except KeyboardInterrupt:
