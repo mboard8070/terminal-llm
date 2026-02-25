@@ -745,7 +745,12 @@ def main():
                         except Exception:
                             print("[Could not fetch model list]")
                     else:
-                        current_model = parts[1].strip()
+                        # Handle "/model switch <name>" or "/model <name>"
+                        model_arg = parts[1].strip()
+                        tokens = model_arg.split()
+                        if tokens[0].lower() in ("switch", "use", "set") and len(tokens) > 1:
+                            model_arg = tokens[1]
+                        current_model = model_arg
                         print(f"Switched to model: {current_model}")
                     continue
 
