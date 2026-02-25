@@ -30,7 +30,7 @@ const ChatView: FC<{
     if (!isStreaming || !scrollRef.current) return;
     const id = setInterval(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, 50);
+    }, 200);
     return () => clearInterval(id);
   }, [isStreaming]);
 
