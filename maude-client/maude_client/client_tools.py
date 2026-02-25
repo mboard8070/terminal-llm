@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional
 from maude_client.config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, FILE_SERVER_URL
 import requests as _requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Ensure transfer directory exists
 TRANSFER_DIR = Path(LOCAL_TRANSFER_DIR).expanduser()
@@ -445,7 +447,7 @@ def upload_to_server(local_path: str, remote_path: str = None) -> str:
     try:
         with open(local_path, "rb") as f:
             data = f.read()
-        r = _requests.post(f"{FILE_SERVER_URL}/upload/{filename}", data=data, timeout=120)
+        r = _requests.post(f"{FILE_SERVER_URL}/upload/{filename}", data=data, timeout=120, verify=False)
         if r.status_code == 200:
             return f"Uploaded '{filename}' to server transfers folder ({len(data):,} bytes)"
         else:
@@ -522,7 +524,7 @@ def send_to_server_maude(message: str) -> str:
 def list_shared() -> str:
     """List files in the server's shared folder via HTTP file server."""
     try:
-        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5)
+        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5, verify=False)
         data = r.json()
         if "error" in data:
             return f"Error: {data['error']}"
@@ -554,7 +556,7 @@ def pull_shared(filename: str, local_path: str = None) -> str:
         dest = dest_dir / filename
 
     try:
-        r = _requests.get(f"{FILE_SERVER_URL}/download/{filename}", timeout=120, stream=True)
+        r = _requests.get(f"{FILE_SERVER_URL}/download/{filename}", timeout=120, stream=True, verify=False)
         if r.status_code == 404:
             return f"Error: '{filename}' not found on server. Use list_shared to see available files."
         r.raise_for_status()
@@ -572,7 +574,7 @@ def pull_shared(filename: str, local_path: str = None) -> str:
 def sync_shared() -> str:
     """Pull all files from server shared folder."""
     try:
-        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5)
+        r = _requests.get(f"{FILE_SERVER_URL}/list", timeout=5, verify=False)
         data = r.json()
         files = data.get("files", [])
         if not files:
