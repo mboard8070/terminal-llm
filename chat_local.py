@@ -414,6 +414,23 @@ def chat(client, messages: list):
                 return None
 
 
+AVAILABLE_MODELS = {
+    "nemotron": "nemotron",
+    "mistral": "mistral-large-latest",
+    "codestral": "codestral-latest",
+}
+
+def _switch_model(name: str) -> str:
+    """Switch the active model at runtime."""
+    global MODEL
+    key = name.lower().strip()
+    if key not in AVAILABLE_MODELS:
+        return f"Unknown model: {name}\nAvailable: {', '.join(AVAILABLE_MODELS.keys())}"
+    MODEL = AVAILABLE_MODELS[key]
+    maude_core.MODEL = MODEL
+    return f"Switched to {key} ({MODEL})"
+
+
 def handle_command(cmd: str) -> str:
     """Handle slash commands. Returns response or None if not a command."""
     if not cmd.startswith("/"):
@@ -428,8 +445,9 @@ def handle_command(cmd: str) -> str:
     if command == "help":
         return """MAUDE Commands:
 
-/help         - Show this help
-/model        - Show current model configuration
+/help              - Show this help
+/model             - Show current model configuration
+/model switch NAME - Switch model (nemotron, mistral, codestral)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -448,21 +466,30 @@ Tools available:
 
 Say "quit" to exit."""
     elif command == "model":
+        if len(parts) >= 3 and parts[1].lower() == "switch":
+            return _switch_model(parts[2])
+        elif len(parts) >= 2 and parts[1].lower() == "switch":
+            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral"
         from frontier import list_available_providers
         frontier_providers = list_available_providers()
         frontier_info = ", ".join(frontier_providers) if frontier_providers else "none configured"
         return f"""Model Configuration:
 
-Local LLM:    {MODEL}
+Active:       {MODEL}
 Server:       {LOCAL_URL}
 Context:      {NUM_CTX} tokens
 
-Vision:       {VISION_MODEL}
-Vision URL:   {VISION_URL}
+Available models:
+  nemotron            local (llama-server)
+  mistral             Mistral Large (cloud)
+  codestral           Codestral (cloud, code)
+
+Vision:       {maude_core.VISION_MODEL}
+Vision URL:   {maude_core.VISION_URL}
 
 Frontier:     {frontier_info}
 
-Set MAUDE_MODEL env var to use a different local model."""
+Switch model: /model switch <name>"""
     elif command == "copy":
         global _last_response
         if not _last_response:

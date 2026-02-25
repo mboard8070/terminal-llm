@@ -5,7 +5,8 @@ MAUDE Client - Local interface connecting to Spark server for inference.
 Connects via Tailscale to spark-e26c:30000.
 
 Run:
-  python maude_client.py
+  maude
+  python -m maude_client
 """
 
 import os
@@ -18,13 +19,14 @@ import subprocess
 import requests
 from typing import Optional, Generator, Callable
 
-from config import (
+from maude_client import __version__
+from maude_client.config import (
     SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
     CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
 )
-from client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
-from heartbeat import start_heartbeat, stop_heartbeat
-from shared_sync import start_sync, stop_sync, sync_now
+from maude_client.client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
+from maude_client.heartbeat import start_heartbeat, stop_heartbeat
+from maude_client.shared_sync import start_sync, stop_sync, sync_now
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -647,9 +649,10 @@ def print_banner():
     ╚═══════════════════════════════════════════════════════════════╝
     """
     print(banner)
-    print(f"    Server: {SERVER_HOST}:{SERVER_LLM_PORT}")
-    print(f"    Model:  {MODEL_NAME}")
-    print(f"    Client: {CLIENT_NAME}")
+    print(f"    Server:  {SERVER_HOST}:{SERVER_LLM_PORT}")
+    print(f"    Model:   {MODEL_NAME}")
+    print(f"    Client:  {CLIENT_NAME}")
+    print(f"    Version: {__version__}")
     print()
 
 
@@ -685,7 +688,7 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    print("\nType 'quit' to exit, 'clear' to reset, '/voice' for voice mode, '/sync' to sync shared folder.\n")
+    print("\nType 'quit' to exit, '/help' for commands.\n")
 
     try:
         while True:
@@ -717,12 +720,35 @@ def main():
                     print(result)
                     continue
 
+                # Handle /update command
+                if user_input == "/update":
+                    print("Updating MAUDE client...")
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "--upgrade",
+                         "git+ssh://git@github.com/mboard8070/terminal-llm.git#subdirectory=maude-client"],
+                        capture_output=False
+                    )
+                    if result.returncode == 0:
+                        print("\nUpdate complete. Restarting...")
+                        os.execv(sys.executable, [sys.executable, "-m", "maude_client"])
+                    else:
+                        print("\nUpdate failed. Check your SSH key and internet connection.")
+                    continue
+
+                # Handle /version command
+                if user_input == "/version":
+                    print(f"MAUDE client v{__version__}")
+                    continue
+
                 # Handle /help
                 if user_input == "/help":
-                    print("""
+                    print(f"""
 Commands:
   quit          - Exit MAUDE
   clear         - Clear conversation history
+  /help         - Show this help
+  /version      - Show client version (v{__version__})
+  /update       - Update client from GitHub and restart
   /voice deps   - Check voice dependencies
   /voice start  - Single voice interaction
   /voice talk   - Continuous voice mode

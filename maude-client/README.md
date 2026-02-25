@@ -25,31 +25,27 @@ Verify connectivity:
 ping spark-e26c
 ```
 
-### 2. Download the client
-
-On your Mac/PC:
+### 2. Install the client
 
 ```bash
-scp mboard76@spark-e26c:~/nvidia-workbench/terminal-llm/maude-client.tar.gz .
-tar xzf maude-client.tar.gz
-cd maude-client
+pip install --upgrade "git+ssh://git@github.com/mboard8070/terminal-llm.git#subdirectory=maude-client"
 ```
 
-### 3. Run setup
-
-```bash
-./setup.sh
-```
-
-### 4. Start the client
+### 3. Run
 
 ```bash
 maude
 ```
 
-Or manually:
+### 4. Update (from inside the client)
+
+```
+/update
+```
+
+Or from the command line:
 ```bash
-~/.maude/start_client.sh
+pip install --upgrade "git+ssh://git@github.com/mboard8070/terminal-llm.git#subdirectory=maude-client"
 ```
 
 ## Configuration
@@ -68,6 +64,20 @@ SERVER_SSH_HOST = "mboard76@spark-e26c"
 # Client name (shown in logs)
 CLIENT_NAME = "maude-client"
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `quit` | Exit MAUDE |
+| `clear` | Clear conversation history |
+| `/help` | Show all commands |
+| `/version` | Show client version |
+| `/update` | Update client from GitHub and restart |
+| `/voice deps` | Check voice dependencies |
+| `/voice start` | Single voice interaction |
+| `/voice talk` | Continuous voice mode |
+| `/sync` | Sync shared folder now |
 
 ## Tools
 

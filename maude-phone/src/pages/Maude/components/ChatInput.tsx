@@ -1,0 +1,148 @@
+import { FC, useState, useRef, useEffect } from "react";
+
+function getGatewayUrl(): string {
+  const loc = window.location;
+  return `${loc.protocol}//${loc.host}`;
+}
+
+interface Props {
+  onSend: (text: string, imageUrl?: string) => void;
+  isStreaming: boolean;
+  onStop: () => void;
+}
+
+export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
+  const [text, setText] = useState("");
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const handleSubmit = () => {
+    if (pendingImage || text.trim()) {
+      onSend(text.trim(), pendingImage ?? undefined);
+      setText("");
+      setPendingImage(null);
+      if (inputRef.current) inputRef.current.style.height = "44px";
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
+  };
+
+  const handleInput = () => {
+    if (inputRef.current) {
+      inputRef.current.style.height = "44px";
+      inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 120) + "px";
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const filename = `camera_${Date.now()}.jpg`;
+      const resp = await fetch(`${getGatewayUrl()}/share/${encodeURIComponent(filename)}`, {
+        method: "POST",
+        body: file,
+      });
+      if (resp.ok) {
+        setPendingImage(`/download/${filename}`);
+      }
+    } catch {
+      /* upload failed silently */
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (attachInputRef.current) attachInputRef.current.value = "";
+    }
+  };
+
+  const canSend = pendingImage || text.trim();
+
+  return (
+    <div className="border-t border-maude-border bg-maude-surface p-3">
+      {/* Thumbnail preview */}
+      {pendingImage && (
+        <div className="relative mb-2 inline-block">
+          <img
+            src={`${getGatewayUrl()}${pendingImage}`}
+            alt="Pending upload"
+            className="h-20 w-20 rounded-lg object-cover"
+          />
+          <button
+            onClick={() => setPendingImage(null)}
+            className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs text-white"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      <div className="flex items-end gap-2">
+        {/* Camera button */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading}
+          className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl bg-maude-bg text-lg text-maude-muted hover:text-maude-text disabled:opacity-30"
+        >
+          {uploading ? (
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-maude-accent border-t-transparent" />
+          ) : (
+            "\uD83D\uDCF7"
+          )}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+
+        {/* Attach from gallery button */}
+        <button
+          onClick={() => attachInputRef.current?.click()}
+          disabled={uploading}
+          className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl bg-maude-bg text-lg text-maude-muted hover:text-maude-text disabled:opacity-30"
+        >
+          {"\uD83D\uDCCE"}
+        </button>
+        <input
+          ref={attachInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+
+        <textarea
+          ref={inputRef}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onInput={handleInput}
+          placeholder="Message MAUDE..."
+          rows={1}
+          className="min-h-[44px] max-h-[120px] flex-1 resize-none rounded-xl bg-maude-bg px-4 py-3 text-sm text-maude-text placeholder-maude-muted outline-none focus:ring-1 focus:ring-maude-accent"
+        />
+
+        {isStreaming ? (
+          <button onClick={onStop} className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl bg-red-600 text-white">
+            &#9632;
+          </button>
+        ) : (
+          <button onClick={handleSubmit} disabled={!canSend} className="flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-xl fire-bg text-white disabled:opacity-30">
+            &#8593;
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};

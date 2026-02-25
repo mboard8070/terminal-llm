@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="fire" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff4500"/>
+      <stop offset="100%" stop-color="#ff8c00"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="#0d1117"/>
+  <text x="256" y="340" font-family="Inter,system-ui,sans-serif" font-weight="900" font-size="200" fill="url(#fire)" text-anchor="middle">M</text>
+  <circle cx="256" cy="420" r="20" fill="#ff4500" opacity="0.6"/>
+</svg>

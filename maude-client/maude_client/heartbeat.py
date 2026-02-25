@@ -11,6 +11,8 @@ import threading
 import requests
 from typing import Optional
 
+from maude_client import __version__
+
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
 HEARTBEAT_ENDPOINT = "http://100.107.132.16:3003/api/heartbeat"  # Spark Tailscale IP
@@ -44,7 +46,7 @@ class HeartbeatClient:
         self.client_id = get_client_id()
         self.hostname = get_hostname()
         self.platform = get_platform()
-        self.version = "1.0.0"
+        self.version = __version__
 
     def _send_heartbeat(self, status: str = "running") -> bool:
         """Send a single heartbeat to the server."""
