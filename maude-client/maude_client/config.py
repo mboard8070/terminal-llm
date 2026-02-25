@@ -20,7 +20,7 @@ SERVER_SHARED_DIR = "~/nvidia-workbench/terminal-llm/shared"
 SYNC_INTERVAL = 30  # seconds, same as heartbeat
 
 # File server URL (via Tailscale, no SSH tunnel needed)
-FILE_SERVER_URL = f"http://{SERVER_HOST}:{SERVER_FILE_PORT}"
+FILE_SERVER_URL = f"https://{SERVER_HOST}:{SERVER_FILE_PORT}"
 
 # Model settings (must match server)
 MODEL_NAME = "nemotron"

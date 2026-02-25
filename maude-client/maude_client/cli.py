@@ -17,6 +17,8 @@ import asyncio
 import tempfile
 import subprocess
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from typing import Optional, Generator, Callable
 
 from maude_client import __version__
@@ -58,8 +60,8 @@ class VoiceMode:
         # Check server transcription
         try:
             resp = requests.get(
-                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
-                timeout=2
+                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
+                timeout=2, verify=False
             )
             deps["server_transcription"] = resp.status_code == 200
         except:
@@ -87,8 +89,8 @@ class VoiceMode:
         """Check if transcription server is available."""
         try:
             resp = requests.get(
-                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
-                timeout=2
+                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
+                timeout=2, verify=False
             )
             return resp.status_code == 200
         except:
@@ -167,9 +169,9 @@ class VoiceMode:
         try:
             files = {"audio": ("audio.wav", audio_bytes, "audio/wav")}
             resp = requests.post(
-                f"http://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/transcribe",
+                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/transcribe",
                 files=files,
-                timeout=30
+                timeout=30, verify=False
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -323,7 +325,7 @@ Voice Commands:
     return False
 
 # API endpoint
-API_URL = f"http://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
+API_URL = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
 
 # Conversation history
 messages = []
@@ -367,8 +369,8 @@ def check_server_connection() -> bool:
     """Check if the LLM server is reachable."""
     try:
         response = requests.get(
-            f"http://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models",
-            timeout=5
+            f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models",
+            timeout=5, verify=False
         )
         return response.status_code == 200
     except:
@@ -399,7 +401,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     }
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=300)
+        response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
         response.raise_for_status()
 
         full_content = ""
@@ -514,7 +516,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
     }
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=300)
+        response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
         response.raise_for_status()
 
         full_content = ""
@@ -612,7 +614,7 @@ def final_response() -> Generator[str, None, None]:
     }
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=120)
+        response = requests.post(API_URL, json=payload, stream=True, timeout=120, verify=False)
         full_content = ""
 
         for line in response.iter_lines():
