@@ -1,0 +1,175 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* Default: MAUDE Dark theme */
+  :root {
+    --maude-bg: #0d1117;
+    --maude-surface: #161b22;
+    --maude-card: #1c1c1e;
+    --maude-border: #30363d;
+    --maude-text: #e6edf3;
+    --maude-muted: #8b949e;
+    --maude-accent: #ff4500;
+    --maude-accent-light: #ff8c00;
+    --maude-font: "Inter", sans-serif;
+  }
+
+  /* 80s Retro Terminal: Phosphor Green */
+  html[data-theme="retro-green"] {
+    --maude-bg: #0a0a0a;
+    --maude-surface: #0f1a0f;
+    --maude-card: #0a150a;
+    --maude-border: #1a3a1a;
+    --maude-text: #33ff33;
+    --maude-muted: #1a8c1a;
+    --maude-accent: #33ff33;
+    --maude-accent-light: #66ff66;
+    --maude-font: "VT323", "Share Tech Mono", monospace;
+  }
+
+  /* 80s Retro Terminal: Amber */
+  html[data-theme="retro-amber"] {
+    --maude-bg: #0a0800;
+    --maude-surface: #1a1400;
+    --maude-card: #151000;
+    --maude-border: #3a2a00;
+    --maude-text: #ffb000;
+    --maude-muted: #8c6000;
+    --maude-accent: #ffb000;
+    --maude-accent-light: #ffd060;
+    --maude-font: "VT323", "Share Tech Mono", monospace;
+  }
+
+  html,
+  body,
+  #root {
+    background: var(--maude-bg);
+    color: var(--maude-text);
+    font-family: var(--maude-font);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar::-webkit-scrollbar-thumb {
+    background: var(--maude-border);
+    border-radius: 3px;
+  }
+  .fire-gradient {
+    background: linear-gradient(135deg, var(--maude-accent), var(--maude-accent-light));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .fire-bg {
+    background: linear-gradient(135deg, var(--maude-accent), var(--maude-accent-light));
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* ─── CRT / Retro Effects ─── */
+
+html[data-theme="retro-green"] #root::before,
+html[data-theme="retro-amber"] #root::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15) 0px,
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+html[data-theme="retro-green"] #root,
+html[data-theme="retro-amber"] #root {
+  animation: crt-flicker 0.15s infinite alternate;
+}
+
+@keyframes crt-flicker {
+  0% { opacity: 0.97; }
+  100% { opacity: 1; }
+}
+
+html[data-theme="retro-green"] .fire-gradient,
+html[data-theme="retro-green"] h1,
+html[data-theme="retro-green"] h2 {
+  text-shadow: 0 0 8px #33ff3380, 0 0 16px #33ff3340;
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--maude-text);
+  background-clip: unset;
+}
+
+html[data-theme="retro-amber"] .fire-gradient,
+html[data-theme="retro-amber"] h1,
+html[data-theme="retro-amber"] h2 {
+  text-shadow: 0 0 8px #ffb00080, 0 0 16px #ffb00040;
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: var(--maude-text);
+  background-clip: unset;
+}
+
+html[data-theme="retro-green"] .fire-bg,
+html[data-theme="retro-amber"] .fire-bg {
+  background: var(--maude-accent);
+  box-shadow: 0 0 8px var(--maude-accent), inset 0 0 4px rgba(0,0,0,0.3);
+}
+
+html[data-theme="retro-green"] button,
+html[data-theme="retro-amber"] button {
+  font-family: var(--maude-font);
+  letter-spacing: 0.05em;
+}
+
+html[data-theme="retro-green"] input,
+html[data-theme="retro-green"] textarea,
+html[data-theme="retro-green"] select,
+html[data-theme="retro-amber"] input,
+html[data-theme="retro-amber"] textarea,
+html[data-theme="retro-amber"] select {
+  font-family: var(--maude-font);
+  border: 1px solid var(--maude-border);
+  letter-spacing: 0.05em;
+}
+
+/* Unmask password field used for terminal input (bypasses Samsung IME composition) */
+.terminal-input {
+  -webkit-text-security: none;
+}
