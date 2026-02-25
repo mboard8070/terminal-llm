@@ -294,7 +294,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Execute a shell command. Use for: pip, python, git, etc.",
+            "description": "Execute a shell command. Use for: pip, python, git, rm, mv, cp, etc. Also use to remove files from the shared/ or transfers/ folder when asked to clean up.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1292,7 +1292,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "list_shared",
-            "description": "List files in the shared folder. Files placed here are synced to connected clients automatically.",
+            "description": "List files in the shared folder. Files placed here are synced to connected clients automatically. To remove files, use run_command with rm.",
             "parameters": {
                 "type": "object",
                 "properties": {},
