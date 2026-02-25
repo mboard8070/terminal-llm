@@ -1,8 +1,40 @@
-import { FC } from "react";
+import { FC, useEffect, useRef, useState } from "react";
 import { ChatMessage } from "../hooks/useChat";
+
+function useTypewriter(content: string, active: boolean): string {
+  const [pos, setPos] = useState(0);
+  const rafRef = useRef<number>(0);
+  const wasActive = useRef(false);
+
+  if (active) wasActive.current = true;
+
+  useEffect(() => {
+    // Never animated — render full content instantly (history messages)
+    if (!active && !wasActive.current) { setPos(content.length); return; }
+
+    // Animate: either currently streaming, or finishing reveal after stream ended
+    const len = content.length;
+    let last = 0;
+    const tick = (now: number) => {
+      if (now - last >= 16) {
+        last = now;
+        setPos((p) => {
+          if (p >= len) return p;
+          return p + Math.max(2, Math.floor((len - p) / 30));
+        });
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [content, active]);
+
+  return content.slice(0, pos);
+}
 
 interface Props {
   message: ChatMessage;
+  animate?: boolean;
 }
 
 function renderMarkdown(text: string): string {
@@ -30,8 +62,9 @@ function renderMarkdown(text: string): string {
   return html;
 }
 
-export const MessageBubble: FC<Props> = ({ message }) => {
+export const MessageBubble: FC<Props> = ({ message, animate }) => {
   const isUser = message.role === "user";
+  const displayedContent = useTypewriter(message.content, !!animate);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
@@ -47,7 +80,7 @@ export const MessageBubble: FC<Props> = ({ message }) => {
             loading="lazy"
           />
         )}
-        <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }} />
+        <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayedContent) }} />
         {!message.content && !isUser && (
           <div className="flex gap-1">
             <span className="h-2 w-2 animate-bounce rounded-full bg-maude-muted" style={{ animationDelay: "0ms" }} />

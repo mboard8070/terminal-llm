@@ -25,6 +25,15 @@ const ChatView: FC<{
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
+  // Keep scroll pinned during typewriter animation
+  useEffect(() => {
+    if (!isStreaming || !scrollRef.current) return;
+    const id = setInterval(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, 50);
+    return () => clearInterval(id);
+  }, [isStreaming]);
+
   const handleSend = useCallback(
     (text: string, imageUrl?: string) => {
       if (!convIdRef.current) {
@@ -84,7 +93,9 @@ const ChatView: FC<{
             </div>
           </div>
         )}
-        {messages.map((msg) => (<MessageBubble key={msg.id} message={msg} />))}
+        {messages.map((msg, i) => (
+          <MessageBubble key={msg.id} message={msg} animate={isStreaming && i === messages.length - 1} />
+        ))}
       </div>
 
       <ChatInput

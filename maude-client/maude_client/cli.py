@@ -330,6 +330,9 @@ API_URL = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
 # Conversation history
 messages = []
 
+# Current model (mutable at runtime via /model command)
+current_model = MODEL_NAME
+
 # System prompt
 SYSTEM_PROMPT = f"""You are MAUDE (Multi-Agent Unified Dispatch Engine), a helpful AI assistant.
 
@@ -391,7 +394,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
     # Build request
     payload = {
-        "model": MODEL_NAME,
+        "model": current_model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
         "tools": get_tools_for_message(user_message),
         "tool_choice": "auto",
@@ -506,7 +509,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 def stream_chat_continuation() -> Generator[str, None, None]:
     """Continue chat after tool execution."""
     payload = {
-        "model": MODEL_NAME,
+        "model": current_model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
         "tools": get_tools_for_message(""),
         "tool_choice": "auto",
@@ -606,7 +609,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
 def final_response() -> Generator[str, None, None]:
     """Get final response without tool calls."""
     payload = {
-        "model": MODEL_NAME,
+        "model": current_model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
         "temperature": TEMPERATURE,
         "max_tokens": 2048,
@@ -652,7 +655,7 @@ def print_banner():
     """
     print(banner)
     print(f"    Server:  {SERVER_HOST}:{SERVER_LLM_PORT}")
-    print(f"    Model:   {MODEL_NAME}")
+    print(f"    Model:   {current_model}")
     print(f"    Client:  {CLIENT_NAME}")
     print(f"    Version: {__version__}")
     print()
@@ -722,6 +725,35 @@ def main():
                     print(result)
                     continue
 
+                # Handle /model command
+                if user_input.startswith("/model"):
+                    global current_model
+                    parts = user_input.split(maxsplit=1)
+                    if len(parts) == 1:
+                        # Show current model and list available
+                        print(f"\nCurrent model: {current_model}")
+                        try:
+                            resp = requests.get(
+                                f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models",
+                                timeout=5, verify=False
+                            )
+                            if resp.status_code == 200:
+                                models = [m["id"] for m in resp.json().get("data", [])]
+                                print(f"Available:      {', '.join(models)}")
+                            else:
+                                print("[Could not fetch model list]")
+                        except Exception:
+                            print("[Could not fetch model list]")
+                    else:
+                        # Handle "/model switch <name>" or "/model <name>"
+                        model_arg = parts[1].strip()
+                        tokens = model_arg.split()
+                        if tokens[0].lower() in ("switch", "use", "set") and len(tokens) > 1:
+                            model_arg = tokens[1]
+                        current_model = model_arg
+                        print(f"Switched to model: {current_model}")
+                    continue
+
                 # Handle /update command
                 if user_input == "/update":
                     print("Updating MAUDE client...")
@@ -754,6 +786,8 @@ Commands:
   /voice deps   - Check voice dependencies
   /voice start  - Single voice interaction
   /voice talk   - Continuous voice mode
+  /model        - Show current model and list available
+  /model <name> - Switch to a different model
   /sync         - Sync shared folder now
 
 Features:
