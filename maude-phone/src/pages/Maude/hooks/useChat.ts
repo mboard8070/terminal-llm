@@ -52,7 +52,7 @@ export function useChat(conversationId: string | null = null) {
     conversationId ? loadMessages(conversationId) : [],
   );
   const [isStreaming, setIsStreaming] = useState(false);
-  const [currentModel, setCurrentModel] = useState("claude-sonnet-4-20250514");
+  const [currentModel, setCurrentModel] = useState("claude-opus-4-20250514");
   const [autoRoute, setAutoRoute] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const convIdRef = useRef(conversationId);

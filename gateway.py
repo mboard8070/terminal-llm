@@ -97,8 +97,8 @@ MODEL_ROUTES = {
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
     },
-    # Claude Sonnet — smart, reliable tool use
-    "claude-sonnet-4-20250514": {
+    # Claude Opus — most capable, reliable tool use
+    "claude-opus-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
@@ -111,7 +111,7 @@ MODEL_ALIASES = {
     "codestral": "codestral-latest",
     "local": "nemotron",
     "vision": "llava",
-    "claude": "claude-sonnet-4-20250514",
+    "claude": "claude-opus-4-20250514",
 }
 
 
@@ -1085,6 +1085,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
             })
 
+        # Mark last tool with cache_control so tools + system get cached
+        if claude_tools:
+            claude_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
         # Extract system prompt from messages and convert to Claude format
         system_text = ""
         claude_messages = []
@@ -1123,6 +1127,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
         )
         system_text += tool_addendum
 
+        # Use block format for system prompt with cache_control
+        # This caches the full system prompt + tool addendum across loop iterations
+        # and across requests within the 5-minute TTL window
+        system_blocks = [{
+            "type": "text",
+            "text": system_text,
+            "cache_control": {"type": "ephemeral"},
+        }]
+
         # Connection details for Claude API
         parsed_url = urlparse(route["base_url"])
         use_ssl = parsed_url.scheme == "https"
@@ -1153,7 +1166,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             loop_req = {
                 "model": resolved_name,
                 "max_tokens": req.get("max_tokens", 4096),
-                "system": system_text,
+                "system": system_blocks,
                 "messages": claude_messages,
                 "tools": claude_tools,
             }
@@ -1204,18 +1217,30 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 conn.close()
                 return
 
-            # Emit LLM call trace
+            # Emit LLM call trace (include cache stats)
             llm_elapsed = time.time() - llm_start
             usage = result.get("usage", {})
             prompt_tok = usage.get("input_tokens", 0)
             compl_tok = usage.get("output_tokens", 0)
+            cache_read = usage.get("cache_read_input_tokens", 0)
+            cache_create = usage.get("cache_creation_input_tokens", 0)
+            trace_data = {
+                "prompt_tokens": prompt_tok,
+                "completion_tokens": compl_tok,
+                "elapsed": round(llm_elapsed, 2),
+            }
+            if cache_read:
+                trace_data["cache_read_tokens"] = cache_read
+            if cache_create:
+                trace_data["cache_create_tokens"] = cache_create
             if sse_started:
-                self._send_trace_sse("llm_call", {
-                    "prompt_tokens": prompt_tok,
-                    "completion_tokens": compl_tok,
-                    "elapsed": round(llm_elapsed, 2),
-                })
-            print(f"  Claude LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s")
+                self._send_trace_sse("llm_call", trace_data)
+            cache_info = ""
+            if cache_read:
+                cache_info += f" cache_read={cache_read}"
+            if cache_create:
+                cache_info += f" cache_write={cache_create}"
+            print(f"  Claude LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s{cache_info}")
 
             # Parse content blocks from Claude response
             content_blocks = result.get("content", [])
