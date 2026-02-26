@@ -1,6 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, saveMessages } from "./storage";
 
+export interface TraceInfo {
+  tools: string[];
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  elapsed: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -8,6 +17,7 @@ export interface ChatMessage {
   model?: string;
   imageUrl?: string;
   timestamp: number;
+  trace?: TraceInfo;
 }
 
 const MAUDE_SYSTEM_PROMPT = `You are MAUDE — a local AI assistant running on Matt's DGX Spark, handling tasks that benefit from local execution, privacy, or when cloud access isn't available.
@@ -138,6 +148,11 @@ export function useChat(conversationId: string | null = null) {
         const decoder = new TextDecoder();
         let buffer = "";
         let fullContent = "";
+        let currentEventType = "";
+        const trace: TraceInfo = {
+          tools: [], promptTokens: 0, completionTokens: 0,
+          cacheReadTokens: 0, cacheCreateTokens: 0, elapsed: 0,
+        };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -148,9 +163,37 @@ export function useChat(conversationId: string | null = null) {
 
           for (const line of lines) {
             const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith("data: ")) continue;
+            if (!trimmed) continue;
+
+            // Track SSE event type
+            if (trimmed.startsWith("event: ")) {
+              currentEventType = trimmed.slice(7);
+              continue;
+            }
+
+            if (!trimmed.startsWith("data: ")) continue;
             const data = trimmed.slice(6);
             if (data === "[DONE]") continue;
+
+            // Handle trace events from gateway tool loop
+            if (currentEventType === "trace") {
+              currentEventType = "";
+              try {
+                const t = JSON.parse(data);
+                if (t.type === "tool_call" && t.name) {
+                  trace.tools.push(t.name);
+                } else if (t.type === "llm_call") {
+                  trace.promptTokens += t.prompt_tokens || 0;
+                  trace.completionTokens += t.completion_tokens || 0;
+                  trace.cacheReadTokens += t.cache_read_tokens || 0;
+                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
+                  trace.elapsed += t.elapsed || 0;
+                }
+              } catch { /* skip */ }
+              continue;
+            }
+            currentEventType = "";
+
             try {
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta?.content;
@@ -160,14 +203,22 @@ export function useChat(conversationId: string | null = null) {
                 if (!rafIdRef.current) {
                   rafIdRef.current = requestAnimationFrame(() => {
                     const snapshot = contentRef.current;
+                    const snapTrace = { ...trace, tools: [...trace.tools] };
                     setMessages((prev) =>
-                      prev.map((m) => m.id === assistantMsg.id ? { ...m, content: snapshot } : m));
+                      prev.map((m) => m.id === assistantMsg.id ? { ...m, content: snapshot, trace: snapTrace } : m));
                     rafIdRef.current = 0;
                   });
                 }
               }
             } catch { /* skip malformed SSE */ }
           }
+        }
+
+        // Final trace update
+        if (trace.promptTokens || trace.tools.length) {
+          const finalTrace = { ...trace };
+          setMessages((prev) =>
+            prev.map((m) => m.id === assistantMsg.id ? { ...m, trace: finalTrace } : m));
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== "AbortError") {
