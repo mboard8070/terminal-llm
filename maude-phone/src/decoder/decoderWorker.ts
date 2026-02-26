@@ -58,7 +58,7 @@ const sendInitCommand = (worker: Worker, audioContextSampleRate: number): void =
     bufferLength: 960 * audioContextSampleRate / 24000,
     decoderSampleRate: 24000,
     outputBufferSampleRate: audioContextSampleRate,
-    resampleQuality: 5,
+    resampleQuality: 0,
   });
   
   // After a short delay, send warmup BOS page to trigger decoder's internal init
