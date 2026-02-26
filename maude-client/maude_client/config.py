@@ -23,7 +23,7 @@ SYNC_INTERVAL = 30  # seconds, same as heartbeat
 FILE_SERVER_URL = f"https://{SERVER_HOST}:{SERVER_FILE_PORT}"
 
 # Model settings (must match server)
-MODEL_NAME = "nemotron"
+MODEL_NAME = "mistral-large-latest"
 CONTEXT_SIZE = 32768
 TEMPERATURE = 0.7
 

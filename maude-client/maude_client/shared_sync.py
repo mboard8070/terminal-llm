@@ -69,9 +69,9 @@ def sync_now() -> str:
         logger.error(msg)
         return msg
 
-    # Pull first: server -> local (server is authoritative, --delete removes local stale files)
+    # Pull first: server -> local (add/update only — never delete)
     try:
-        r = _run_rsync(remote_path, local_path, delete=True)
+        r = _run_rsync(remote_path, local_path)
         if r.returncode == 0:
             pulled = [l for l in r.stdout.splitlines() if not l.startswith("receiving") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
             if pulled:

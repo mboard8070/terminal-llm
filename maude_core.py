@@ -1391,9 +1391,10 @@ _TOOL_GROUPS = {
     },
     "drive": {
         "keywords": ["drive", "google doc", "google drive", "my documents",
-                      "my files on", "cloud files", "gdrive"],
+                      "my files on", "cloud files", "gdrive", "folder"],
         "tools": {"drive_list", "drive_search", "drive_read", "drive_upload",
-                  "drive_create_doc", "drive_delete"},
+                  "drive_create_doc", "drive_create_folder", "drive_create_sheet",
+                  "drive_update_doc", "drive_delete"},
     },
     "sheets": {
         "keywords": ["sheet", "spreadsheet", "csv", "table", "cells", "rows", "columns"],
@@ -1447,7 +1448,8 @@ _TOOL_GROUPS = {
         "keywords": ["google"],
         "tools": {"gmail_list", "gmail_read", "gmail_send",
                   "drive_list", "drive_search", "drive_read", "drive_upload",
-                  "drive_create_doc", "drive_delete",
+                  "drive_create_doc", "drive_create_folder", "drive_create_sheet",
+                  "drive_update_doc", "drive_delete",
                   "sheets_read", "sheets_write", "sheets_create",
                   "calendar_list_events", "calendar_create_event",
                   "contacts_list", "contacts_search"},
