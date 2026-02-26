@@ -159,7 +159,7 @@ async function createWorkletPlaybackNode(
   };
 
   const gainNode = ctx.createGain();
-  gainNode.gain.value = 1.5;
+  gainNode.gain.value = 6.0;
   workletNode.connect(gainNode);
 
   return {
