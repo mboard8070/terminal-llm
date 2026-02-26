@@ -224,6 +224,21 @@ TOOLS = [
                 "required": ["filename"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clean_shared",
+            "description": "Remove files from the shared folder on both client and server. Use when user says 'clean shared', 'clear shared', or 'remove from shared'. Can target specific files or clean everything.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Specific file to remove (omit to clean all files)"},
+                    "confirm": {"type": "boolean", "description": "Must be true to proceed with deletion"}
+                },
+                "required": ["confirm"]
+            }
+        }
     }
 ]
 
@@ -280,6 +295,11 @@ def execute_tool(name: str, arguments: dict) -> str:
             return pull_shared(
                 arguments.get("filename", ""),
                 arguments.get("local_path")
+            )
+        elif name == "clean_shared":
+            return clean_shared(
+                arguments.get("filename"),
+                arguments.get("confirm", False)
             )
         else:
             return f"Unknown tool: {name}"
@@ -591,6 +611,61 @@ def sync_shared() -> str:
         return f"Error: {e}"
 
 
+def clean_shared(filename: str = None, confirm: bool = False) -> str:
+    """Remove files from shared folder on both client and server."""
+    if not confirm:
+        return "Error: Set confirm=true to proceed with deletion."
+
+    local_dir = Path(LOCAL_SHARED_DIR).expanduser()
+    results = []
+
+    if filename:
+        # Delete specific file from both sides
+        local_file = local_dir / filename
+        if local_file.exists():
+            local_file.unlink()
+            results.append(f"Deleted local: {filename}")
+        else:
+            results.append(f"Local: {filename} not found (skipped)")
+
+        # Delete from server
+        try:
+            server_path = f"{SERVER_SHARED_DIR}/{filename}"
+            r = subprocess.run(
+                ["ssh", SERVER_SSH_HOST, f"rm -f {server_path}"],
+                capture_output=True, text=True, timeout=10
+            )
+            if r.returncode == 0:
+                results.append(f"Deleted server: {filename}")
+            else:
+                results.append(f"Server delete failed: {r.stderr.strip()}")
+        except Exception as e:
+            results.append(f"Server error: {e}")
+    else:
+        # Clean all files from both sides
+        local_count = 0
+        for f in local_dir.iterdir():
+            if f.is_file():
+                f.unlink()
+                local_count += 1
+        results.append(f"Deleted {local_count} file(s) from local shared")
+
+        # Clean server shared
+        try:
+            r = subprocess.run(
+                ["ssh", SERVER_SSH_HOST, f"find {SERVER_SHARED_DIR} -maxdepth 1 -type f -delete"],
+                capture_output=True, text=True, timeout=10
+            )
+            if r.returncode == 0:
+                results.append("Cleaned server shared folder")
+            else:
+                results.append(f"Server clean failed: {r.stderr.strip()}")
+        except Exception as e:
+            results.append(f"Server error: {e}")
+
+    return "\n".join(results)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Tool Filtering and Fast Dispatch
 # ─────────────────────────────────────────────────────────────────────────────
@@ -601,6 +676,7 @@ import re as _re
 _CORE_TOOL_NAMES = {
     "read_file", "write_file", "list_directory", "run_command",
     "search_files", "edit_file", "list_shared", "sync_shared", "pull_shared",
+    "clean_shared",
 }
 
 # Server tools activated by keyword

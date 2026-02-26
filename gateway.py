@@ -607,7 +607,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             return
 
         # Use tool-enabled path for Mistral if maude_core is available
-        if TOOL_SUPPORT and route["provider"] == "mistral":
+        # Skip server-side tool loop if client already sent its own tools
+        client_sent_tools = bool(req.get("tools"))
+        if TOOL_SUPPORT and route["provider"] == "mistral" and not client_sent_tools:
             self._cloud_model_with_tools(req, route, resolved_name)
             return
 
