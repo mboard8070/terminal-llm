@@ -37,15 +37,13 @@ def _ensure_dirs():
     return local
 
 
-def _run_rsync(src: str, dst: str, delete: bool = False) -> subprocess.CompletedProcess:
-    """Run a single rsync command."""
+def _run_rsync(src: str, dst: str) -> subprocess.CompletedProcess:
+    """Run a single rsync command (add/update only, never delete)."""
     cmd = [
         "rsync", "-avz", "--update",
         "-e", "ssh",
         src, dst
     ]
-    if delete:
-        cmd.insert(3, "--delete")
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
 
