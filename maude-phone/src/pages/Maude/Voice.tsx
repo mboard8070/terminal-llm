@@ -48,11 +48,89 @@ function getPersonaPlexUrl(imageContext?: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Consolidated-chunk scheduled playback for Android WebView.
-// Merges small decoded PCM frames into larger ~100ms chunks before
-// scheduling them as AudioBufferSourceNodes. This eliminates clicks
-// from too many tiny buffers and smooths out network/decode jitter.
+// AudioWorklet ring-buffer playback. The hardware audio clock pulls
+// samples at a constant rate from a shared ring buffer. The main
+// thread pushes PCM into the buffer. This avoids all the timing
+// issues of AudioBufferSourceNode scheduling on Android WebView.
 // ─────────────────────────────────────────────────────────────────
+
+const RING_WORKLET_CODE = `
+class RingPlayerProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.bufSize = Math.round(sampleRate * 4);
+    this.buf = new Float32Array(this.bufSize);
+    this.writePos = 0;
+    this.readPos = 0;
+    this.started = false;
+    this.preBuffer = Math.round(sampleRate * 0.5); // 500ms initial buffer
+    this.underruns = 0;
+    this.lastSample = 0;
+    this.reportCounter = 0;
+
+    this.port.onmessage = (e) => {
+      if (e.data.type === 'audio') {
+        const pcm = e.data.pcm;
+        for (let i = 0; i < pcm.length; i++) {
+          this.buf[(this.writePos + i) % this.bufSize] = pcm[i];
+        }
+        this.writePos = (this.writePos + pcm.length) % this.bufSize;
+      } else if (e.data.type === 'reset') {
+        this.writePos = 0;
+        this.readPos = 0;
+        this.buf.fill(0);
+        this.started = false;
+        this.underruns = 0;
+        this.lastSample = 0;
+      }
+    };
+  }
+
+  available() {
+    let a = this.writePos - this.readPos;
+    if (a < 0) a += this.bufSize;
+    return a;
+  }
+
+  process(inputs, outputs) {
+    const out = outputs[0][0];
+    if (!out) return true;
+    const avail = this.available();
+
+    // Wait for initial buffer
+    if (!this.started) {
+      out.fill(0);
+      if (avail >= this.preBuffer) {
+        this.started = true;
+      }
+      return true;
+    }
+
+    // Play available samples, hold last for any gap
+    const toRead = Math.min(out.length, avail);
+    for (let i = 0; i < toRead; i++) {
+      this.lastSample = this.buf[this.readPos];
+      out[i] = this.lastSample;
+      this.readPos = (this.readPos + 1) % this.bufSize;
+    }
+    if (toRead < out.length) {
+      this.underruns++;
+      for (let i = toRead; i < out.length; i++) out[i] = this.lastSample;
+    }
+
+    // Report every ~500ms
+    this.reportCounter++;
+    if (this.reportCounter >= 187) {
+      this.reportCounter = 0;
+      this.port.postMessage({
+        type: 'state', avail: avail, underruns: this.underruns
+      });
+    }
+    return true;
+  }
+}
+registerProcessor('ring-player', RingPlayerProcessor);
+`;
 
 interface PlaybackNode {
   feedAudio: (frame: Float32Array) => void;
@@ -61,137 +139,42 @@ interface PlaybackNode {
   disconnect: () => void;
 }
 
-function createScheduledPlaybackNode(ctx: AudioContext): PlaybackNode {
-  let nextPlayTime = 0;
-  let gainNode: GainNode | null = null;
+async function createWorkletPlaybackNode(
+  ctx: AudioContext,
+  onStateChange?: (state: string, detail: Record<string, number>) => void,
+): Promise<PlaybackNode> {
+  const blob = new Blob([RING_WORKLET_CODE], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  await ctx.audioWorklet.addModule(url);
+  URL.revokeObjectURL(url);
 
-  // Consolidation: accumulate decoded frames into ~100ms chunks
-  const CHUNK_MS = 100;
-  const CHUNK_SAMPLES = Math.round(ctx.sampleRate * CHUNK_MS / 1000);
-  let accumBuf = new Float32Array(CHUNK_SAMPLES);
-  let accumPos = 0;
+  const workletNode = new AudioWorkletNode(ctx, "ring-player", {
+    outputChannelCount: [1],
+  });
 
-  // Flush timer: if no new audio arrives within 60ms, flush whatever
-  // we have. This prevents audio getting stuck in the accumulator
-  // when PersonaPlex sends in bursts with gaps between them.
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const FLUSH_DELAY_MS = 35;
-
-  // Initial buffering: wait for 800ms before starting playback
-  const INITIAL_BUFFER_SEC = 0.4;
-  let pendingSamples = 0;
-  let pendingChunks: Float32Array[] = [];
-  let started = false;
-
-  // Crossfade to eliminate clicks at chunk boundaries
-  const XFADE = 64;
-  let prevTail = new Float32Array(XFADE);
-
-  function scheduleChunk(pcm: Float32Array) {
-    if (!gainNode || pcm.length === 0) return;
-
-    // Crossfade: blend previous tail with this chunk's head
-    const xlen = Math.min(XFADE, pcm.length);
-    for (let i = 0; i < xlen; i++) {
-      const t = i / XFADE;
-      pcm[i] = pcm[i] * t + prevTail[i] * (1 - t);
+  workletNode.port.onmessage = (e) => {
+    if (e.data?.type === "state" && onStateChange) {
+      onStateChange(e.data.state, e.data);
     }
+  };
 
-    // Soft-clip
-    for (let i = 0; i < pcm.length; i++) {
-      const s = pcm[i];
-      if (s > 1.0) pcm[i] = 1.0;
-      else if (s < -1.0) pcm[i] = -1.0;
-    }
-
-    // Save tail for next crossfade
-    const tailStart = Math.max(0, pcm.length - XFADE);
-    const tail = pcm.slice(tailStart);
-    prevTail = new Float32Array(XFADE);
-    prevTail.set(tail, 0);
-
-    const buf = ctx.createBuffer(1, pcm.length, ctx.sampleRate);
-    buf.getChannelData(0).set(pcm);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(gainNode);
-    src.start(nextPlayTime);
-    nextPlayTime += pcm.length / ctx.sampleRate;
-  }
-
-  function flushAccum() {
-    if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
-    if (accumPos === 0) return;
-    const chunk = accumBuf.slice(0, accumPos);
-    accumPos = 0;
-    if (!started) {
-      pendingChunks.push(chunk);
-      pendingSamples += chunk.length;
-      if (pendingSamples >= ctx.sampleRate * INITIAL_BUFFER_SEC) {
-        started = true;
-        nextPlayTime = ctx.currentTime + 0.1;
-        for (const c of pendingChunks) scheduleChunk(c);
-        pendingChunks = [];
-        pendingSamples = 0;
-      }
-    } else {
-      // If we've fallen behind (underrun), jump ahead
-      if (nextPlayTime < ctx.currentTime) {
-        nextPlayTime = ctx.currentTime + 0.1;
-      }
-      // If too far ahead (>3s), skip forward to limit latency
-      if (nextPlayTime > ctx.currentTime + 3.0) {
-        nextPlayTime = ctx.currentTime + 0.5;
-      }
-      scheduleChunk(chunk);
-    }
-  }
-
-  function armFlushTimer() {
-    if (flushTimer !== null) clearTimeout(flushTimer);
-    flushTimer = setTimeout(flushAccum, FLUSH_DELAY_MS);
-  }
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = 1.5;
+  workletNode.connect(gainNode);
 
   return {
     feedAudio(frame: Float32Array) {
-      let offset = 0;
-      while (offset < frame.length) {
-        const space = CHUNK_SAMPLES - accumPos;
-        const take = Math.min(space, frame.length - offset);
-        accumBuf.set(frame.subarray(offset, offset + take), accumPos);
-        accumPos += take;
-        offset += take;
-        if (accumPos >= CHUNK_SAMPLES) {
-          flushAccum();
-        }
-      }
-      // If there's leftover in the accumulator, arm the flush timer
-      // so it doesn't sit there waiting for more data that may not come soon
-      if (accumPos > 0) {
-        armFlushTimer();
-      }
+      workletNode.port.postMessage({ type: "audio", pcm: frame }, [frame.buffer]);
     },
     reset() {
-      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
-      nextPlayTime = 0;
-      started = false;
-      accumPos = 0;
-      pendingChunks = [];
-      pendingSamples = 0;
-      prevTail = new Float32Array(XFADE);
+      workletNode.port.postMessage({ type: "reset" });
     },
     connect(dest: AudioNode) {
-      if (!gainNode) {
-        gainNode = ctx.createGain();
-        gainNode.gain.value = 1.5;
-      }
       gainNode.connect(dest);
     },
     disconnect() {
-      if (flushTimer !== null) { clearTimeout(flushTimer); flushTimer = null; }
-      if (gainNode) {
-        try { gainNode.disconnect(); } catch {}
-      }
+      try { gainNode.disconnect(); } catch {}
+      try { workletNode.disconnect(); } catch {}
     },
   };
 }
@@ -252,7 +235,6 @@ export const Voice: FC = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const playbackRef = useRef<PlaybackNode | null>(null);
   const recorderRef = useRef<any>(null);
-  const decoderWorkerRef = useRef<Worker | null>(null);
   const serverAnalyserRef = useRef<AnalyserNode | null>(null);
   const micAnalyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -260,6 +242,8 @@ export const Voice: FC = () => {
   const timerRef = useRef<number>(0);
   const audioFramesRef = useRef(0);
   const decodedFramesRef = useRef(0);
+  const workletUnderrunsRef = useRef(0);
+  const workletBufRef = useRef(0);
   const debugIntervalRef = useRef<number>(0);
 
   const connect = useCallback(async () => {
@@ -287,52 +271,23 @@ export const Voice: FC = () => {
       decodedFramesRef.current = 0;
       setAudioDebug(`ctx: ${ctx.state} ${ctx.sampleRate}Hz`);
 
-      // 2. Create scheduled playback node (AudioBufferSourceNode scheduling)
+      // 2. Create AudioWorklet ring-buffer playback node
       if (!playbackRef.current) {
-        playbackRef.current = createScheduledPlaybackNode(ctx);
+        playbackRef.current = await createWorkletPlaybackNode(ctx, (_state, detail) => {
+          if (detail.underruns != null) workletUnderrunsRef.current = detail.underruns;
+          if (detail.avail != null) workletBufRef.current = detail.avail;
+        });
         playbackRef.current.connect(ctx.destination);
       }
       playbackRef.current.reset();
+      workletUnderrunsRef.current = 0;
 
       // Server audio analyser
       const sAnalyser = ctx.createAnalyser();
       playbackRef.current.connect(sAnalyser);
       serverAnalyserRef.current = sAnalyser;
 
-      // 3. Set up Opus decoder worker
-      if (decoderWorkerRef.current) {
-        decoderWorkerRef.current.terminate();
-      }
-      const decoderUrl = new URL("/assets/decoderWorker.min.js", window.location.origin).href;
-      const worker = new Worker(decoderUrl);
-      decoderWorkerRef.current = worker;
-
-      worker.onerror = (e) => {
-        console.error("Decoder worker error:", e);
-        setError("Audio decoder failed to load");
-        setAudioDebug((prev) => prev + " | WORKER ERR");
-      };
-
-      worker.postMessage({
-        command: "init",
-        bufferLength: Math.round(960 * ctx.sampleRate / 24000),
-        decoderSampleRate: 24000,
-        outputBufferSampleRate: ctx.sampleRate,
-        resampleQuality: 0,
-      });
-
-      // Wait for decoder to initialize
-      await new Promise<void>((resolve) => setTimeout(resolve, 800));
-
-      worker.onmessage = (e: MessageEvent) => {
-        if (e.data?.[0]) {
-          decodedFramesRef.current++;
-          const decoded: Float32Array = e.data[0];
-          playbackRef.current?.feedAudio(decoded);
-        }
-      };
-
-      // 4. Request microphone
+      // 3. Request microphone
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -364,30 +319,40 @@ export const Voice: FC = () => {
       ws.onmessage = (e: MessageEvent) => {
         try {
           const data = new Uint8Array(e.data);
-          const msg = decodeMessage(data);
 
-          if (msg.type === "handshake") {
+          const kind = data[0];
+
+          if (kind === 0x00) {
+            // Handshake
             console.log("PersonaPlex handshake received");
             setStatus("connected");
             startRecording(ws, stream, ctx);
-
             timerRef.current = window.setInterval(() => {
               durationRef.current += 1;
               setDuration(durationRef.current);
               const ctxState = audioContextRef.current?.state ?? "?";
-              setAudioDebug(`ctx:${ctxState} rx:${audioFramesRef.current} dec:${decodedFramesRef.current}`);
+              const bufMs = Math.round(workletBufRef.current / 48);
+              setAudioDebug(`dec:${decodedFramesRef.current} buf:${bufMs}ms ur:${workletUnderrunsRef.current}`);
             }, 1000);
-          } else if (msg.type === "audio") {
-            audioFramesRef.current++;
-            decoderWorkerRef.current?.postMessage(
-              { command: "decode", pages: msg.data },
-              [msg.data.buffer],
-            );
-          } else if (msg.type === "text") {
-            setTranscript((prev) => prev + msg.data);
-          } else if (msg.type === "error") {
-            console.error("PersonaPlex error:", msg.data);
-            setError(msg.data);
+          } else if (kind === 0x02) {
+            // Text
+            const text = new TextDecoder().decode(data.slice(1));
+            setTranscript((prev) => prev + text);
+          } else if (kind === 0x03) {
+            // Raw PCM (float32 @ 24kHz)
+            decodedFramesRef.current++;
+            const rawBytes = data.slice(1);
+            const pcm24 = new Float32Array(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength / 4);
+            // Resample 24kHz → 48kHz (linear interpolation)
+            const pcm48 = new Float32Array(pcm24.length * 2);
+            for (let i = 0; i < pcm48.length; i++) {
+              const srcIdx = i * 0.5;
+              const lo = srcIdx | 0;
+              const hi = Math.min(lo + 1, pcm24.length - 1);
+              const frac = srcIdx - lo;
+              pcm48[i] = pcm24[lo] + (pcm24[hi] - pcm24[lo]) * frac;
+            }
+            playbackRef.current?.feedAudio(pcm48);
           }
         } catch (err) {
           console.error("Message decode error:", err);
@@ -432,8 +397,8 @@ export const Voice: FC = () => {
           maxFramesPerPage: 2,
           numberOfChannels: 1,
           recordingGain: 1,
-          resampleQuality: 7,
-          encoderComplexity: 6,
+          resampleQuality: 3,
+          encoderComplexity: 3,
           encoderApplication: 2049,
           streamPages: true,
           sourceNode,
@@ -478,10 +443,6 @@ export const Voice: FC = () => {
     if (socketRef.current) {
       socketRef.current.close();
       socketRef.current = null;
-    }
-    if (decoderWorkerRef.current) {
-      decoderWorkerRef.current.terminate();
-      decoderWorkerRef.current = null;
     }
     setStatus("disconnected");
   }, [stopRecording]);
@@ -585,7 +546,7 @@ export const Voice: FC = () => {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6">
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-6 pb-4">
         {/* Status indicator */}
         <div className="flex flex-col items-center gap-2">
           <div
@@ -698,7 +659,7 @@ export const Voice: FC = () => {
         {transcript && (
           <div className="w-full max-w-xs rounded-xl bg-maude-surface p-3">
             <span className="mb-1 block text-[10px] uppercase tracking-wider text-maude-muted">Transcript</span>
-            <p className="text-sm text-maude-text">{transcript}</p>
+            <p className="max-h-32 overflow-y-auto text-sm text-maude-text">{transcript}</p>
           </div>
         )}
 
