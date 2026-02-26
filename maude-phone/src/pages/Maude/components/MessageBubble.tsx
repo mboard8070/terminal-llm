@@ -1,5 +1,5 @@
 import { FC, useEffect, useRef, useState } from "react";
-import { ChatMessage } from "../hooks/useChat";
+import { ChatMessage, TraceInfo } from "../hooks/useChat";
 
 function useTypewriter(content: string, active: boolean): string {
   const [pos, setPos] = useState(0);
@@ -62,6 +62,38 @@ function renderMarkdown(text: string): string {
   return html;
 }
 
+const TraceBadge: FC<{ trace: TraceInfo }> = ({ trace }) => {
+  const totalInput = trace.promptTokens + trace.cacheReadTokens + trace.cacheCreateTokens;
+  if (!totalInput && !trace.tools.length) return null;
+
+  const cachePct = totalInput > 0
+    ? Math.round((trace.cacheReadTokens / totalInput) * 100)
+    : 0;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-maude-muted">
+      {trace.tools.length > 0 && (
+        <span className="rounded bg-maude-bg px-1.5 py-0.5">
+          {trace.tools.length} tool{trace.tools.length > 1 ? "s" : ""}
+        </span>
+      )}
+      <span className="rounded bg-maude-bg px-1.5 py-0.5">
+        {totalInput + trace.completionTokens} tok
+      </span>
+      {cachePct > 0 && (
+        <span className="rounded bg-maude-bg px-1.5 py-0.5 text-green-400">
+          {cachePct}% cached
+        </span>
+      )}
+      {trace.elapsed > 0 && (
+        <span className="rounded bg-maude-bg px-1.5 py-0.5">
+          {trace.elapsed.toFixed(1)}s
+        </span>
+      )}
+    </div>
+  );
+};
+
 export const MessageBubble: FC<Props> = ({ message, animate }) => {
   const isUser = message.role === "user";
   const displayedContent = useTypewriter(message.content, !!animate);
@@ -81,6 +113,7 @@ export const MessageBubble: FC<Props> = ({ message, animate }) => {
           />
         )}
         <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayedContent) }} />
+        {!isUser && message.trace && <TraceBadge trace={message.trace} />}
         {!message.content && !isUser && (
           <div className="flex gap-1">
             <span className="h-2 w-2 animate-bounce rounded-full bg-maude-muted" style={{ animationDelay: "0ms" }} />
