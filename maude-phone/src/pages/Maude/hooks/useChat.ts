@@ -69,11 +69,19 @@ export function useChat(conversationId: string | null = null) {
     localStorage.getItem("maude-autoroute") === "true",
   );
 
-  // Persist model selection
-  useEffect(() => { localStorage.setItem("maude-model", currentModel); }, [currentModel]);
-  useEffect(() => { localStorage.setItem("maude-autoroute", String(autoRoute)); }, [autoRoute]);
+  // Write to localStorage synchronously — not via useEffect which runs after render
+  const updateModel = useCallback((model: string) => {
+    localStorage.setItem("maude-model", model);
+    setCurrentModel(model);
+  }, []);
+  const updateAutoRoute = useCallback((val: boolean) => {
+    localStorage.setItem("maude-autoroute", String(val));
+    setAutoRoute(val);
+  }, []);
+  // Ref always tracks the latest model — immune to stale closures
   const modelRef = useRef(currentModel);
   modelRef.current = currentModel;
+
   const abortRef = useRef<AbortController | null>(null);
   const convIdRef = useRef(conversationId);
   const contentRef = useRef("");
@@ -107,7 +115,7 @@ export function useChat(conversationId: string | null = null) {
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
 
-      const model = localStorage.getItem("maude-model") || modelRef.current;
+      const model = modelRef.current;
 
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(), role: "assistant", content: "", model, timestamp: Date.now(),
@@ -266,5 +274,5 @@ export function useChat(conversationId: string | null = null) {
   const stopStreaming = useCallback(() => { abortRef.current?.abort(); }, []);
   const clearMessages = useCallback(() => { setMessages([]); }, []);
 
-  return { messages, isStreaming, currentModel, setCurrentModel, autoRoute, setAutoRoute, sendMessage, stopStreaming, clearMessages };
+  return { messages, isStreaming, currentModel, setCurrentModel: updateModel, autoRoute, setAutoRoute: updateAutoRoute, sendMessage, stopStreaming, clearMessages };
 }

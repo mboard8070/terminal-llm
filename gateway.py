@@ -601,6 +601,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         model_name = req.get("model", "mistral-large-latest")
         resolved_name, route = get_model_route(model_name)
+        print(f"  [route] requested={model_name} resolved={resolved_name}")
 
         if not route:
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
@@ -1502,9 +1503,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._add_cors()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            if filepath.name == "index.html":
+            if filepath.name == "index.html" or content_type == "application/javascript":
                 self.send_header("Cache-Control", "no-store, must-revalidate")
-            elif content_type.startswith("text/") or content_type == "application/javascript":
+            elif content_type.startswith("text/"):
                 self.send_header("Cache-Control", "no-cache")
             else:
                 self.send_header("Cache-Control", "public, max-age=86400")
