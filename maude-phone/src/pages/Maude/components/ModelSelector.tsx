@@ -8,6 +8,7 @@ interface Props {
 }
 
 const MODELS = [
+  { id: "claude-sonnet-4-20250514", label: "Claude Sonnet", desc: "Smart" },
   { id: "mistral-large-latest", label: "Mistral Large", desc: "General" },
   { id: "codestral-latest", label: "Codestral", desc: "Code" },
   { id: "nemotron", label: "Nemotron", desc: "Local" },
