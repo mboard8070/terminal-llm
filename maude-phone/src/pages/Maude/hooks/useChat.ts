@@ -115,6 +115,7 @@ export function useChat(conversationId: string | null = null) {
 
       const controller = new AbortController();
       abortRef.current = controller;
+      let actualModel = "";
 
       try {
         const history = messages.filter((m) => m.role !== "system").slice(-20)
@@ -204,6 +205,8 @@ export function useChat(conversationId: string | null = null) {
 
             try {
               const parsed = JSON.parse(data);
+              // Capture the actual model from the response
+              if (parsed.model && !actualModel) actualModel = parsed.model;
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
                 fullContent += delta;
@@ -213,7 +216,9 @@ export function useChat(conversationId: string | null = null) {
                     const snapshot = contentRef.current;
                     const snapTrace = { ...trace, tools: [...trace.tools] };
                     setMessages((prev) =>
-                      prev.map((m) => m.id === assistantMsg.id ? { ...m, content: snapshot, trace: snapTrace } : m));
+                      prev.map((m) => m.id === assistantMsg.id
+                        ? { ...m, content: snapshot, trace: snapTrace, ...(actualModel && { model: actualModel }) }
+                        : m));
                     rafIdRef.current = 0;
                   });
                 }
@@ -222,11 +227,13 @@ export function useChat(conversationId: string | null = null) {
           }
         }
 
-        // Final trace update
-        if (trace.promptTokens || trace.tools.length) {
-          const finalTrace = { ...trace };
+        // Final update: model from response, trace stats
+        const finalUpdates: Partial<ChatMessage> = {};
+        if (actualModel) finalUpdates.model = actualModel;
+        if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+        if (Object.keys(finalUpdates).length) {
           setMessages((prev) =>
-            prev.map((m) => m.id === assistantMsg.id ? { ...m, trace: finalTrace } : m));
+            prev.map((m) => m.id === assistantMsg.id ? { ...m, ...finalUpdates } : m));
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== "AbortError") {
@@ -241,8 +248,11 @@ export function useChat(conversationId: string | null = null) {
         }
         if (contentRef.current) {
           const finalContent = contentRef.current;
+          const finalModel = actualModel || undefined;
           setMessages((prev) =>
-            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: finalContent } : m));
+            prev.map((m) => m.id === assistantMsg.id
+              ? { ...m, content: finalContent, ...(finalModel && { model: finalModel }) }
+              : m));
           contentRef.current = "";
         }
         setIsStreaming(false);
