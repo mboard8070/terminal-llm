@@ -107,8 +107,7 @@ export function useChat(conversationId: string | null = null) {
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
 
-      let model = modelRef.current;
-      if (autoRoute && shouldUseCodestral(content)) model = "codestral-latest";
+      const model = localStorage.getItem("maude-model") || modelRef.current;
 
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(), role: "assistant", content: "", model, timestamp: Date.now(),
