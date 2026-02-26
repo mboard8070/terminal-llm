@@ -97,8 +97,14 @@ MODEL_ROUTES = {
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
     },
-    # Claude Opus — most capable, reliable tool use
+    # Claude Opus — most capable, deep reasoning
     "claude-opus-4-20250514": {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "CLAUDE_API_KEY",
+    },
+    # Claude Sonnet — fast, capable, cost-effective
+    "claude-sonnet-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
@@ -112,6 +118,7 @@ MODEL_ALIASES = {
     "local": "nemotron",
     "vision": "llava",
     "claude": "claude-opus-4-20250514",
+    "sonnet": "claude-sonnet-4-20250514",
 }
 
 
