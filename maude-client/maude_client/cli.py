@@ -415,9 +415,9 @@ SHARED FOLDER:
 
 SERVER TOOLS (operate on Spark):
 - run_server_command: Run commands on server
-- send_to_server_maude: Message the server MAUDE instance
+- send_to_server_maude: Message the server MAUDE instance (for tasks that need the server-side MAUDE specifically)
 
-The server MAUDE also has: Gmail, Google Drive, Sheets, Calendar, Slides, Contacts, YouTube, Substack, browser automation, social media posting, web search, and more. Use send_to_server_maude to delegate those tasks.
+Note: Google Workspace tools (Gmail, Drive, Sheets, Calendar, etc.) are handled server-side by the gateway's tool loop. Just ask naturally and the gateway will call the right tools.
 
 Current client: {CLIENT_NAME}
 Be concise and helpful."""

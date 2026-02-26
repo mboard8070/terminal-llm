@@ -97,6 +97,12 @@ MODEL_ROUTES = {
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
     },
+    # Claude Sonnet — smart, reliable tool use
+    "claude-sonnet-4-20250514": {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "CLAUDE_API_KEY",
+    },
 }
 
 # Aliases for convenience
@@ -105,6 +111,7 @@ MODEL_ALIASES = {
     "codestral": "codestral-latest",
     "local": "nemotron",
     "vision": "llava",
+    "claude": "claude-sonnet-4-20250514",
 }
 
 
@@ -606,12 +613,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             }, 503)
             return
 
-        # Use tool-enabled path for Mistral if maude_core is available
+        # Use tool-enabled path for cloud models if maude_core is available
         # Skip server-side tool loop if client already sent its own tools
         client_sent_tools = bool(req.get("tools"))
-        if TOOL_SUPPORT and route["provider"] == "mistral" and not client_sent_tools:
-            self._cloud_model_with_tools(req, route, resolved_name)
-            return
+        if TOOL_SUPPORT and not client_sent_tools:
+            if route["provider"] == "mistral":
+                self._cloud_model_with_tools(req, route, resolved_name)
+                return
+            if route["provider"] == "anthropic":
+                self._claude_tool_loop(req, route, resolved_name)
+                return
 
         # Ensure model name in body matches
         req["model"] = resolved_name
@@ -768,9 +779,14 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "the file is already on the server in the shared/ folder. You can move or copy it "
             "elsewhere if they want, but acknowledge it is already present. "
             "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
-            "(list, search, read, upload, create docs), Sheets (read, write, create), Calendar "
-            "(list, create, update events), Contacts, YouTube, and Slides. Use these tools when "
-            "the user asks about their email, documents, spreadsheets, schedule, or contacts."
+            "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
+            "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
+            "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
+            "CRITICAL: ALWAYS use the provided tool functions for Google operations. NEVER write "
+            "Python scripts or code that calls Google APIs directly via run_command. The tools "
+            "already handle authentication and API calls. For example, to upload a file to Drive, "
+            "use drive_upload — do NOT write a Python script that imports googleapiclient. "
+            "To repeat the same operation on multiple files, call the same tool multiple times."
         )
         messages = list(req.get("messages", []))
         for msg in messages:
@@ -1035,6 +1051,294 @@ class GatewayHandler(BaseHTTPRequestHandler):
         # End chunked encoding
         self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
+
+    def _claude_tool_loop(self, req, route, resolved_name):
+        """Handle Claude (Anthropic) model request with server-side tool execution loop.
+
+        Claude's API differs from OpenAI/Mistral:
+        - Auth via x-api-key header (not Bearer token)
+        - Endpoint: /v1/messages (not /v1/chat/completions)
+        - System prompt is a top-level field (not a message)
+        - Tool schema uses { name, description, input_schema } (not function wrapper)
+        - Tool results go in user messages as { type: "tool_result", tool_use_id }
+        - Stop reasons: "tool_use" and "end_turn" (not "tool_calls" and "stop")
+        """
+        api_key = os.environ.get(route["api_key_env"], "")
+
+        # Get the user's latest message for tool selection
+        user_msg = ""
+        for msg in reversed(req.get("messages", [])):
+            if msg.get("role") == "user":
+                user_msg = msg.get("content", "")
+                break
+
+        # Select relevant tools based on message content
+        active_tools_openai = get_tools_for_message(user_msg)
+
+        # Convert OpenAI tool format to Claude format
+        claude_tools = []
+        for tool in active_tools_openai:
+            func = tool.get("function", {})
+            claude_tools.append({
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+            })
+
+        # Extract system prompt from messages and convert to Claude format
+        system_text = ""
+        claude_messages = []
+        for msg in req.get("messages", []):
+            if msg.get("role") == "system":
+                system_text = msg.get("content", "")
+            else:
+                claude_messages.append({
+                    "role": msg.get("role"),
+                    "content": msg.get("content", ""),
+                })
+
+        # Enhance system prompt with tool context (same addendum as Mistral loop)
+        tool_addendum = (
+            "\n\nYou have access to tools for file operations, shell commands, web browsing, and more "
+            "on this DGX Spark system. When the user asks about files, directories, code, or system "
+            "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
+            "directory listings, or system information. The working directory defaults to the user's "
+            "home directory. Workbench projects are in ~/nvidia-workbench/. "
+            "If the user has attached an image, use the view_image tool to analyze it before responding. "
+            "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
+            "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
+            "The image path is provided in the message. Do NOT tell the user to upload it — it is "
+            "already here. If the user asks to 'upload to the server' or 'save to the server', "
+            "the file is already on the server in the shared/ folder. You can move or copy it "
+            "elsewhere if they want, but acknowledge it is already present. "
+            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
+            "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
+            "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
+            "CRITICAL: ALWAYS use the provided tool functions for Google operations. NEVER write "
+            "Python scripts or code that calls Google APIs directly via run_command. The tools "
+            "already handle authentication and API calls. For example, to upload a file to Drive, "
+            "use drive_upload — do NOT write a Python script that imports googleapiclient. "
+            "To repeat the same operation on multiple files, call the same tool multiple times."
+        )
+        system_text += tool_addendum
+
+        # Connection details for Claude API
+        parsed_url = urlparse(route["base_url"])
+        use_ssl = parsed_url.scheme == "https"
+        host = parsed_url.hostname
+        port = parsed_url.port or (443 if use_ssl else 80)
+        api_path = "/v1/messages"
+
+        reset_rate_limits()
+        max_iterations = 15
+        recent_tool_calls = []
+        is_streaming = req.get("stream", False)
+        sse_started = False
+
+        # Start SSE headers immediately for streaming so client gets trace events
+        if is_streaming:
+            self._start_sse_headers()
+            sse_started = True
+
+        # Create connection once, reuse across all tool-loop iterations
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=120)
+
+        for iteration in range(max_iterations):
+            # Build non-streaming request for tool loop
+            loop_req = {
+                "model": resolved_name,
+                "max_tokens": req.get("max_tokens", 4096),
+                "system": system_text,
+                "messages": claude_messages,
+                "tools": claude_tools,
+            }
+
+            body = json.dumps(loop_req).encode()
+            llm_start = time.time()
+
+            try:
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Length": str(len(body)),
+                }
+
+                conn.request("POST", api_path, body=body, headers=headers)
+                resp = conn.getresponse()
+                resp_body = resp.read()
+
+                if resp.status != 200:
+                    try:
+                        err = json.loads(resp_body)
+                    except Exception:
+                        err = {"error": resp_body.decode(errors="replace")}
+                    if not sse_started:
+                        self._json_response(err, resp.status)
+                    else:
+                        # Already streaming — send error as content
+                        chunk_id = f"chatcmpl-claude-{int(time.time())}"
+                        created = int(time.time())
+                        err_msg = err.get("error", {}).get("message", str(err)) if isinstance(err.get("error"), dict) else str(err)
+                        self._send_content_chunks(f"[Error: {err_msg}]", resolved_name, chunk_id, created)
+                        self._send_sse_done(resolved_name, chunk_id, created)
+                    conn.close()
+                    return
+
+                result = json.loads(resp_body)
+                stop_reason = result.get("stop_reason", "")
+
+            except ConnectionRefusedError:
+                if not sse_started:
+                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
+                conn.close()
+                return
+            except Exception as e:
+                if not sse_started:
+                    self._json_response({"error": f"Claude tool loop error: {e}"}, 502)
+                conn.close()
+                return
+
+            # Emit LLM call trace
+            llm_elapsed = time.time() - llm_start
+            usage = result.get("usage", {})
+            prompt_tok = usage.get("input_tokens", 0)
+            compl_tok = usage.get("output_tokens", 0)
+            if sse_started:
+                self._send_trace_sse("llm_call", {
+                    "prompt_tokens": prompt_tok,
+                    "completion_tokens": compl_tok,
+                    "elapsed": round(llm_elapsed, 2),
+                })
+            print(f"  Claude LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s")
+
+            # Parse content blocks from Claude response
+            content_blocks = result.get("content", [])
+            text_parts = []
+            tool_use_blocks = []
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_use":
+                    tool_use_blocks.append(block)
+
+            # Check for tool use
+            if tool_use_blocks and stop_reason == "tool_use":
+                # Add assistant message (full content blocks) to conversation
+                claude_messages.append({
+                    "role": "assistant",
+                    "content": content_blocks,
+                })
+
+                # Execute each tool and collect results
+                tool_results = []
+                for tu in tool_use_blocks:
+                    func_name = tu.get("name", "")
+                    func_args = tu.get("input", {})
+                    tool_use_id = tu.get("id", "")
+
+                    # Emit tool_call trace
+                    args_preview = json.dumps(func_args, ensure_ascii=False)
+                    if len(args_preview) > 80:
+                        args_preview = args_preview[:80] + "..."
+                    if sse_started:
+                        self._send_trace_sse("tool_call", {
+                            "name": func_name,
+                            "args": args_preview,
+                        })
+
+                    # Duplicate detection
+                    call_sig = (func_name, json.dumps(func_args, sort_keys=True))
+                    if call_sig in recent_tool_calls:
+                        tool_result = "(Already called with same arguments. Respond with the best answer you have.)"
+                    else:
+                        recent_tool_calls.append(call_sig)
+                        print(f"  [claude tool] {func_name}({func_args})")
+                        tool_start = time.time()
+                        tool_result = execute_tool(func_name, func_args)
+                        tool_elapsed = time.time() - tool_start
+
+                        # Emit tool_result trace
+                        preview = (tool_result or "")[:80].replace("\n", " ").strip()
+                        if len(tool_result or "") > 80:
+                            preview += "..."
+                        if sse_started:
+                            self._send_trace_sse("tool_result", {
+                                "name": func_name,
+                                "preview": preview,
+                                "elapsed": round(tool_elapsed, 2),
+                            })
+
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": tool_result or "",
+                    })
+
+                # Add tool results as a user message (Claude API format)
+                claude_messages.append({
+                    "role": "user",
+                    "content": tool_results,
+                })
+
+                continue  # Loop back to get next response from model
+
+            # No tool calls — final text response
+            final_content = "\n\n".join(text_parts) if text_parts else ""
+            if not is_streaming:
+                self._json_response({
+                    "id": f"chatcmpl-claude-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": final_content},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {
+                        "prompt_tokens": prompt_tok,
+                        "completion_tokens": compl_tok,
+                        "total_tokens": prompt_tok + compl_tok,
+                    },
+                })
+            elif sse_started:
+                chunk_id = f"chatcmpl-claude-{int(time.time())}"
+                created = int(time.time())
+                self._send_content_chunks(final_content, resolved_name, chunk_id, created)
+                self._send_sse_done(resolved_name, chunk_id, created)
+            else:
+                self._send_as_sse(final_content, resolved_name)
+            conn.close()
+            return
+
+        # Max iterations reached
+        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        if not is_streaming:
+            self._json_response({
+                "id": f"chatcmpl-claude-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": resolved_name,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": fallback},
+                    "finish_reason": "stop",
+                }],
+            })
+        elif sse_started:
+            chunk_id = f"chatcmpl-claude-{int(time.time())}"
+            created = int(time.time())
+            self._send_content_chunks(fallback, resolved_name, chunk_id, created)
+            self._send_sse_done(resolved_name, chunk_id, created)
+        else:
+            self._send_as_sse(fallback, resolved_name)
+        conn.close()
 
     def _proxy_to_llm(self, override_body=None):
         """Forward request to local llama-server."""
