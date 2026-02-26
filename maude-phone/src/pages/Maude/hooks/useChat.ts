@@ -72,6 +72,8 @@ export function useChat(conversationId: string | null = null) {
   // Persist model selection
   useEffect(() => { localStorage.setItem("maude-model", currentModel); }, [currentModel]);
   useEffect(() => { localStorage.setItem("maude-autoroute", String(autoRoute)); }, [autoRoute]);
+  const modelRef = useRef(currentModel);
+  modelRef.current = currentModel;
   const abortRef = useRef<AbortController | null>(null);
   const convIdRef = useRef(conversationId);
   const contentRef = useRef("");
@@ -105,7 +107,7 @@ export function useChat(conversationId: string | null = null) {
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
 
-      let model = currentModel;
+      let model = modelRef.current;
       if (autoRoute && shouldUseCodestral(content)) model = "codestral-latest";
 
       const assistantMsg: ChatMessage = {
