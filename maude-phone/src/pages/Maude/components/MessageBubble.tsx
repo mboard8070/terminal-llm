@@ -94,6 +94,15 @@ const TraceBadge: FC<{ trace: TraceInfo }> = ({ trace }) => {
   );
 };
 
+const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-4-20250514": "Claude Opus",
+  "claude-sonnet-4-20250514": "Claude Sonnet",
+  "mistral-large-latest": "Mistral Large",
+  "codestral-latest": "Codestral",
+  "nemotron": "Nemotron",
+  "llava": "LLaVA",
+};
+
 export const MessageBubble: FC<Props> = ({ message, animate }) => {
   const isUser = message.role === "user";
   const displayedContent = useTypewriter(message.content, !!animate);
@@ -102,7 +111,7 @@ export const MessageBubble: FC<Props> = ({ message, animate }) => {
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
       <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${isUser ? "fire-bg text-white" : "bg-maude-surface text-maude-text"}`}>
         {message.model && !isUser && (
-          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-maude-muted">{message.model}</div>
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-maude-muted">{MODEL_LABELS[message.model] || message.model}</div>
         )}
         {message.imageUrl && (
           <img
