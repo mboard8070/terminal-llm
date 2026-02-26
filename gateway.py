@@ -1502,7 +1502,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._add_cors()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            if content_type.startswith("text/") or content_type == "application/javascript":
+            if filepath.name == "index.html":
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+            elif content_type.startswith("text/") or content_type == "application/javascript":
                 self.send_header("Cache-Control", "no-cache")
             else:
                 self.send_header("Cache-Control", "public, max-age=86400")
