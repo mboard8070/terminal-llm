@@ -75,10 +75,10 @@ function createScheduledPlaybackNode(ctx: AudioContext): PlaybackNode {
   // we have. This prevents audio getting stuck in the accumulator
   // when PersonaPlex sends in bursts with gaps between them.
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  const FLUSH_DELAY_MS = 60;
+  const FLUSH_DELAY_MS = 35;
 
   // Initial buffering: wait for 800ms before starting playback
-  const INITIAL_BUFFER_SEC = 0.8;
+  const INITIAL_BUFFER_SEC = 0.4;
   let pendingSamples = 0;
   let pendingChunks: Float32Array[] = [];
   let started = false;
@@ -432,8 +432,8 @@ export const Voice: FC = () => {
           maxFramesPerPage: 2,
           numberOfChannels: 1,
           recordingGain: 1,
-          resampleQuality: 3,
-          encoderComplexity: 0,
+          resampleQuality: 7,
+          encoderComplexity: 6,
           encoderApplication: 2049,
           streamPages: true,
           sourceNode,
