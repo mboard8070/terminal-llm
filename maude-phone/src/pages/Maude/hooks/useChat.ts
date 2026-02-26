@@ -62,8 +62,16 @@ export function useChat(conversationId: string | null = null) {
     conversationId ? loadMessages(conversationId) : [],
   );
   const [isStreaming, setIsStreaming] = useState(false);
-  const [currentModel, setCurrentModel] = useState("claude-opus-4-20250514");
-  const [autoRoute, setAutoRoute] = useState(false);
+  const [currentModel, setCurrentModel] = useState(() =>
+    localStorage.getItem("maude-model") || "claude-opus-4-20250514",
+  );
+  const [autoRoute, setAutoRoute] = useState(() =>
+    localStorage.getItem("maude-autoroute") === "true",
+  );
+
+  // Persist model selection
+  useEffect(() => { localStorage.setItem("maude-model", currentModel); }, [currentModel]);
+  useEffect(() => { localStorage.setItem("maude-autoroute", String(autoRoute)); }, [autoRoute]);
   const abortRef = useRef<AbortController | null>(null);
   const convIdRef = useRef(conversationId);
   const contentRef = useRef("");
