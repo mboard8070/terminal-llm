@@ -8,4 +8,7 @@ echo "Starting Codestral 22B server on port 30000..."
     --port 30000 \
     --n-gpu-layers 99 \
     --ctx-size 16384 \
-    --threads 8
+    --threads 8 \
+    --cache-reuse 512 \
+    --cache-type-k q8_0 \
+    --cache-type-v q8_0
