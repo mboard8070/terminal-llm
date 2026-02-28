@@ -1803,6 +1803,21 @@ if __name__ == "__main__":
     print(f"  Transfers  : {TRANSFERS_DIR}")
     print(f"  Models     : {', '.join(MODEL_ROUTES.keys())}")
 
+    # Start gateway-level presence heartbeat so this node always appears
+    def _gateway_heartbeat():
+        import socket
+        from collab import get_hub
+        hub = get_hub()
+        hostname = socket.gethostname().lower()
+        while True:
+            try:
+                hub.heartbeat(f"gateway-{hostname}", "gateway", "serving requests")
+            except Exception:
+                pass
+            time.sleep(30)
+    threading.Thread(target=_gateway_heartbeat, daemon=True).start()
+    print("  Collab     : heartbeat started")
+
     server = ThreadedHTTPServer(("0.0.0.0", GATEWAY_PORT), GatewayHandler)
 
     if USE_SSL:
