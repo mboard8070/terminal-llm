@@ -9,7 +9,12 @@ import { Browser } from "./pages/Browser/Browser";
 import { Messages } from "./pages/Messages/Messages";
 import { Files } from "./pages/Files/Files";
 import { Settings } from "./pages/Settings/Settings";
+import { Collab } from "./pages/Collab/Collab";
+import { startPresenceHeartbeat } from "./pages/Collab/useCollab";
 import { TabBar } from "./components/TabBar/TabBar";
+
+// Start presence heartbeat at app load
+startPresenceHeartbeat("phone");
 
 function AppLayout() {
   return (
@@ -33,6 +38,7 @@ const router = createBrowserRouter([
       { path: "/browser", element: <Browser /> },
       { path: "/messages", element: <Messages /> },
       { path: "/files", element: <Files /> },
+      { path: "/collab", element: <Collab /> },
       { path: "/settings", element: <Settings /> },
     ],
   },

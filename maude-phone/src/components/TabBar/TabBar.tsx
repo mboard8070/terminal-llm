@@ -14,6 +14,7 @@ const TABS: TabItem[] = [
   { path: "/maude/voice", label: "Voice", icon: "\uD83C\uDF99\uFE0F", match: ["/maude/voice"] },
   { path: "/terminal", label: "Term", icon: ">_", match: ["/terminal"] },
   { path: "/files", label: "Files", icon: "\u25A4", match: ["/files"] },
+  { path: "/collab", label: "Collab", icon: "\u29BF", match: ["/collab"] },
   { path: "/settings", label: "Set", icon: "\u2699", match: ["/settings"] },
 ];
 

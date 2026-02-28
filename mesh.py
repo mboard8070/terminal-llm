@@ -265,6 +265,16 @@ class MaudeMesh:
         # Build typed capabilities (includes ComfyUI check)
         self._build_node_capabilities(node, node.models if ollama_models else None)
 
+        # Exchange gossip for collaboration state
+        if node.healthy:
+            gossip = self._fetch_gossip(node)
+            if gossip:
+                try:
+                    from collab import get_hub
+                    get_hub().merge_gossip(node.hostname, gossip)
+                except Exception:
+                    pass
+
         node.last_check = now
 
     def _check_ollama(self, node: MaudeNode) -> Optional[Dict[str, str]]:
@@ -319,6 +329,18 @@ class MaudeMesh:
                 data = response.json()
                 return data.get("capabilities", [])
         except:
+            pass
+        return None
+
+    def _fetch_gossip(self, node: MaudeNode) -> Optional[dict]:
+        """Fetch collaboration gossip bundle from a remote node."""
+        try:
+            host = node.tailscale_ip or node.ip or node.hostname
+            url = f"http://{host}:{node.api_port}/api/collab/gossip"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                return response.json()
+        except Exception:
             pass
         return None
 

@@ -30,6 +30,7 @@ import pyfiglet
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
 import conversation_sync
+from collab import get_hub as get_collab_hub
 
 # Voice mode
 from voice import VoiceMode, VoiceConfig, check_voice_dependencies
@@ -750,6 +751,7 @@ class MaudeApp(App):
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.conv_id = str(__import__('uuid').uuid4())
         self.conv_title = ""
+        self._collab_activity = ""
         self.client = None
         self.spinner_frame = 0
         self.spinner_timer = None
@@ -794,6 +796,9 @@ class MaudeApp(App):
         # Start banner animation
         self.animate_banner()
 
+        # Start presence heartbeat for collaboration
+        self._start_collab_heartbeat()
+
     def animate_banner(self):
         """Animate the fire-colored banner."""
         if self.banner_frame < 25:
@@ -814,6 +819,24 @@ class MaudeApp(App):
             self.input_widget.focus()
             # Start sync polling
             self.check_telegram_messages()
+
+    def _start_collab_heartbeat(self):
+        """Send presence heartbeat every 30s in background."""
+        import threading
+        def _loop():
+            hub = get_collab_hub()
+            while True:
+                try:
+                    hub.heartbeat(
+                        client_id=f"tui-{hub.presence._clients and 'main' or 'main'}",
+                        client_type="tui",
+                        activity=self._collab_activity or "idle",
+                        conversation_id=self.conv_id,
+                    )
+                except Exception:
+                    pass
+                time.sleep(30)
+        threading.Thread(target=_loop, daemon=True).start()
 
     def write_output(self, text):
         """Write to the output log."""
@@ -1023,6 +1046,17 @@ class MaudeApp(App):
             conversation_sync.save_conversation(
                 self.conv_id, self.conv_title, MODEL, self.messages
             )
+            # Emit activity event
+            self._collab_activity = f"chatting: {user_input[:40]}"
+            try:
+                get_collab_hub().emit(
+                    "chat", f"Asked about: {user_input[:50]}",
+                    data={"model": MODEL},
+                    client_id="tui-main",
+                    conversation_id=self.conv_id,
+                )
+            except Exception:
+                pass
 
     @work(thread=True)
     def voice_start_worker(self):
