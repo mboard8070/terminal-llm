@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
+import threading
+import time
 import conversation_sync
+from collab import get_hub as get_collab_hub
 
 # Load environment variables
 env_path = Path(__file__).parent / "variables.env"
@@ -113,6 +116,18 @@ def main():
     current_model = DEFAULT_MODEL
     conv_id = str(uuid.uuid4())
     conv_title = ""
+    collab_activity = ["idle"]
+
+    # Start presence heartbeat
+    def _heartbeat_loop():
+        hub = get_collab_hub()
+        while True:
+            try:
+                hub.heartbeat("cli-client", "cli", collab_activity[0], conv_id)
+            except Exception:
+                pass
+            time.sleep(30)
+    threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
     # System prompt
     system_prompt = {
@@ -178,6 +193,17 @@ Be concise but thorough. When writing code, include comments for complex logic."
                 conversation_sync.save_conversation(
                     conv_id, conv_title, current_model, messages
                 )
+                # Emit activity event
+                collab_activity[0] = f"chatting: {user_input[:40]}"
+                try:
+                    get_collab_hub().emit(
+                        "chat", f"Asked about: {user_input[:50]}",
+                        data={"model": current_model},
+                        client_id="cli-client",
+                        conversation_id=conv_id,
+                    )
+                except Exception:
+                    pass
 
             print()  # Extra spacing
 

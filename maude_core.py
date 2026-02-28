@@ -1444,6 +1444,14 @@ _TOOL_GROUPS = {
                       "attached", "screenshot", "snap"],
         "tools": {"view_image"},
     },
+    "collab": {
+        "keywords": ["who's online", "whos online", "mesh status", "devices",
+                      "dispatch", "send to spark", "send to mac", "run on",
+                      "project", "collaboration", "activity", "task",
+                      "what are they doing", "online"],
+        "tools": {"mesh_status", "dispatch_task", "create_project",
+                  "list_projects", "add_to_project", "list_tasks"},
+    },
     "google": {
         "keywords": ["google"],
         "tools": {"gmail_list", "gmail_read", "gmail_send",
@@ -1455,6 +1463,13 @@ _TOOL_GROUPS = {
                   "contacts_list", "contacts_search"},
     },
 }
+
+# Register collaboration tools
+try:
+    from collab_tools import COLLAB_TOOLS
+    TOOLS.extend(COLLAB_TOOLS)
+except ImportError:
+    pass
 
 # Build lookup: tool name -> tool definition
 _TOOL_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
@@ -2792,5 +2807,13 @@ def execute_tool(name: str, arguments: dict) -> str:
             return mgr.execute_skill(skill_name, **arguments)
         except ImportError:
             return f"Error: Skills framework not available"
+    # Collaboration tools (mesh status, projects, tasks)
+    elif name in ("mesh_status", "dispatch_task", "create_project",
+                   "list_projects", "add_to_project", "list_tasks"):
+        try:
+            from collab_tools import execute_collab_tool
+            return execute_collab_tool(name, arguments)
+        except ImportError:
+            return "Error: Collaboration module not available"
     else:
         return f"Error: Unknown tool: {name}"

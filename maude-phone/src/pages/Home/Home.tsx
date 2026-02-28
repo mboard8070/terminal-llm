@@ -15,6 +15,7 @@ const APPS: AppIcon[] = [
   { path: "/browser", label: "Browser", icon: "\u25CE", description: "Web" },
   { path: "/messages", label: "Messages", icon: "\u2709", description: "Telegram" },
   { path: "/files", label: "Files", icon: "\u25A4", description: "File Manager" },
+  { path: "/collab", label: "Collab", icon: "\u29BF", description: "Mesh Status" },
   { path: "/settings", label: "Settings", icon: "\u2699", description: "Configure" },
 ];
 
