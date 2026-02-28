@@ -15,6 +15,12 @@ const config: CapacitorConfig = {
     captureInput: true,
     webContentsDebuggingEnabled: true,
   },
+  ios: {
+    contentInset: 'always',
+    allowsLinkPreview: false,
+    webContentsDebuggingEnabled: true,
+    preferredContentMode: 'mobile',
+  },
   plugins: {
     CapacitorHttp: {
       enabled: false,  // Disabled: native HTTP breaks SSE streaming (ReadableStream)
