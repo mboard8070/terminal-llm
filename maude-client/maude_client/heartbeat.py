@@ -12,10 +12,11 @@ import requests
 from typing import Optional
 
 from maude_client import __version__
+from maude_client.config import SERVER_HOST, SERVER_LLM_PORT
 
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
-HEARTBEAT_ENDPOINT = "http://100.107.132.16:3003/api/heartbeat"  # Spark Tailscale IP
+HEARTBEAT_ENDPOINT = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/api/collab/presence"
 
 # Client identification
 def get_client_id() -> str:
@@ -54,16 +55,15 @@ class HeartbeatClient:
             response = requests.post(
                 self.endpoint,
                 json={
-                    "clientId": self.client_id,
-                    "hostname": self.hostname,
-                    "platform": self.platform,
-                    "version": self.version,
-                    "status": status,
+                    "client_id": self.client_id,
+                    "client_type": self.platform,
+                    "activity": status,
                 },
-                timeout=5
+                timeout=5,
+                verify=False,
             )
             return response.status_code == 200
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             # Silently fail - server might be unreachable
             return False
 
