@@ -8,4 +8,7 @@ echo "Starting Nemotron 30B server on port 30010..."
     --port 30010 \
     --n-gpu-layers 99 \
     --ctx-size 32768 \
-    --threads 8
+    --threads 8 \
+    --cache-reuse 512 \
+    --cache-type-k q8_0 \
+    --cache-type-v q8_0

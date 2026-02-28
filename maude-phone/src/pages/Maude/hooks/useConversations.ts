@@ -1,7 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Conversation,
   loadConversations,
+  loadConversationsFromServer,
   saveConversations,
   loadActiveId,
   saveActiveId,
@@ -19,6 +20,15 @@ function generateTitle(firstMessage: string): string {
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>(loadConversations);
   const [activeId, setActiveId] = useState<string | null>(loadActiveId);
+
+  // Hydrate from server on mount (merges with any local-only conversations)
+  useEffect(() => {
+    loadConversationsFromServer().then((remote) => {
+      if (remote.length > 0) {
+        setConversations(remote);
+      }
+    });
+  }, []);
 
   const persist = useCallback((convs: Conversation[]) => {
     // Sort newest-first before saving

@@ -29,6 +29,7 @@ import pyfiglet
 # MAUDE core - shared tools
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
+import conversation_sync
 
 # Voice mode
 from voice import VoiceMode, VoiceConfig, check_voice_dependencies
@@ -282,25 +283,43 @@ def chat(client, messages: list):
             start_time = time.time()
             # Strip any tool_calls/tool messages from history (local-only)
             clean_msgs = [m for m in messages if "tool_calls" not in m and m.get("role") != "tool"]
+            # Stream for TUI typewriter, non-stream for headless
+            use_stream = _app and hasattr(_app, 'stream_token')
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=clean_msgs,
                 temperature=0.2,
                 max_tokens=4096,
                 timeout=300,
+                stream=use_stream,
             )
-            elapsed_time = time.time() - start_time
-            msg = response.choices[0].message
-            full_content = msg.content or ""
-            if full_content:
-                token_count = response.usage.completion_tokens if response.usage else 0
-                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
-                if _app and hasattr(_app, 'write_typewriter'):
-                    _app.write_typewriter(full_content, prefix="MAUDE: ")
-                    console.print(f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
-                else:
+            if use_stream:
+                full_content = ""
+                token_count = 0
+                prompt_tokens = 0
+                first = True
+                for chunk in response:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    if delta and delta.content:
+                        _app.stream_token(delta.content, is_first=first, prefix="MAUDE: ")
+                        full_content += delta.content
+                        first = False
+                    # Some providers send usage in the final chunk
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        token_count = chunk.usage.completion_tokens or 0
+                        prompt_tokens = chunk.usage.prompt_tokens or 0
+                elapsed_time = time.time() - start_time
+                if full_content:
+                    _app.call_from_thread(_app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+            else:
+                elapsed_time = time.time() - start_time
+                msg = response.choices[0].message
+                full_content = msg.content or ""
+                if full_content:
+                    token_count = response.usage.completion_tokens if response.usage else 0
+                    prompt_tokens = response.usage.prompt_tokens if response.usage else 0
                     console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
-                    console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                    console.print(f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
             return full_content
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
@@ -326,7 +345,8 @@ def chat(client, messages: list):
             has_tool_results = any(m.get("role") == "tool" for m in messages)
             max_tokens = 2048 if has_tool_results else 4096
 
-            # Non-streaming request for TUI compatibility
+            # Stream when TUI is available (typewriter effect), non-stream otherwise
+            use_stream = _app and hasattr(_app, 'stream_token')
             kwargs = dict(
                 model=MODEL,
                 messages=messages,
@@ -335,35 +355,71 @@ def chat(client, messages: list):
                 tools=active_tools,
                 tool_choice="auto",
                 timeout=120,
+                stream=use_stream,
             )
             # num_ctx is local-only (llama-server); skip for cloud models
             if MODEL not in _CLOUD_MODELS:
                 kwargs["extra_body"] = {"num_ctx": NUM_CTX}
             response = client.chat.completions.create(**kwargs)
 
-            elapsed_time = time.time() - start_time
-            msg = response.choices[0].message
-            full_content = msg.content or ""
-
-            # Show response
-            if full_content:
-                token_count = response.usage.completion_tokens if response.usage else 0
-                prompt_tokens = response.usage.prompt_tokens if response.usage else 0
-                if _app and hasattr(_app, 'write_typewriter'):
-                    _app.write_typewriter(full_content, prefix="MAUDE: ")
-                    console.print(f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
-                else:
+            if use_stream:
+                # Streaming path — use existing stream_token for typewriter
+                full_content = ""
+                tool_calls_data = {}
+                tool_calls_acc = {}  # index -> {id, name, arguments}
+                first = True
+                token_count = 0
+                prompt_tokens = 0
+                for chunk in response:
+                    choice = chunk.choices[0] if chunk.choices else None
+                    if not choice:
+                        if hasattr(chunk, 'usage') and chunk.usage:
+                            token_count = getattr(chunk.usage, 'completion_tokens', 0) or 0
+                            prompt_tokens = getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                        continue
+                    delta = choice.delta
+                    if not delta:
+                        continue
+                    if delta.content:
+                        _app.stream_token(delta.content, is_first=first, prefix="MAUDE: ")
+                        full_content += delta.content
+                        first = False
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            i = tc.index
+                            if i not in tool_calls_acc:
+                                tool_calls_acc[i] = {"id": "", "name": "", "arguments": ""}
+                            if tc.id:
+                                tool_calls_acc[i]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[i]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_acc[i]["arguments"] += tc.function.arguments
+                elapsed_time = time.time() - start_time
+                if full_content:
+                    _app.call_from_thread(_app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                # Build tool_calls_data from accumulated stream chunks
+                for tc in tool_calls_acc.values():
+                    if tc["id"]:
+                        tool_calls_data[tc["id"]] = {"name": tc["name"], "arguments": tc["arguments"]}
+            else:
+                # Non-streaming fallback (headless / no TUI)
+                elapsed_time = time.time() - start_time
+                msg = response.choices[0].message
+                full_content = msg.content or ""
+                if full_content:
+                    token_count = response.usage.completion_tokens if response.usage else 0
+                    prompt_tokens = response.usage.prompt_tokens if response.usage else 0
                     console.print(f"[bold magenta]MAUDE:[/bold magenta] {full_content}")
                     console.print(f"[dim]{token_count} tokens in {elapsed_time:.1f}s[/dim]")
-
-            # Collect tool calls
-            tool_calls_data = {}
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tool_calls_data[tc.id] = {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
+                tool_calls_data = {}
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        tool_calls_data[tc.id] = {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
 
             # Handle tool calls
             if tool_calls_data:
@@ -469,12 +525,14 @@ AVAILABLE_MODELS = {
     "nemotron": "nemotron",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "claude": "claude-opus-4-20250514",
+    "sonnet": "claude-sonnet-4-20250514",
 }
 
-# Cloud models route through the gateway; local models go direct
-GATEWAY_URL = "http://localhost:30000/v1"
+# Cloud models route through the gateway's HTTP mirror (same port as local)
+GATEWAY_URL = "http://localhost:30080/v1"
 
-_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest"}
+_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
 
 def _switch_model(name: str) -> str:
     """Switch the active model at runtime, routing cloud models via gateway."""
@@ -512,7 +570,7 @@ def handle_command(cmd: str) -> str:
 
 /help              - Show this help
 /model             - Show current model configuration
-/model switch NAME - Switch model (nemotron, mistral, codestral)
+/model switch NAME - Switch model (nemotron, mistral, codestral, claude, sonnet)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -690,6 +748,8 @@ class MaudeApp(App):
     def __init__(self):
         super().__init__()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.conv_id = str(__import__('uuid').uuid4())
+        self.conv_title = ""
         self.client = None
         self.spinner_frame = 0
         self.spinner_timer = None
@@ -760,28 +820,37 @@ class MaudeApp(App):
         if hasattr(self, 'output_log'):
             self.output_log.write(text)
 
-    def write_typewriter(self, content: str, prefix: str = ""):
-        """Write content word-by-word to the output log with typewriter effect.
-        Must be called from a worker thread (uses call_from_thread)."""
+    def stream_token(self, token: str, is_first: bool = False, prefix: str = ""):
+        """Append a streaming token to the output log.
+        Must be called from a worker thread (uses call_from_thread).
+
+        On the first token we write a new Text to the RichLog and stash it
+        along with its starting line index.  On subsequent tokens we delete
+        the Strips produced by the previous render and re-write the grown
+        Text, giving a live typewriter effect.
+        """
         if not hasattr(self, 'output_log'):
             return
-        text_obj = Text()
-        if prefix:
-            text_obj.append(prefix)
-        # Write initial text object to log
-        self.call_from_thread(self.output_log.write, text_obj)
 
-        # Drip-feed words in groups of 2-3
-        words = content.split()
-        i = 0
-        while i < len(words):
-            group = " ".join(words[i:i+3])
-            if i > 0:
-                group = " " + group
-            text_obj.append(group)
-            self.call_from_thread(self.output_log.refresh)
-            time.sleep(0.02)
-            i += 3
+        if is_first:
+            self._stream_text = Text()
+            if prefix:
+                self._stream_text.append(prefix, style="bold magenta")
+            self._stream_mark = None
+
+        self._stream_text.append(token)
+
+        text_snapshot = self._stream_text.copy()
+        mark = self._stream_mark
+
+        def _render():
+            log = self.output_log
+            if mark is not None:
+                del log.lines[mark:]
+            self._stream_mark = len(log.lines)
+            log.write(text_snapshot, scroll_end=True)
+
+        self.call_from_thread(_render)
 
     def update_voice_status(self, status: str):
         """Update status bar for voice mode."""
@@ -948,6 +1017,12 @@ class MaudeApp(App):
             # Log for sync (after processing complete)
             append_chat_log("cli", "user", user_input)
             append_chat_log("cli", "assistant", response)
+            # Sync to gateway for cross-device history
+            if not self.conv_title:
+                self.conv_title = conversation_sync.generate_title(user_input)
+            conversation_sync.save_conversation(
+                self.conv_id, self.conv_title, MODEL, self.messages
+            )
 
     @work(thread=True)
     def voice_start_worker(self):
