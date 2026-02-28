@@ -705,9 +705,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_trace_sse(self, trace_type: str, data: dict):
-        """Send a trace event via SSE. Headers must already be sent."""
+        """Send a trace event via SSE as a comment (ignored by OpenAI SDK).
+        Headers must already be sent."""
         payload = json.dumps({"type": trace_type, **data})
-        line = f"event: trace\ndata: {payload}\n\n".encode()
+        line = f": trace {payload}\n\n".encode()
         try:
             self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
             self.wfile.flush()
@@ -715,21 +716,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
             pass
 
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
-        """Send content as a single SSE data event. Headers must already be sent."""
-        sse_data = json.dumps({
-            "id": chunk_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model_name,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": content},
-                "finish_reason": None,
-            }]
-        })
-        line = f"data: {sse_data}\n\n".encode()
-        self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
-        self.wfile.flush()
+        """Send content as word-boundary SSE chunks for typewriter effect.
+        Headers must already be sent."""
+        words = content.split(" ") if content else [""]
+        chunks = []
+        current = ""
+        for word in words:
+            current += (" " if current else "") + word
+            if len(current) > 20:
+                chunks.append(current)
+                current = ""
+        if current:
+            chunks.append(current)
+
+        for i, chunk_text in enumerate(chunks):
+            spacer = " " if i < len(chunks) - 1 else ""
+            sse_data = json.dumps({
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": chunk_text + spacer},
+                    "finish_reason": None,
+                }]
+            })
+            line = f"data: {sse_data}\n\n".encode()
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+            self.wfile.flush()
 
     def _send_sse_done(self, model_name: str, chunk_id: str, created: int):
         """Send finish + [DONE] events and close chunked encoding."""
