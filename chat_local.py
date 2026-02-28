@@ -29,6 +29,7 @@ import pyfiglet
 # MAUDE core - shared tools
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
+import conversation_sync
 
 # Voice mode
 from voice import VoiceMode, VoiceConfig, check_voice_dependencies
@@ -747,6 +748,8 @@ class MaudeApp(App):
     def __init__(self):
         super().__init__()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.conv_id = str(__import__('uuid').uuid4())
+        self.conv_title = ""
         self.client = None
         self.spinner_frame = 0
         self.spinner_timer = None
@@ -1014,6 +1017,12 @@ class MaudeApp(App):
             # Log for sync (after processing complete)
             append_chat_log("cli", "user", user_input)
             append_chat_log("cli", "assistant", response)
+            # Sync to gateway for cross-device history
+            if not self.conv_title:
+                self.conv_title = conversation_sync.generate_title(user_input)
+            conversation_sync.save_conversation(
+                self.conv_id, self.conv_title, MODEL, self.messages
+            )
 
     @work(thread=True)
     def voice_start_worker(self):

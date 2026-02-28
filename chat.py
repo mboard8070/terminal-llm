@@ -8,10 +8,12 @@ import os
 import sys
 from pathlib import Path
 
+import uuid
 from dotenv import load_dotenv
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
+import conversation_sync
 
 # Load environment variables
 env_path = Path(__file__).parent / "variables.env"
@@ -109,6 +111,8 @@ def main():
     gateway_client = create_gateway_client()
     messages = []
     current_model = DEFAULT_MODEL
+    conv_id = str(uuid.uuid4())
+    conv_title = ""
 
     # System prompt
     system_prompt = {
@@ -138,6 +142,8 @@ Be concise but thorough. When writing code, include comments for complex logic."
 
             if user_input.lower() == "/clear":
                 messages = [system_prompt]
+                conv_id = str(uuid.uuid4())
+                conv_title = ""
                 console.print("[dim]Conversation cleared.[/dim]")
                 continue
 
@@ -166,6 +172,12 @@ Be concise but thorough. When writing code, include comments for complex logic."
 
             if response:
                 messages.append({"role": "assistant", "content": response})
+                # Sync to gateway for cross-device history
+                if not conv_title:
+                    conv_title = conversation_sync.generate_title(user_input)
+                conversation_sync.save_conversation(
+                    conv_id, conv_title, current_model, messages
+                )
 
             print()  # Extra spacing
 

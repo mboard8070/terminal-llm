@@ -8,6 +8,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="icon" type="image/svg+xml" href="/assets/maude-icon.svg">
+    <link rel="apple-touch-icon" href="/assets/maude-icon-180.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/assets/maude-icon-120.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/assets/maude-icon-152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/assets/maude-icon-167.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/maude-icon-180.png">
     <link rel="manifest" href="/manifest.json" />
     <title>MAUDE</title>
     <script>
@@ -21,5 +26,11 @@
   <body>
     <div id="root" />
     <script type="module" src="/src/app.tsx"></script>
+    <script>
+      // Register service worker for PWA "Add to Home Screen" on iOS Safari
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function() {});
+      }
+    </script>
   </body>
 </html>

@@ -65,8 +65,11 @@ LLM_PORT = 30010  # llama-server (Nemotron) runs here internally
 GATEWAY_PORT = 30000  # clients connect here
 PERSONAPLEX_PORT = 8998  # PersonaPlex voice server
 
+CONVERSATIONS_DIR = Path(__file__).parent / "data" / "conversations"
+
 SHARED_DIR.mkdir(parents=True, exist_ok=True)
 TRANSFERS_DIR.mkdir(parents=True, exist_ok=True)
+CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────────
 # Model routing configuration
@@ -530,6 +533,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_file(SHARED_DIR / parsed.path[len("/download/"):])
         elif parsed.path.startswith("/download-transfer/"):
             self._send_file(TRANSFERS_DIR / parsed.path[len("/download-transfer/"):])
+        elif parsed.path == "/api/conversations":
+            self._get_conversations()
+        elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/messages"):
+            conv_id = parsed.path.split("/")[3]
+            self._get_messages(conv_id)
         elif parsed.path == "/health":
             self._json_response({
                 "status": "ok",
@@ -563,7 +571,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = unquote(self.path)
         parsed = urlparse(path)
 
-        if parsed.path.startswith("/upload/"):
+        if parsed.path == "/api/conversations":
+            self._save_conversations()
+        elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/messages"):
+            conv_id = parsed.path.split("/")[3]
+            self._save_messages(conv_id)
+        elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/delete"):
+            conv_id = parsed.path.split("/")[3]
+            self._delete_conversation(conv_id)
+        elif parsed.path.startswith("/upload/"):
             self._receive_file(TRANSFERS_DIR / parsed.path[len("/upload/"):])
         elif parsed.path.startswith("/share/"):
             self._receive_file(SHARED_DIR / parsed.path[len("/share/"):])
@@ -1615,6 +1631,51 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"analysis": result, "filename": filename})
         except Exception as e:
             self._json_response({"error": f"Image analysis failed: {e}"}, 500)
+
+    # ── Conversation sync API ─────────────────────────────────────
+
+    def _get_conversations(self):
+        """Return conversation index."""
+        index_file = CONVERSATIONS_DIR / "index.json"
+        if index_file.exists():
+            self._json_response(json.loads(index_file.read_text()))
+        else:
+            self._json_response([])
+
+    def _save_conversations(self):
+        """Save conversation index."""
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        data = json.loads(body)
+        (CONVERSATIONS_DIR / "index.json").write_text(json.dumps(data))
+        self._json_response({"ok": True})
+
+    def _get_messages(self, conv_id):
+        """Return messages for a conversation."""
+        # Sanitize ID to prevent path traversal
+        safe_id = conv_id.replace("/", "").replace("..", "")
+        msg_file = CONVERSATIONS_DIR / f"{safe_id}.json"
+        if msg_file.exists():
+            self._json_response(json.loads(msg_file.read_text()))
+        else:
+            self._json_response([])
+
+    def _save_messages(self, conv_id):
+        """Save messages for a conversation."""
+        safe_id = conv_id.replace("/", "").replace("..", "")
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        data = json.loads(body)
+        (CONVERSATIONS_DIR / f"{safe_id}.json").write_text(json.dumps(data))
+        self._json_response({"ok": True})
+
+    def _delete_conversation(self, conv_id):
+        """Delete a conversation's messages file."""
+        safe_id = conv_id.replace("/", "").replace("..", "")
+        msg_file = CONVERSATIONS_DIR / f"{safe_id}.json"
+        if msg_file.exists():
+            msg_file.unlink()
+        self._json_response({"ok": True})
 
     def _json_response(self, obj, code=200):
         data = json.dumps(obj).encode()
