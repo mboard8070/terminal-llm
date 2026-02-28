@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { loadMessages, saveMessages } from "./storage";
+import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 
 export interface TraceInfo {
   tools: string[];
@@ -90,7 +90,17 @@ export function useChat(conversationId: string | null = null) {
   // Keep ref in sync (for save effect)
   convIdRef.current = conversationId;
 
-  // Auto-save messages to localStorage whenever they change
+  // Hydrate messages from server when switching conversations
+  useEffect(() => {
+    if (!conversationId) { setMessages([]); return; }
+    // Start with localStorage (instant), then update from server
+    setMessages(loadMessages(conversationId));
+    loadMessagesFromServer(conversationId).then((msgs) => {
+      if (msgs.length > 0) setMessages(msgs);
+    });
+  }, [conversationId]);
+
+  // Auto-save messages whenever they change
   useEffect(() => {
     if (convIdRef.current && messages.length > 0) {
       saveMessages(convIdRef.current, messages);

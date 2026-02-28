@@ -13,7 +13,7 @@ import { TabBar } from "./components/TabBar/TabBar";
 
 function AppLayout() {
   return (
-    <div className="flex h-[100dvh] flex-col bg-maude-bg">
+    <div className="flex h-[100dvh] flex-col bg-maude-bg safe-top">
       <div className="min-h-0 flex-1 overflow-hidden">
         <Outlet />
       </div>
