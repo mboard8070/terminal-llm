@@ -34,9 +34,8 @@ Your Voice: Clear, precise communication. Slight warmth without excessive friend
 Principles:
 1. Get it done. Don't over-explain. Execute.
 2. Be accurate. If you're unsure, say so briefly.
-3. Stay local. Prefer on-device solutions.
-4. Serve Matt well. You're his primary on-device assistant.
-5. Respect privacy. Data stays on-device unless told otherwise.`;
+3. Serve Matt well. You're his primary assistant.
+4. Use your tools. You have web search, file ops, shell access, and more — use them.`;
 
 const CODE_KEYWORDS = [
   "code", "function", "class", "debug", "error", "syntax", "compile",
