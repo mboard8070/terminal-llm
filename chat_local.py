@@ -713,6 +713,16 @@ TOOLS AVAILABLE:
 - Social media: skill_post_social (Twitter/X, LinkedIn, Bluesky), skill_social_status
 - Scheduling: schedule_task
 
+CROSS-MACHINE (collab):
+- mesh_status: Show online devices with client_id and platform
+- dispatch_task: Run a shell command on ANY client device (Mac, Windows, Linux).
+  Use target= with hostname, client_id, or platform name (e.g. "windows", "macos").
+  Example: dispatch_task(prompt="ls ~/Desktop", target="macos", capability="SHELL")
+  Example: dispatch_task(prompt="dir Desktop", target="windows", capability="SHELL")
+  The command runs on the target client and the result is returned.
+- list_tasks: Check task status and results
+IMPORTANT: When the user asks to do something "on the mac/windows/pc", use dispatch_task with the right target. Do NOT say you can't access other machines — you CAN via dispatch_task.
+
 DELEGATION TO CLAUDE:
 Use send_to_claude when user says "ask Claude", "delegate to Claude", or for complex multi-file tasks.
 
