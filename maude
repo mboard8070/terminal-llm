@@ -47,6 +47,14 @@ else
     echo "File Server already running"
 fi
 
+# Start Gateway if not running (ports 30000/30080 — routes LLM, tools API, web UI)
+if ! tmux has-session -t gateway 2>/dev/null; then
+    echo "Starting Gateway (ports 30000/30080)..."
+    tmux new-session -d -s gateway "cd /home/mboard76/nvidia-workbench/terminal-llm && ./venv/bin/python gateway.py; exec bash"
+else
+    echo "Gateway already running"
+fi
+
 # Start MAUDE if not running
 if ! tmux has-session -t maude 2>/dev/null; then
     echo "Starting MAUDE..."
@@ -61,6 +69,7 @@ echo "║  MAUDE Agent System                                           ║"
 echo "╠═══════════════════════════════════════════════════════════════╣"
 echo "║  Sessions (each in separate tmux):                            ║"
 echo "║    tmux attach -t nemo     - Nemotron server                  ║"
+echo "║    tmux attach -t gateway  - Gateway (30000/30080)            ║"
 echo "║    tmux attach -t maude    - Your main interface              ║"
 echo "║    tmux attach -t claude   - Claude Code                      ║"
 echo "║    tmux attach -t watcher  - Permission bridge                ║"

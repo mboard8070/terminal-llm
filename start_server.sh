@@ -37,7 +37,7 @@ done
 
 # Start gateway on port 30000 (LLM + file server)
 echo "Starting Gateway on port 30000 (LLM + files)..."
-python3 gateway.py &
+./venv/bin/python gateway.py &
 GW_PID=$!
 
 echo ""
