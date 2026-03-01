@@ -173,9 +173,10 @@ NUM_CTX = maude_core.NUM_CTX
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
 
 def create_client():
-    """Create local API client."""
+    """Create API client, routing cloud models through gateway."""
+    base_url = GATEWAY_URL if MODEL in _CLOUD_MODELS else LOCAL_URL
     return OpenAI(
-        base_url=LOCAL_URL,
+        base_url=base_url,
         api_key="not-needed"
     )
 
@@ -538,6 +539,11 @@ AVAILABLE_MODELS = {
 GATEWAY_URL = "http://localhost:30080/v1"
 
 _CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "devstral-2512", "devstral-small-latest", "devstral-medium-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
+
+# Resolve short model name (e.g. "mistral") to full ID (e.g. "mistral-large-latest")
+if MODEL in AVAILABLE_MODELS and MODEL not in _CLOUD_MODELS:
+    MODEL = AVAILABLE_MODELS[MODEL]
+    maude_core.MODEL = MODEL
 
 def _switch_model(name: str) -> str:
     """Switch the active model at runtime, routing cloud models via gateway."""
