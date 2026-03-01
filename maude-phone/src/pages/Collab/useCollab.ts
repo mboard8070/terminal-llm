@@ -116,14 +116,27 @@ export function useCollab(pollInterval = 10000) {
   return { status, loading, refresh, createProject, dispatchTask };
 }
 
+// Detect device platform
+function detectDevice(): { clientType: string; label: string } {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua)) return { clientType: "ipad", label: "iPad" };
+  if (/iPhone/.test(ua)) return { clientType: "iphone", label: "iPhone" };
+  if (/Android/.test(ua) && /Mobile/.test(ua)) return { clientType: "android", label: "Android" };
+  if (/Android/.test(ua)) return { clientType: "android-tablet", label: "Android Tablet" };
+  if (/Macintosh/.test(ua)) return { clientType: "mac", label: "Mac" };
+  if (/Windows/.test(ua)) return { clientType: "windows", label: "Windows" };
+  return { clientType: "phone", label: "Phone" };
+}
+
 // App-level presence heartbeat (call once at app init)
 let heartbeatStarted = false;
 
-export function startPresenceHeartbeat(clientType = "phone") {
+export function startPresenceHeartbeat() {
   if (heartbeatStarted) return;
   heartbeatStarted = true;
 
-  const clientId = `${clientType}-${Math.random().toString(36).slice(2, 8)}`;
+  const device = detectDevice();
+  const clientId = `${device.clientType}-${Math.random().toString(36).slice(2, 8)}`;
 
   const beat = () => {
     fetch(`${apiBase()}/api/collab/presence`, {
@@ -131,7 +144,7 @@ export function startPresenceHeartbeat(clientType = "phone") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_id: clientId,
-        client_type: clientType,
+        client_type: device.clientType,
         activity: document.visibilityState === "visible" ? "browsing app" : "background",
       }),
     }).catch(() => {});
