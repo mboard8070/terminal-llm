@@ -538,17 +538,24 @@ class CollabHub:
     def dispatch_task(self, prompt: str, target: str = "",
                       capability: str = "LLM", project_id: str = "",
                       target_client_id: str = "", target_platform: str = "") -> dict:
-        # Resolve target: check if it matches a client_id or platform in presence
+        # Resolve target: check if it matches a client_id, hostname, or platform
         if target and not target_client_id and not target_platform:
             presence = self.presence.get_all()
-            # Check if target matches a client_id
+            target_lower = target.lower()
+            # 1. Exact client_id match
             for p in presence:
                 if p.get("client_id") == target:
                     target_client_id = target
                     break
-            else:
-                # Check if target matches a platform name
-                target_lower = target.lower()
+            # 2. Hostname match (exact or substring, case-insensitive)
+            if not target_client_id:
+                for p in presence:
+                    h = p.get("hostname", "").lower()
+                    if h and (h == target_lower or target_lower in h or h in target_lower):
+                        target_client_id = p.get("client_id", "")
+                        break
+            # 3. Platform match
+            if not target_client_id:
                 for p in presence:
                     if p.get("platform", "").lower() == target_lower:
                         target_platform = target_lower
