@@ -829,7 +829,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "Python scripts or code that calls Google APIs directly via run_command. The tools "
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
-            "To repeat the same operation on multiple files, call the same tool multiple times."
+            "To repeat the same operation on multiple files, call the same tool multiple times. "
+            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "using web_browse. When the user asks about current events, recent news, documentation, "
+            "prices, reviews, or anything that requires up-to-date information, USE web_search. "
+            "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
         )
         messages = list(req.get("messages", []))
         for msg in messages:
@@ -1166,7 +1170,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "Python scripts or code that calls Google APIs directly via run_command. The tools "
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
-            "To repeat the same operation on multiple files, call the same tool multiple times."
+            "To repeat the same operation on multiple files, call the same tool multiple times. "
+            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "using web_browse. When the user asks about current events, recent news, documentation, "
+            "prices, reviews, or anything that requires up-to-date information, USE web_search. "
+            "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
         )
         system_text += tool_addendum
 
