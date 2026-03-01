@@ -170,6 +170,10 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
         dest = task.get("target_client_id") or task.get("target_platform") or task.get("target") or "local"
         task_id = task["id"]
 
+        # Already failed (e.g. target not found/offline)
+        if task.get("status") == "failed":
+            return f"ERROR: {task.get('result', 'Task failed')}"
+
         # For client-targeted tasks, wait for the result (client polls every 10s)
         if task.get("status") == "queued":
             for _ in range(30):  # wait up to 30s
@@ -178,7 +182,7 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
                 if updated and updated.get("status") in ("completed", "failed"):
                     result = updated.get("result", "(no output)")
                     return f"Task {updated['status']} on {dest}:\n{result}"
-            return f"Task {task_id} dispatched to {dest} but no result yet (client may be slow). Use list_tasks to check later."
+            return f"Task {task_id} dispatched to {dest} but no result yet (client may be slow to respond). Use list_tasks to check later."
 
         return f"Task dispatched: {task_id} → {dest} (status: {task['status']})"
 

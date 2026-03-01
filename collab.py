@@ -539,6 +539,7 @@ class CollabHub:
                       capability: str = "LLM", project_id: str = "",
                       target_client_id: str = "", target_platform: str = "") -> dict:
         # Resolve target: check if it matches a client_id, hostname, or platform
+        explicitly_targeted = bool(target or target_client_id or target_platform)
         if target and not target_client_id and not target_platform:
             presence = self.presence.get_all()
             target_lower = target.lower()
@@ -561,6 +562,23 @@ class CollabHub:
                         target_platform = target_lower
                         break
 
+            # If target was specified but couldn't be resolved, fail fast
+            if not target_client_id and not target_platform:
+                # List who IS online for the LLM
+                online = [f"{p.get('hostname')} ({p.get('platform')})"
+                          for p in presence
+                          if p.get("platform") not in ("gateway",)]
+                online_str = ", ".join(online) if online else "none"
+                task = self.tasks.create(
+                    prompt, target, capability, project_id,
+                    target_client_id="", target_platform="",
+                )
+                self.tasks.update_status(
+                    task["id"], "failed",
+                    f"Device '{target}' not found or offline. Online clients: {online_str}"
+                )
+                return task
+
         is_client_targeted = bool(target_client_id or target_platform)
         task = self.tasks.create(
             prompt, target, capability, project_id,
@@ -575,15 +593,15 @@ class CollabHub:
         if is_client_targeted:
             # Client-targeted: stays queued, client polls for it
             pass
-        elif target and target != MY_HOSTNAME:
+        elif not explicitly_targeted:
+            # No target specified — execute locally
+            threading.Thread(
+                target=self.tasks.execute, args=(task,), daemon=True
+            ).start()
+        else:
             # Forward to remote gateway via mesh
             threading.Thread(
                 target=self._forward_task, args=(target, task), daemon=True
-            ).start()
-        else:
-            # Execute locally in background
-            threading.Thread(
-                target=self.tasks.execute, args=(task,), daemon=True
             ).start()
 
         return task
