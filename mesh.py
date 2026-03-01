@@ -35,7 +35,7 @@ class MaudeNode:
     hostname: str
     ip: str
     tailscale_ip: Optional[str] = None
-    api_port: int = 30000
+    api_port: int = 30080
     ollama_port: int = 11434
     comfyui_port: int = 8188
     capabilities: List[str] = field(default_factory=list)  # Legacy: model names
@@ -213,7 +213,7 @@ class MaudeMesh:
         # Parse "hostname:port" or just "hostname"
         parts = node_spec.split(":")
         hostname = parts[0]
-        port = int(parts[1]) if len(parts) > 1 else 30000
+        port = int(parts[1]) if len(parts) > 1 else 30080
 
         if hostname.lower() == self.my_hostname.lower():
             return
