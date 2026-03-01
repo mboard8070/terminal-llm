@@ -176,7 +176,7 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
 
         # For client-targeted tasks, wait for the result (client polls every 10s)
         if task.get("status") == "queued":
-            for _ in range(30):  # wait up to 30s
+            for _ in range(15):  # wait up to 15s
                 time.sleep(1)
                 updated = hub.tasks.get(task_id)
                 if updated and updated.get("status") in ("completed", "failed"):
