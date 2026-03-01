@@ -30,6 +30,7 @@ from maude_client.config import (
 from maude_client.tool_router import ToolRouter
 from maude_client.heartbeat import start_heartbeat, stop_heartbeat
 from maude_client.shared_sync import start_sync, stop_sync, sync_now
+from maude_client.task_executor import start_task_executor, stop_task_executor
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -833,6 +834,21 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
+    # Start task executor
+    print("Starting task executor...", end=" ", flush=True)
+    try:
+        def _on_task_start(task):
+            print(f"\n\033[2m[Task received: {task.get('prompt', '')[:60]}]\033[0m", flush=True)
+
+        def _on_task_complete(task, status, result):
+            preview = result[:80] if result else "(no output)"
+            print(f"\n\033[2m[Task {status}: {preview}]\033[0m", flush=True)
+
+        start_task_executor(on_task_start=_on_task_start, on_task_complete=_on_task_complete)
+        print("OK")
+    except Exception as e:
+        print(f"Warning: {e}")
+
     print("\nType 'quit' to exit, '/help' for commands.\n")
 
     try:
@@ -960,7 +976,8 @@ Features:
             except EOFError:
                 break
     finally:
-        # Stop heartbeat and sync on exit
+        # Stop heartbeat, sync, and task executor on exit
+        stop_task_executor()
         stop_sync()
         stop_heartbeat()
 

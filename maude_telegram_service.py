@@ -36,7 +36,7 @@ from memory import MaudeMemory
 
 # Configuration
 LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
-MODEL = "nemotron"
+MODEL = "mistral"
 NUM_CTX = int(os.environ.get("MAUDE_NUM_CTX", "32768"))
 SERVICE_NAME = "MAUDE Telegram Service"
 

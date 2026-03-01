@@ -57,6 +57,8 @@ class HeartbeatClient:
                 json={
                     "client_id": self.client_id,
                     "client_type": self.platform,
+                    "hostname": self.hostname,
+                    "platform": self.platform,
                     "activity": status,
                 },
                 timeout=5,

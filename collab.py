@@ -70,12 +70,14 @@ class PresenceManager:
 
     def heartbeat(self, client_id: str, client_type: str = "tui",
                   activity: str = "", conversation_id: str = "",
-                  project_id: str = ""):
+                  project_id: str = "", hostname: str = "",
+                  platform: str = ""):
         with self._lock:
             self._clients[client_id] = {
                 "client_id": client_id,
                 "client_type": client_type,
-                "hostname": MY_HOSTNAME,
+                "hostname": hostname or MY_HOSTNAME,
+                "platform": platform or client_type,
                 "status": "active",
                 "activity": activity,
                 "active_conversation": conversation_id,
@@ -293,13 +295,18 @@ class TaskDispatcher:
         self._lock = threading.Lock()
 
     def create(self, prompt: str, target: str = "", capability: str = "LLM",
-               project_id: str = "", source: str = "") -> dict:
+               project_id: str = "", source: str = "",
+               target_client_id: str = "", target_platform: str = "") -> dict:
+        # Client-targeted tasks start as "queued" (picked up by polling clients)
+        is_client_targeted = bool(target_client_id or target_platform)
         task = {
             "id": f"task-{uuid.uuid4().hex[:12]}",
             "source": source or MY_HOSTNAME,
             "target": target,
+            "target_client_id": target_client_id,
+            "target_platform": target_platform,
             "capability": capability,
-            "status": "pending",
+            "status": "queued" if is_client_targeted else "pending",
             "prompt": prompt,
             "result": None,
             "project_id": project_id,
@@ -309,6 +316,40 @@ class TaskDispatcher:
         with self._lock:
             _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
         return task
+
+    def get_queued_for_client(self, client_id: str) -> List[dict]:
+        """Return tasks with status='queued' targeting this client_id."""
+        tasks = []
+        for f in TASKS_DIR.glob("task-*.json"):
+            task = _read_json(f, None)
+            if task and task.get("status") == "queued":
+                if task.get("target_client_id") == client_id:
+                    tasks.append(task)
+        tasks.sort(key=lambda t: t.get("created_at", 0))
+        return tasks
+
+    def resolve_platform_targets(self, presence_clients: List[dict]):
+        """For queued tasks with target_platform but no target_client_id,
+        assign to the first active client on that platform."""
+        # Build platform → client_id map
+        platform_map: Dict[str, str] = {}
+        for client in presence_clients:
+            plat = client.get("platform", "")
+            cid = client.get("client_id", "")
+            if plat and cid and plat not in platform_map:
+                platform_map[plat] = cid
+
+        with self._lock:
+            for f in TASKS_DIR.glob("task-*.json"):
+                task = _read_json(f, None)
+                if (task and task.get("status") == "queued"
+                        and task.get("target_platform")
+                        and not task.get("target_client_id")):
+                    target_plat = task["target_platform"]
+                    if target_plat in platform_map:
+                        task["target_client_id"] = platform_map[target_plat]
+                        task["updated_at"] = time.time()
+                        _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
 
     def get(self, task_id: str) -> Optional[dict]:
         safe_id = task_id.replace("/", "").replace("..", "")
@@ -457,9 +498,11 @@ class CollabHub:
 
     def heartbeat(self, client_id: str, client_type: str = "tui",
                   activity: str = "", conversation_id: str = "",
-                  project_id: str = ""):
+                  project_id: str = "", hostname: str = "",
+                  platform: str = ""):
         self.presence.heartbeat(client_id, client_type, activity,
-                                conversation_id, project_id)
+                                conversation_id, project_id,
+                                hostname, platform)
 
     # ── Activity ──
 
@@ -493,12 +536,39 @@ class CollabHub:
     # ── Task dispatch ──
 
     def dispatch_task(self, prompt: str, target: str = "",
-                      capability: str = "LLM", project_id: str = "") -> dict:
-        task = self.tasks.create(prompt, target, capability, project_id)
-        self.emit("task_dispatched", f"Dispatched task to {target or 'local'}",
-                  {"task_id": task["id"], "target": target})
+                      capability: str = "LLM", project_id: str = "",
+                      target_client_id: str = "", target_platform: str = "") -> dict:
+        # Resolve target: check if it matches a client_id or platform in presence
+        if target and not target_client_id and not target_platform:
+            presence = self.presence.get_all()
+            # Check if target matches a client_id
+            for p in presence:
+                if p.get("client_id") == target:
+                    target_client_id = target
+                    break
+            else:
+                # Check if target matches a platform name
+                target_lower = target.lower()
+                for p in presence:
+                    if p.get("platform", "").lower() == target_lower:
+                        target_platform = target_lower
+                        break
 
-        if target and target != MY_HOSTNAME:
+        is_client_targeted = bool(target_client_id or target_platform)
+        task = self.tasks.create(
+            prompt, target, capability, project_id,
+            target_client_id=target_client_id,
+            target_platform=target_platform,
+        )
+
+        dest = target_client_id or target_platform or target or "local"
+        self.emit("task_dispatched", f"Dispatched task to {dest}",
+                  {"task_id": task["id"], "target": dest})
+
+        if is_client_targeted:
+            # Client-targeted: stays queued, client polls for it
+            pass
+        elif target and target != MY_HOSTNAME:
             # Forward to remote gateway via mesh
             threading.Thread(
                 target=self._forward_task, args=(target, task), daemon=True
