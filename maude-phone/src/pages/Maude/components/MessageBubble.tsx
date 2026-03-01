@@ -99,6 +99,9 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-sonnet-4-20250514": "Claude Sonnet",
   "mistral-large-latest": "Mistral Large",
   "codestral-latest": "Codestral",
+  "devstral-2512": "Devstral",
+  "devstral-small-latest": "Devstral Small",
+  "devstral-medium-latest": "Devstral Medium",
   "nemotron": "Nemotron",
   "llava": "LLaVA",
 };

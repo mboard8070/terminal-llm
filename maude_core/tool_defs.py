@@ -40,11 +40,11 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_directory",
-            "description": "List files and directories in a path. Shows file sizes and types.",
+            "description": "List files and directories on the DGX Spark SERVER (Linux). Cannot access the user's Mac/iPhone. Shows file sizes and types.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Path to list (defaults to working directory)"}
+                    "path": {"type": "string", "description": "Absolute path on the server to list (defaults to working directory)"}
                 },
                 "required": []
             }
@@ -104,7 +104,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web using DuckDuckGo.",
+            "description": "Search the web using DuckDuckGo. Use this for weather, news, prices, current events, or any factual query that needs up-to-date information.",
             "parameters": {
                 "type": "object",
                 "properties": {

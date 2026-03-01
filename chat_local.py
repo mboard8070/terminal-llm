@@ -524,8 +524,12 @@ def chat(client, messages: list):
 
 AVAILABLE_MODELS = {
     "nemotron": "nemotron",
+    "llava": "llava",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "devstral": "devstral-2512",
+    "devstral-small": "devstral-small-latest",
+    "devstral-medium": "devstral-medium-latest",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }
@@ -533,7 +537,7 @@ AVAILABLE_MODELS = {
 # Cloud models route through the gateway's HTTP mirror (same port as local)
 GATEWAY_URL = "http://localhost:30080/v1"
 
-_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
+_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "devstral-2512", "devstral-small-latest", "devstral-medium-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
 
 def _switch_model(name: str) -> str:
     """Switch the active model at runtime, routing cloud models via gateway."""
@@ -571,7 +575,7 @@ def handle_command(cmd: str) -> str:
 
 /help              - Show this help
 /model             - Show current model configuration
-/model switch NAME - Switch model (nemotron, mistral, codestral, claude, sonnet)
+/model switch NAME - Switch model (nemotron, llava, mistral, codestral, devstral, claude, sonnet)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -593,7 +597,7 @@ Say "quit" to exit."""
         if len(parts) >= 3 and parts[1].lower() == "switch":
             return _switch_model(parts[2])
         elif len(parts) >= 2 and parts[1].lower() == "switch":
-            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral"
+            return "Usage: /model switch <name>\nAvailable: nemotron, llava, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
         from frontier import list_available_providers
         frontier_providers = list_available_providers()
         frontier_info = ", ".join(frontier_providers) if frontier_providers else "none configured"
@@ -605,8 +609,14 @@ Context:      {NUM_CTX} tokens
 
 Available models:
   nemotron            local (llama-server)
+  llava               LLaVA (local, vision)
   mistral             Mistral Large (cloud)
   codestral           Codestral (cloud, code)
+  devstral            Devstral 2 (cloud, code agent)
+  devstral-small      Devstral Small (cloud, code light)
+  devstral-medium     Devstral Medium (cloud, code mid)
+  claude              Claude Opus (cloud)
+  sonnet              Claude Sonnet (cloud)
 
 Vision:       {maude_core.VISION_MODEL}
 Vision URL:   {maude_core.VISION_URL}
