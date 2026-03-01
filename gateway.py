@@ -541,12 +541,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
             conv_id = parsed.path.split("/")[3]
             self._get_messages(conv_id)
         elif parsed.path == "/health":
-            self._json_response({
-                "status": "ok",
-                "llm_port": LLM_PORT,
-                "personaplex_port": PERSONAPLEX_PORT,
-                "gateway_port": GATEWAY_PORT,
-            })
+            self._serve_health()
+        elif parsed.path == "/api/tools":
+            self._serve_tools(query)
         elif parsed.path == "/models":
             self._serve_models()
         elif parsed.path.startswith("/proxy"):
@@ -573,7 +570,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = unquote(self.path)
         parsed = urlparse(path)
 
-        if parsed.path.startswith("/api/collab/"):
+        if parsed.path == "/api/tools/execute":
+            self._execute_tool_api()
+        elif parsed.path.startswith("/api/collab/"):
             self._handle_collab_post(parsed.path)
         elif parsed.path == "/api/conversations":
             self._save_conversations()
@@ -1789,6 +1788,67 @@ class GatewayHandler(BaseHTTPRequestHandler):
         else:
             self._json_response({"error": "Not found"}, 404)
 
+    # ── Health & Tool Catalog API ──────────────────────────────────
+
+    def _serve_health(self):
+        """Enhanced /health — structured report with deps, services, tools."""
+        try:
+            from health import HealthChecker
+            report = HealthChecker().check_all()
+        except ImportError:
+            report = {
+                "status": "ok",
+                "llm_port": LLM_PORT,
+                "personaplex_port": PERSONAPLEX_PORT,
+                "gateway_port": GATEWAY_PORT,
+            }
+        self._json_response(report)
+
+    def _serve_tools(self, query: dict):
+        """GET /api/tools — full catalog or filtered by ?message=."""
+        try:
+            from tool_catalog import get_catalog, get_filtered_tools
+        except ImportError:
+            self._json_response({"error": "tool_catalog not available"}, 503)
+            return
+
+        message = query.get("message", [None])[0]
+        if message:
+            tools = get_filtered_tools(message)
+            self._json_response({"tools": tools, "message": message})
+        else:
+            catalog = get_catalog()
+            self._json_response(catalog)
+
+    def _execute_tool_api(self):
+        """POST /api/tools/execute — execute a server-side tool."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        name = data.get("name", "")
+        arguments = data.get("arguments", {})
+        if not name:
+            self._json_response({"error": "Missing 'name' field"}, 400)
+            return
+
+        try:
+            from tool_catalog import execute_server_tool
+            result = execute_server_tool(name, arguments)
+        except ImportError:
+            self._json_response({"error": "tool_catalog not available"}, 503)
+            return
+
+        if result.get("error"):
+            code = 400 if "local tool" in result["error"] else 500
+            self._json_response(result, code)
+        else:
+            self._json_response(result)
+
     def _json_response(self, obj, code=200):
         data = json.dumps(obj).encode()
         self.send_response(code)
@@ -1810,6 +1870,20 @@ if __name__ == "__main__":
     print(f"  Shared     : {SHARED_DIR}")
     print(f"  Transfers  : {TRANSFERS_DIR}")
     print(f"  Models     : {', '.join(MODEL_ROUTES.keys())}")
+
+    # Startup health check
+    try:
+        from health import HealthChecker
+        _report = HealthChecker().check_all()
+        print(f"  Health     : {_report['status']}")
+        for _dep, _info in _report.get("dependencies", {}).items():
+            if not _info.get("available"):
+                print(f"    WARNING: {_dep} — {_info.get('error', 'not available')}")
+        _degraded = _report.get("tools", {}).get("degraded", [])
+        if _degraded:
+            print(f"    Degraded tools ({len(_degraded)}): {', '.join(_degraded[:10])}")
+    except Exception as _e:
+        print(f"  Health     : check failed ({_e})")
 
     # Start gateway-level presence heartbeat so this node always appears
     def _gateway_heartbeat():
