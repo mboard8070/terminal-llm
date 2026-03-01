@@ -13,8 +13,8 @@ import { Collab } from "./pages/Collab/Collab";
 import { startPresenceHeartbeat } from "./pages/Collab/useCollab";
 import { TabBar } from "./components/TabBar/TabBar";
 
-// Start presence heartbeat at app load
-startPresenceHeartbeat("phone");
+// Start presence heartbeat at app load (auto-detects device type)
+startPresenceHeartbeat();
 
 function AppLayout() {
   return (

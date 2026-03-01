@@ -23,9 +23,17 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const CLIENT_ICONS: Record<string, string> = {
+  gateway: "\u{2B21}",
   tui: ">_",
   cli: "$",
+  macos: "\u{1F4BB}",
+  mac: "\u{1F4BB}",
+  iphone: "\u{1F4F1}",
+  ipad: "\u{1F4F2}",
+  android: "\u{1F4F1}",
+  "android-tablet": "\u{1F4F2}",
   phone: "\u{1F4F1}",
+  windows: "\u{1F5A5}",
   unknown: "\u{25CF}",
 };
 
