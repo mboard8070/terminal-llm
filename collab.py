@@ -573,10 +573,10 @@ class CollabHub:
                     prompt, target, capability, project_id,
                     target_client_id="", target_platform="",
                 )
-                self.tasks.update_status(
-                    task["id"], "failed",
-                    f"Device '{target}' not found or offline. Online clients: {online_str}"
-                )
+                fail_msg = f"Device '{target}' not found or offline. Online clients: {online_str}"
+                self.tasks.update_status(task["id"], "failed", fail_msg)
+                task["status"] = "failed"
+                task["result"] = fail_msg
                 return task
 
         is_client_targeted = bool(target_client_id or target_platform)
