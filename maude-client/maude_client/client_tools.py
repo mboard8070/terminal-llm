@@ -239,7 +239,70 @@ TOOLS = [
                 "required": ["confirm"]
             }
         }
-    }
+    },
+    # ── Collaboration tools (call gateway API) ──
+    {
+        "type": "function",
+        "function": {
+            "name": "mesh_status",
+            "description": "Show who's online across all devices and what they're doing. Shows presence, recent activity, and task status across the MAUDE mesh network.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "dispatch_task",
+            "description": "Dispatch a task to a specific device on the mesh network. Use capability 'SHELL' for shell commands or 'LLM' for AI tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The task prompt or command to execute"},
+                    "target": {"type": "string", "description": "Target hostname (e.g. 'spark', 'mac-laptop'). Leave empty for local."},
+                    "capability": {"type": "string", "description": "'SHELL' for commands, 'LLM' for AI tasks", "enum": ["SHELL", "LLM"]}
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_project",
+            "description": "Create a new collaboration project to group conversations, files, and tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Project name"},
+                    "description": {"type": "string", "description": "Project description"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_projects",
+            "description": "List all collaboration projects across the mesh.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tasks",
+            "description": "List dispatched tasks and their status (pending, running, completed, failed).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "description": "Filter by status", "enum": ["pending", "running", "completed", "failed"]}
+                },
+                "required": []
+            }
+        }
+    },
 ]
 
 
@@ -301,6 +364,8 @@ def execute_tool(name: str, arguments: dict) -> str:
                 arguments.get("filename"),
                 arguments.get("confirm", False)
             )
+        elif name in _COLLAB_TOOL_NAMES:
+            return _execute_collab_tool(name, arguments)
         else:
             return f"Unknown tool: {name}"
     except Exception as e:
@@ -667,6 +732,110 @@ def clean_shared(filename: str = None, confirm: bool = False) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Collaboration Tools — call gateway collab API
+# ─────────────────────────────────────────────────────────────────────────────
+
+_COLLAB_TOOL_NAMES = {"mesh_status", "dispatch_task", "create_project", "list_projects", "list_tasks"}
+
+def _collab_api(method: str, path: str, data: dict = None):
+    """Call the gateway collab API."""
+    url = f"{FILE_SERVER_URL}/api/collab{path}"
+    try:
+        if method == "GET":
+            r = _requests.get(url, timeout=10, verify=False)
+        else:
+            r = _requests.post(url, json=data or {}, timeout=10, verify=False)
+        if r.status_code < 300:
+            return r.json()
+        return {"error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+def _execute_collab_tool(name: str, arguments: dict) -> str:
+    """Execute a collaboration tool via gateway API."""
+    if name == "mesh_status":
+        status = _collab_api("GET", "/status")
+        if "error" in status:
+            return f"Error: {status['error']}"
+        lines = ["## MAUDE Mesh Status\n"]
+        now = status.get("ts", 0)
+        presence = status.get("presence", [])
+        if presence:
+            lines.append("### Online Devices")
+            for p in presence:
+                age = int(now - p.get("last_seen", 0))
+                lines.append(f"- **{p.get('hostname', '?')}** ({p.get('client_type', '?')}) — {p.get('activity', 'idle')} ({age}s ago)")
+        else:
+            lines.append("### No devices currently online")
+        activity = status.get("activity", [])[:10]
+        if activity:
+            lines.append("\n### Recent Activity")
+            for evt in activity:
+                lines.append(f"- [{evt.get('hostname', '?')}] {evt.get('summary', '')}")
+        tasks = status.get("tasks", [])
+        active = [t for t in tasks if t.get("status") in ("pending", "running")]
+        if active:
+            lines.append("\n### Active Tasks")
+            for t in active:
+                lines.append(f"- **{t['status']}** on {t.get('target', 'local')}: {t.get('prompt', '')[:60]}")
+        projects = status.get("projects", [])
+        if projects:
+            lines.append(f"\n### Projects ({len(projects)})")
+            for p in projects[:5]:
+                lines.append(f"- **{p['name']}** — {len(p.get('conversations', []))} conversations, {len(p.get('files', []))} files")
+        return "\n".join(lines)
+
+    elif name == "dispatch_task":
+        result = _collab_api("POST", "/tasks", {
+            "prompt": arguments.get("prompt", ""),
+            "target": arguments.get("target", ""),
+            "capability": arguments.get("capability", "LLM"),
+        })
+        if "error" in result:
+            return f"Error: {result['error']}"
+        return f"Task dispatched: {result['id']} → {result.get('target') or 'local'} (status: {result['status']})"
+
+    elif name == "create_project":
+        result = _collab_api("POST", "/projects", {
+            "name": arguments.get("name", "Untitled"),
+            "description": arguments.get("description", ""),
+            "tags": arguments.get("tags", []),
+        })
+        if "error" in result:
+            return f"Error: {result['error']}"
+        return f"Project created: {result['name']} (id: {result['id']})"
+
+    elif name == "list_projects":
+        projects = _collab_api("GET", "/projects")
+        if isinstance(projects, dict) and "error" in projects:
+            return f"Error: {projects['error']}"
+        if not projects:
+            return "No projects found."
+        lines = ["## Projects\n"]
+        for p in projects:
+            tags = ", ".join(p.get("tags", [])) or "none"
+            lines.append(f"- **{p['name']}** (id: {p['id']})\n  Tags: {tags} | {len(p.get('conversations', []))} conversations, {len(p.get('files', []))} files")
+        return "\n".join(lines)
+
+    elif name == "list_tasks":
+        tasks = _collab_api("GET", "/tasks")
+        if isinstance(tasks, dict) and "error" in tasks:
+            return f"Error: {tasks['error']}"
+        if not tasks:
+            return "No tasks found."
+        status_filter = arguments.get("status")
+        if status_filter:
+            tasks = [t for t in tasks if t.get("status") == status_filter]
+        lines = ["## Tasks\n"]
+        for t in tasks:
+            result_preview = f"\n  Result: {str(t['result'])[:100]}" if t.get("result") else ""
+            lines.append(f"- **{t['status']}** [{t['id']}] {t.get('target') or 'local'}: {t.get('prompt', '')[:80]}{result_preview}")
+        return "\n".join(lines)
+
+    return f"Unknown collab tool: {name}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dynamic Tool Filtering and Fast Dispatch
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -695,6 +864,12 @@ _SERVER_KEYWORDS = [
     "substack", "browser", "tweet", "bluesky", "linkedin", "social media",
 ]
 
+_COLLAB_KEYWORDS = [
+    "who's online", "whos online", "mesh status", "mesh", "devices",
+    "dispatch", "send to spark", "run on", "online", "collab",
+    "project", "collaboration", "activity", "task", "what are they doing",
+]
+
 # Build lookup
 _TOOL_BY_NAME = {t["function"]["name"]: t for t in TOOLS}
 
@@ -706,6 +881,11 @@ def get_tools_for_message(message: str) -> list:
     for kw in _SERVER_KEYWORDS:
         if kw in msg_lower:
             active.update(_SERVER_TOOL_NAMES)
+            break
+
+    for kw in _COLLAB_KEYWORDS:
+        if kw in msg_lower:
+            active.update(_COLLAB_TOOL_NAMES)
             break
 
     return [t for t in TOOLS if t["function"]["name"] in active]
