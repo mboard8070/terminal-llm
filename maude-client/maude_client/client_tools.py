@@ -240,6 +240,36 @@ TOOLS = [
             }
         }
     },
+    # ── Web tools (executed on server via gateway) ──
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web using DuckDuckGo. Use for current events, news, prices, reviews, or anything needing up-to-date information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "num_results": {"type": "integer", "description": "Number of results (default 5, max 10)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_browse",
+            "description": "Fetch and read content from a web URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to fetch"}
+                },
+                "required": ["url"]
+            }
+        }
+    },
     # ── Collaboration tools (call gateway API) ──
     {
         "type": "function",
@@ -364,6 +394,8 @@ def execute_tool(name: str, arguments: dict) -> str:
                 arguments.get("filename"),
                 arguments.get("confirm", False)
             )
+        elif name in ("web_search", "web_browse"):
+            return _execute_web_tool(name, arguments)
         elif name in _COLLAB_TOOL_NAMES:
             return _execute_collab_tool(name, arguments)
         else:
@@ -732,6 +764,24 @@ def clean_shared(filename: str = None, confirm: bool = False) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Web Tools — executed on server via SSH
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _execute_web_tool(name: str, arguments: dict) -> str:
+    """Execute web_search or web_browse on the server via SSH."""
+    if name == "web_search":
+        query = arguments.get("query", "")
+        num = arguments.get("num_results", 5)
+        cmd = f'cd ~/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 -c "from maude_core import execute_tool; print(execute_tool(\'web_search\', {{\\"query\\": \\"{query}\\", \\"num_results\\": {num}}}))"'
+        return run_server_command(cmd)
+    elif name == "web_browse":
+        url = arguments.get("url", "")
+        cmd = f'cd ~/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 -c "from maude_core import execute_tool; print(execute_tool(\'web_browse\', {{\\"url\\": \\"{url}\\"}}))"'
+        return run_server_command(cmd)
+    return f"Unknown web tool: {name}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Collaboration Tools — call gateway collab API
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -845,7 +895,7 @@ import re as _re
 _CORE_TOOL_NAMES = {
     "read_file", "write_file", "list_directory", "run_command",
     "search_files", "edit_file", "list_shared", "sync_shared", "pull_shared",
-    "clean_shared",
+    "clean_shared", "web_search", "web_browse",
 }
 
 # Server tools activated by keyword
