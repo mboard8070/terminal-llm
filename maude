@@ -20,6 +20,14 @@ if [[ "$1" == "stop" ]]; then
             echo "  Stopped $s"
         fi
     done
+    # Kill any orphaned processes still holding our ports
+    for port in 30010 30000 30080 30002 8998; do
+        pid=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null
+            echo "  Killed orphan on port $port (pid $pid)"
+        fi
+    done
     touch ~/.config/maude/stop
     echo "Done."
     exit 0

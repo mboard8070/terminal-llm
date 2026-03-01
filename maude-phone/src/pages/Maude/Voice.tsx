@@ -12,17 +12,16 @@ const MAUDE_TEXT_PROMPT =
 
 const DEFAULT_VOICE = "NATF2.pt";
 
-// PersonaPlex native WebSocket port — connect directly, bypassing the gateway
-// relay which adds jitter from raw TCP proxying + TLS record overhead.
-const PERSONAPLEX_PORT = 8998;
-
 function getGatewayUrl(): string {
   return `${window.location.protocol}//${window.location.host}`;
 }
 
 function getPersonaPlexUrl(imageContext?: string): string {
-  const host = window.location.hostname;
-  const base = `wss://${host}:${PERSONAPLEX_PORT}`;
+  // Route through the gateway WSS proxy (/api/chat) so iOS can reuse
+  // the already-trusted TLS session instead of needing a second
+  // self-signed cert trust for port 8998.
+  const host = window.location.host; // includes port (e.g. 100.x.x.x:30000)
+  const base = `wss://${host}`;
 
   let prompt = MAUDE_TEXT_PROMPT;
   if (imageContext) {
@@ -220,6 +219,7 @@ export const Voice: FC = () => {
   const navigate = useNavigate();
   const [status, setStatus] = useState<SocketStatus>("disconnected");
   const [transcript, setTranscript] = useState("");
+  const [toolActive, setToolActive] = useState(false);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState("");
   const [audioDebug, setAudioDebug] = useState("");
@@ -337,6 +337,11 @@ export const Voice: FC = () => {
           } else if (kind === 0x02) {
             // Text
             const text = new TextDecoder().decode(data.slice(1));
+            if (text.includes("[Searching...]")) {
+              setToolActive(true);
+            } else if (text.includes("[Tool result:]") || text.includes("[Error:")) {
+              setToolActive(false);
+            }
             setTranscript((prev) => prev + text);
           } else if (kind === 0x03) {
             // Raw PCM (float32 @ 24kHz)
@@ -655,11 +660,32 @@ export const Voice: FC = () => {
           </div>
         )}
 
+        {/* Tool-active indicator */}
+        {toolActive && (
+          <div className="flex items-center gap-2 rounded-xl bg-maude-accent/10 px-4 py-2">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-maude-accent border-t-transparent" />
+            <span className="text-xs font-medium text-maude-accent">Searching...</span>
+          </div>
+        )}
+
         {/* Transcript */}
         {transcript && (
           <div className="w-full max-w-xs rounded-xl bg-maude-surface p-3">
             <span className="mb-1 block text-[10px] uppercase tracking-wider text-maude-muted">Transcript</span>
-            <p className="max-h-32 overflow-y-auto text-sm text-maude-text">{transcript}</p>
+            <div className="max-h-48 overflow-y-auto text-sm text-maude-text">
+              {transcript.split("\n").map((line, i) => {
+                if (line.includes("[Searching...]")) {
+                  return <p key={i} className="my-1 text-xs italic text-maude-accent">{line}</p>;
+                }
+                if (line.includes("[Tool result:]")) {
+                  return <p key={i} className="mt-2 mb-1 text-[10px] font-bold uppercase tracking-wider text-maude-accent">{line}</p>;
+                }
+                if (line.includes("[Error:")) {
+                  return <p key={i} className="my-1 text-xs text-red-400">{line}</p>;
+                }
+                return <span key={i}>{line}{i < transcript.split("\n").length - 1 ? "\n" : ""}</span>;
+              })}
+            </div>
           </div>
         )}
 
