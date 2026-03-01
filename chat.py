@@ -41,15 +41,21 @@ MODELS = {
     # Cloud (via gateway)
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "devstral": "devstral-2512",
+    "devstral-small": "devstral-small-latest",
+    "devstral-medium": "devstral-medium-latest",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
+    # Local (via gateway)
+    "nemotron": "nemotron",
+    "llava": "llava",
 }
 
 # Models that route through the gateway
-_CLOUD_MODELS = {"mistral", "codestral", "claude", "sonnet"}
+_CLOUD_MODELS = {"mistral", "codestral", "devstral", "devstral-small", "devstral-medium", "claude", "sonnet", "nemotron", "llava"}
 
 # Default model
-DEFAULT_MODEL = "nemotron-nano"
+DEFAULT_MODEL = "mistral"
 
 
 def create_nvidia_client():
@@ -104,8 +110,9 @@ def main():
     """Main chat loop."""
     console.print(Panel.fit(
         "[bold magenta]MAUDE Terminal Chat[/bold magenta]\n"
-        "[dim]Local: nemotron-nano, llama-3.3, nemotron-51b, llama-405b, codellama[/dim]\n"
-        "[dim]Cloud: mistral, codestral, claude, sonnet[/dim]",
+        "[dim]NVIDIA: nemotron-nano, llama-3.3, nemotron-51b, llama-405b, codellama[/dim]\n"
+        "[dim]Local:  nemotron, llava[/dim]\n"
+        "[dim]Cloud:  mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet[/dim]",
         border_style="magenta"
     ))
     console.print(f"[dim]Commands: /quit, /clear, /model <name>[/dim]\n")

@@ -91,6 +91,24 @@ MODEL_ROUTES = {
         "base_url": "https://codestral.mistral.ai",
         "api_key_env": "CODESTRAL_API_KEY",
     },
+    # Devstral 2 — frontier code agents (123B, 256K context)
+    "devstral-2512": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
+    # Devstral Small — lightweight code agents
+    "devstral-small-latest": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
+    # Devstral Medium — mid-tier code agents
+    "devstral-medium-latest": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+    },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
@@ -121,6 +139,9 @@ MODEL_ROUTES = {
 MODEL_ALIASES = {
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "devstral": "devstral-2512",
+    "devstral-small": "devstral-small-latest",
+    "devstral-medium": "devstral-medium-latest",
     "local": "nemotron",
     "vision": "llava",
     "claude": "claude-opus-4-20250514",
@@ -362,11 +383,17 @@ def handle_personaplex_proxy(handler):
     if parsed.query:
         upstream_path += "?" + parsed.query
 
-    # Connect to PersonaPlex upstream
+    # Connect to PersonaPlex upstream (bridge runs with --ssl)
     upstream_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     upstream_sock.settimeout(10)
     try:
         upstream_sock.connect(("localhost", PERSONAPLEX_PORT))
+        # Wrap with TLS — bridge uses a self-signed cert
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        upstream_sock = ctx.wrap_socket(upstream_sock, server_hostname="localhost")
     except Exception as e:
         try:
             client_sock.sendall(ws_encode_frame(f"PersonaPlex connection failed: {e}", opcode=0x08))
@@ -1720,6 +1747,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "Project not found"}, 404)
         elif path == "/api/collab/tasks":
             self._json_response(hub.tasks.list_all())
+        elif path == "/api/collab/tasks/poll":
+            client_id = query.get("client_id", [""])[0]
+            if not client_id:
+                self._json_response({"error": "client_id required"}, 400)
+            else:
+                # Resolve platform-targeted tasks first
+                hub.tasks.resolve_platform_targets(hub.presence.get_all())
+                tasks = hub.tasks.get_queued_for_client(client_id)
+                self._json_response(tasks)
         elif path.startswith("/api/collab/tasks/"):
             task_id = path.split("/")[4]
             task = hub.tasks.get(task_id)
@@ -1747,6 +1783,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 activity=data.get("activity", ""),
                 conversation_id=data.get("conversation_id", ""),
                 project_id=data.get("project_id", ""),
+                hostname=data.get("hostname", ""),
+                platform=data.get("platform", ""),
             )
             self._json_response({"ok": True})
         elif path == "/api/collab/activity":
@@ -1783,8 +1821,32 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 target=data.get("target", ""),
                 capability=data.get("capability", "LLM"),
                 project_id=data.get("project_id", ""),
+                target_client_id=data.get("target_client_id", ""),
+                target_platform=data.get("target_platform", ""),
             )
             self._json_response(task, 201)
+        elif path.endswith("/claim") and path.startswith("/api/collab/tasks/"):
+            # POST /api/collab/tasks/{id}/claim
+            task_id = path.split("/")[4]
+            task = hub.tasks.get(task_id)
+            if not task:
+                self._json_response({"error": "Task not found"}, 404)
+            elif task.get("status") != "queued":
+                self._json_response({"error": "Task already claimed", "status": task.get("status")}, 409)
+            else:
+                hub.tasks.update_status(task_id, "running")
+                self._json_response({"ok": True, "task_id": task_id})
+        elif path.endswith("/result") and path.startswith("/api/collab/tasks/"):
+            # POST /api/collab/tasks/{id}/result
+            task_id = path.split("/")[4]
+            task = hub.tasks.get(task_id)
+            if not task:
+                self._json_response({"error": "Task not found"}, 404)
+            else:
+                status = data.get("status", "completed")
+                result = data.get("result", "")
+                hub.tasks.update_status(task_id, status, result)
+                self._json_response({"ok": True, "task_id": task_id})
         elif path == "/api/collab/tasks/execute":
             result = hub.execute_task(data)
             self._json_response(result)
