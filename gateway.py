@@ -533,6 +533,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_file(SHARED_DIR / parsed.path[len("/download/"):])
         elif parsed.path.startswith("/download-transfer/"):
             self._send_file(TRANSFERS_DIR / parsed.path[len("/download-transfer/"):])
+        elif parsed.path.startswith("/api/collab/"):
+            self._handle_collab_get(parsed.path, query)
         elif parsed.path == "/api/conversations":
             self._get_conversations()
         elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/messages"):
@@ -558,7 +560,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/assets"):
             self._serve_static(parsed.path)
         elif parsed.path in ("/maude", "/maude/voice", "/terminal", "/browser",
-                              "/messages", "/files", "/settings"):
+                              "/messages", "/files", "/settings", "/collab"):
             # SPA routes — serve index.html
             self._serve_static("/index.html")
         else:
@@ -571,7 +573,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = unquote(self.path)
         parsed = urlparse(path)
 
-        if parsed.path == "/api/conversations":
+        if parsed.path.startswith("/api/collab/"):
+            self._handle_collab_post(parsed.path)
+        elif parsed.path == "/api/conversations":
             self._save_conversations()
         elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/messages"):
             conv_id = parsed.path.split("/")[3]
@@ -1677,6 +1681,106 @@ class GatewayHandler(BaseHTTPRequestHandler):
             msg_file.unlink()
         self._json_response({"ok": True})
 
+    # ── Collaboration API ────────────────────────────────────────────
+
+    def _read_post_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        return json.loads(body) if body else {}
+
+    def _handle_collab_get(self, path: str, query: dict):
+        """Route GET /api/collab/* requests."""
+        from collab import get_hub
+        hub = get_hub()
+
+        if path == "/api/collab/presence":
+            self._json_response(hub.presence.get_all())
+        elif path == "/api/collab/activity":
+            since = float(query.get("since", [0])[0])
+            limit = int(query.get("limit", [50])[0])
+            self._json_response(hub.activity.get_recent(since, limit))
+        elif path == "/api/collab/projects":
+            self._json_response(hub.list_projects())
+        elif path.startswith("/api/collab/projects/"):
+            project_id = path.split("/")[4]
+            proj = hub.get_project(project_id)
+            if proj:
+                self._json_response(proj)
+            else:
+                self._json_response({"error": "Project not found"}, 404)
+        elif path == "/api/collab/tasks":
+            self._json_response(hub.tasks.list_all())
+        elif path.startswith("/api/collab/tasks/"):
+            task_id = path.split("/")[4]
+            task = hub.tasks.get(task_id)
+            if task:
+                self._json_response(task)
+            else:
+                self._json_response({"error": "Task not found"}, 404)
+        elif path == "/api/collab/gossip":
+            self._json_response(hub.get_gossip_bundle())
+        elif path == "/api/collab/status":
+            self._json_response(hub.get_status())
+        else:
+            self._json_response({"error": "Not found"}, 404)
+
+    def _handle_collab_post(self, path: str):
+        """Route POST /api/collab/* requests."""
+        from collab import get_hub
+        hub = get_hub()
+        data = self._read_post_body()
+
+        if path == "/api/collab/presence":
+            hub.heartbeat(
+                client_id=data.get("client_id", ""),
+                client_type=data.get("client_type", "unknown"),
+                activity=data.get("activity", ""),
+                conversation_id=data.get("conversation_id", ""),
+                project_id=data.get("project_id", ""),
+            )
+            self._json_response({"ok": True})
+        elif path == "/api/collab/activity":
+            hub.emit(
+                event_type=data.get("type", "custom"),
+                summary=data.get("summary", ""),
+                data=data.get("data"),
+                client_id=data.get("client_id", ""),
+                conversation_id=data.get("conversation_id", ""),
+                project_id=data.get("project_id", ""),
+            )
+            self._json_response({"ok": True})
+        elif path == "/api/collab/projects":
+            proj = hub.create_project(
+                name=data.get("name", "Untitled"),
+                description=data.get("description", ""),
+                tags=data.get("tags", []),
+            )
+            self._json_response(proj, 201)
+        elif path.startswith("/api/collab/projects/") and path.endswith("/delete"):
+            project_id = path.split("/")[4]
+            hub.delete_project(project_id)
+            self._json_response({"ok": True})
+        elif path.startswith("/api/collab/projects/"):
+            project_id = path.split("/")[4]
+            proj = hub.update_project(project_id, **data)
+            if proj:
+                self._json_response(proj)
+            else:
+                self._json_response({"error": "Project not found"}, 404)
+        elif path == "/api/collab/tasks":
+            task = hub.dispatch_task(
+                prompt=data.get("prompt", ""),
+                target=data.get("target", ""),
+                capability=data.get("capability", "LLM"),
+                project_id=data.get("project_id", ""),
+            )
+            self._json_response(task, 201)
+        elif path == "/api/collab/tasks/execute":
+            result = hub.execute_task(data)
+            self._json_response(result)
+        else:
+            self._json_response({"error": "Not found"}, 404)
+
     def _json_response(self, obj, code=200):
         data = json.dumps(obj).encode()
         self.send_response(code)
@@ -1698,6 +1802,21 @@ if __name__ == "__main__":
     print(f"  Shared     : {SHARED_DIR}")
     print(f"  Transfers  : {TRANSFERS_DIR}")
     print(f"  Models     : {', '.join(MODEL_ROUTES.keys())}")
+
+    # Start gateway-level presence heartbeat so this node always appears
+    def _gateway_heartbeat():
+        import socket
+        from collab import get_hub
+        hub = get_hub()
+        hostname = socket.gethostname().lower()
+        while True:
+            try:
+                hub.heartbeat(f"gateway-{hostname}", "gateway", "serving requests")
+            except Exception:
+                pass
+            time.sleep(30)
+    threading.Thread(target=_gateway_heartbeat, daemon=True).start()
+    print("  Collab     : heartbeat started")
 
     server = ThreadedHTTPServer(("0.0.0.0", GATEWAY_PORT), GatewayHandler)
 

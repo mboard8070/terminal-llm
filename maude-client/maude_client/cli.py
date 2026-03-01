@@ -873,7 +873,7 @@ def main():
                     # Use tarball URL to avoid git clone entirely (bypasses hook issues)
                     result = subprocess.run(
                         [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir",
-                         "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"],
+                         "https://github.com/mboard8070/terminal-llm/archive/collaboration.tar.gz#subdirectory=maude-client"],
                         capture_output=False
                     )
                     if result.returncode == 0:

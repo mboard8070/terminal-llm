@@ -47,10 +47,12 @@ def load_messages(conv_id: str) -> list[dict]:
     return _api_get(f"/api/conversations/{conv_id}/messages") or []
 
 
-def save_conversation(conv_id: str, title: str, model: str, messages: list[dict]):
+def save_conversation(conv_id: str, title: str, model: str, messages: list[dict],
+                      project_id: str = ""):
     """Save a conversation's metadata and messages to the server.
 
     Updates the conversation index and saves messages. Skips system messages.
+    Optionally links the conversation to a project.
     """
     # Filter out system messages for storage
     stored_msgs = []
@@ -88,6 +90,14 @@ def save_conversation(conv_id: str, title: str, model: str, messages: list[dict]
 
     _api_post("/api/conversations", index)
     _api_post(f"/api/conversations/{conv_id}/messages", stored_msgs)
+
+    # Link to project if specified
+    if project_id:
+        try:
+            from collab import get_hub
+            get_hub().add_to_project(project_id, conversation_id=conv_id)
+        except Exception:
+            pass
 
 
 def generate_title(first_message: str) -> str:
