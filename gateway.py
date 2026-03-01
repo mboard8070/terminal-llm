@@ -21,6 +21,7 @@ import os
 import sys
 import json
 import ssl
+import logging
 import mimetypes
 import hashlib
 import struct
@@ -39,14 +40,16 @@ from urllib.parse import unquote, urlparse, parse_qs, urljoin
 import http.client
 import time
 
+logger = logging.getLogger("maude.gateway")
+
 # Tool execution support for cloud model requests
 try:
     import maude_core
     from maude_core import TOOLS as ALL_TOOLS, execute_tool, get_tools_for_message, reset_rate_limits
     TOOL_SUPPORT = True
-    print("Tool support enabled via maude_core")
+    logger.info("Tool support enabled via maude_core")
 except ImportError as e:
-    print(f"Warning: maude_core not available, tool support disabled: {e}")
+    logger.warning("maude_core not available, tool support disabled: %s", e)
     TOOL_SUPPORT = False
 
 # Load environment from variables.env
@@ -481,7 +484,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
-        pass
+        logger.debug("HTTP %s", format % args)
 
     def _add_cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -620,7 +623,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         model_name = req.get("model", "mistral-large-latest")
         resolved_name, route = get_model_route(model_name)
-        print(f"  [route] requested={model_name} resolved={resolved_name}")
+        logger.debug("route requested=%s resolved=%s", model_name, resolved_name)
 
         if not route:
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
@@ -928,7 +931,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "completion_tokens": compl_tok,
                     "elapsed": round(llm_elapsed, 2),
                 })
-            print(f"  LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s")
+            logger.info("LLM: %d+%d tokens in %.1fs", prompt_tok, compl_tok, llm_elapsed)
 
             # Check for tool calls
             tool_calls = message.get("tool_calls")
@@ -960,7 +963,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         tool_result = "(Already called with same arguments. Respond with the best answer you have.)"
                     else:
                         recent_tool_calls.append(call_sig)
-                        print(f"  [tool] {func_name}({func_args})")
+                        logger.info("tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
                         tool_result = execute_tool(func_name, func_args)
                         tool_elapsed = time.time() - tool_start
@@ -1290,7 +1293,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 cache_info += f" cache_read={cache_read}"
             if cache_create:
                 cache_info += f" cache_write={cache_create}"
-            print(f"  Claude LLM: {prompt_tok}+{compl_tok} tokens in {llm_elapsed:.1f}s{cache_info}")
+            logger.info("Claude LLM: %d+%d tokens in %.1fs%s", prompt_tok, compl_tok, llm_elapsed, cache_info)
 
             # Parse content blocks from Claude response
             content_blocks = result.get("content", [])
@@ -1333,7 +1336,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         tool_result = "(Already called with same arguments. Respond with the best answer you have.)"
                     else:
                         recent_tool_calls.append(call_sig)
-                        print(f"  [claude tool] {func_name}({func_args})")
+                        logger.info("claude tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
                         tool_result = execute_tool(func_name, func_args)
                         tool_elapsed = time.time() - tool_start
@@ -1860,30 +1863,36 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     CERT_DIR = Path(__file__).parent / "certs"
     USE_SSL = (CERT_DIR / "cert.pem").exists() and (CERT_DIR / "key.pem").exists()
 
-    print(f"MAUDE Gateway on port {GATEWAY_PORT} ({'HTTPS' if USE_SSL else 'HTTP'})")
-    print(f"  LLM proxy  -> localhost:{LLM_PORT}")
-    print(f"  PersonaPlex-> localhost:{PERSONAPLEX_PORT}")
-    print(f"  PWA dir    : {PWA_DIR}")
-    print(f"  Shared     : {SHARED_DIR}")
-    print(f"  Transfers  : {TRANSFERS_DIR}")
-    print(f"  Models     : {', '.join(MODEL_ROUTES.keys())}")
+    logger.info("MAUDE Gateway on port %d (%s)", GATEWAY_PORT, "HTTPS" if USE_SSL else "HTTP")
+    logger.info("  LLM proxy  -> localhost:%d", LLM_PORT)
+    logger.info("  PersonaPlex-> localhost:%d", PERSONAPLEX_PORT)
+    logger.info("  PWA dir    : %s", PWA_DIR)
+    logger.info("  Shared     : %s", SHARED_DIR)
+    logger.info("  Transfers  : %s", TRANSFERS_DIR)
+    logger.info("  Models     : %s", ", ".join(MODEL_ROUTES.keys()))
 
     # Startup health check
     try:
         from health import HealthChecker
         _report = HealthChecker().check_all()
-        print(f"  Health     : {_report['status']}")
+        logger.info("  Health     : %s", _report["status"])
         for _dep, _info in _report.get("dependencies", {}).items():
             if not _info.get("available"):
-                print(f"    WARNING: {_dep} — {_info.get('error', 'not available')}")
+                logger.warning("  %s — %s", _dep, _info.get("error", "not available"))
         _degraded = _report.get("tools", {}).get("degraded", [])
         if _degraded:
-            print(f"    Degraded tools ({len(_degraded)}): {', '.join(_degraded[:10])}")
+            logger.warning("  Degraded tools (%d): %s", len(_degraded), ", ".join(_degraded[:10]))
     except Exception as _e:
-        print(f"  Health     : check failed ({_e})")
+        logger.error("  Health check failed: %s", _e)
 
     # Start gateway-level presence heartbeat so this node always appears
     def _gateway_heartbeat():
@@ -1898,7 +1907,7 @@ if __name__ == "__main__":
                 pass
             time.sleep(30)
     threading.Thread(target=_gateway_heartbeat, daemon=True).start()
-    print("  Collab     : heartbeat started")
+    logger.info("  Collab     : heartbeat started")
 
     server = ThreadedHTTPServer(("0.0.0.0", GATEWAY_PORT), GatewayHandler)
 
@@ -1906,7 +1915,7 @@ if __name__ == "__main__":
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(CERT_DIR / "cert.pem"), str(CERT_DIR / "key.pem"))
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
-        print(f"  SSL cert   : {CERT_DIR / 'cert.pem'}")
+        logger.info("  SSL cert   : %s", CERT_DIR / "cert.pem")
 
         # Also start an HTTP server for the native Android app
         import threading
@@ -1914,9 +1923,9 @@ if __name__ == "__main__":
         http_server = ThreadedHTTPServer(("0.0.0.0", HTTP_PORT), GatewayHandler)
         http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         http_thread.start()
-        print(f"  HTTP mirror: port {HTTP_PORT} (for native app)")
+        logger.info("  HTTP mirror: port %d (for native app)", HTTP_PORT)
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopping.")
+        logger.info("Stopping.")

@@ -42,6 +42,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 │  │  • Model routing (local ↔ cloud)                              │   │
 │  │  • Server-side tool execution for cloud models                │   │
 │  │  • SSE streaming with pipeline trace events                   │   │
+│  │  • Structured logging (maude.gateway)                         │   │
 │  │  • HTTPS with self-signed certs                               │   │
 │  │  • Shared folder / file transfer serving                      │   │
 │  └──────────┬────────────────────────┬───────────────────────────┘   │
@@ -50,15 +51,19 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 │             │                        │                               │
 │             ▼                        ▼                                │
 │  ┌──────────────────┐  ┌─────────────────────────────────────┐      │
-│  │ llama.cpp        │  │ Mistral API / Codestral API         │      │
+│  │ llama.cpp        │  │ Mistral / Codestral / Claude API    │      │
 │  │ (port 30080)     │  │ (tool loop + result caching)        │      │
 │  │ Nemotron 30B     │  └─────────────────────────────────────┘      │
 │  └──────────────────┘                                                │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐    │
-│  │                     maude_core.py                             │    │
-│  │  Shared tool implementations: files, shell, web, vision,     │    │
-│  │  image gen, Google, scheduling, shared folder, caching        │    │
+│  │  maude_core/               tool_registry.py                   │    │
+│  │  ├── tools_file.py         @register_tool decorator-based     │    │
+│  │  ├── tools_web.py          dispatch with prefix handlers      │    │
+│  │  ├── tools_google.py       for browser_* and skill_* tools    │    │
+│  │  ├── tools_ai.py                                              │    │
+│  │  ├── execute.py            Registry lookup → handler(args)    │    │
+│  │  └── ...                                                      │    │
 │  └──────────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -86,6 +91,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 | **Nemotron-3-Nano-30B** | Local (llama.cpp) | Default — general tasks, tool use |
 | **Mistral Large** | Cloud (API) | Complex reasoning, longer context |
 | **Codestral** | Cloud (API) | Code generation and analysis |
+| **Claude Opus / Sonnet** | Cloud (Anthropic) | Deep reasoning, coding |
 | **LLaVA 13B** | Local (Ollama) | Vision — image and screenshot analysis |
 
 Switch models at runtime with `/model switch mistral` or `/model switch nemotron`.
@@ -119,11 +125,12 @@ Accessible from anywhere via Telegram. Runs as a systemd service on the server.
 
 The gateway (`gateway.py`) runs on port 30000 and is the single entry point for all remote clients.
 
-- **Model routing**: Routes requests to local llama.cpp or cloud APIs based on model name
-- **Tool execution**: Runs server-side tool loops for cloud models (Mistral/Codestral)
+- **Model routing**: Routes requests to local llama.cpp or cloud APIs (Mistral, Codestral, Claude) based on model name
+- **Tool execution**: Runs server-side tool loops for cloud models with automatic tool selection
 - **SSE trace events**: Streams `tool_call`, `tool_result`, and `llm_call` trace events to clients
+- **Structured logging**: Uses Python `logging` module (`maude.gateway` logger) with timestamps and levels
 - **File serving**: Serves shared folder files, PWA assets, and generated images
-- **HTTPS**: Self-signed certs for Tailscale connections
+- **HTTPS**: Self-signed certs for Tailscale connections, HTTP mirror on port 30080
 
 ## Tools
 
@@ -214,23 +221,58 @@ This starts the inference server, gateway, and TUI. Use `/model switch mistral` 
 | `MAUDE_VISION_MODEL` | `llava:13b` | Vision model name |
 | `MISTRAL_API_KEY` | — | Mistral API key (for cloud routing) |
 | `CODESTRAL_API_KEY` | — | Codestral API key (for cloud routing) |
+| `CLAUDE_API_KEY` | — | Anthropic API key (for Claude Opus/Sonnet) |
 
 ## Project Structure
 
 ```
 terminal-llm/
 ├── maude                  # Main launcher
-├── maude_core.py          # Shared tools, caching, rate limiting
+├── tool_registry.py       # @register_tool decorator, prefix handlers, dispatch lookup
+├── maude_core/            # Core tool package (split from monolith)
+│   ├── __init__.py        # Backward-compatible facade — re-exports all public names
+│   ├── config.py          # Environment-based configuration constants
+│   ├── cache.py           # TTL-based tool result cache (web 30min, vision 5min)
+│   ├── log.py             # Logging bridge — callback + Python logging (maude.core)
+│   ├── paths.py           # Working directory management and path resolution
+│   ├── chat_sync.py       # File-based chat log for cross-client message sync
+│   ├── memory_utils.py    # Persistent conversation memory (lazy-loaded)
+│   ├── tool_defs.py       # TOOLS list — 100+ JSON schema definitions
+│   ├── tool_groups.py     # Keyword-based dynamic tool selection
+│   ├── fast_dispatch.py   # Regex-based fast tool dispatch (bypass LLM)
+│   ├── execute.py         # Registry-based dispatch with pre-flight, rate limits, caching
+│   ├── rate_limits.py     # Per-turn rate limit counters
+│   ├── tools_file.py      # 9 file/shell tools (read, write, edit, search, run_command)
+│   ├── tools_web.py       # 4 web/vision tools (browse, search, web_view, view_image)
+│   ├── tools_ai.py        # AI delegation (ask_frontier, send_to_claude)
+│   ├── tools_shared.py    # Shared folder / file transfer tools
+│   ├── tools_media.py     # Image generation (Flux via ComfyUI)
+│   ├── tools_schedule.py  # Cron-based task scheduling
+│   ├── tools_google.py    # 30 Google Workspace tools (lazy-import)
+│   ├── tools_substack.py  # 7 Substack newsletter tools (lazy-import)
+│   └── tools_collab.py    # 6 collaboration/mesh tools (lazy-import)
 ├── chat_local.py          # Server TUI (Textual)
-├── gateway.py             # Gateway — model routing, tool loops, SSE, file serving
+├── gateway.py             # Gateway — model routing, tool loops, SSE, structured logging
 ├── auto_router.py         # Message classification and subagent routing
 ├── execution.py           # Subagent execution
 ├── frontier.py            # Cloud AI escalation
 ├── memory.py              # Persistent conversation memory
 ├── scheduler.py           # Cron-based task scheduling
-├── google_tools.py        # Google Workspace integration
+├── google_tools.py        # Google Workspace API implementations
+├── substack_tools.py      # Substack API implementations
+├── collab_tools.py        # Collaboration tool implementations
+├── health.py              # Health checker (services, deps, tools)
+├── tool_catalog.py        # Tool catalog API for gateway endpoints
 ├── voice.py               # Voice mode (Whisper)
 ├── run_telegram.py        # Telegram bot
+├── tests/                 # Test suite (86+ tests)
+│   ├── test_tool_execution.py    # Unit tests for core tools
+│   ├── test_gateway_api.py       # API endpoint tests (mock-based)
+│   ├── test_gateway_http.py      # Integration tests (real HTTP server)
+│   ├── test_health.py            # Health checker tests
+│   ├── test_tool_catalog.py      # Tool catalog tests
+│   ├── test_collab.py            # Collaboration system tests
+│   └── test_client_router.py     # Client-side routing tests
 ├── maude-client/          # Mac/PC CLI client (pip-installable)
 │   ├── maude_client/
 │   │   ├── cli.py         # Client main loop, spinner, typewriter, SSE trace
