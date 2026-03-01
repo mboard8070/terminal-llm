@@ -391,12 +391,20 @@ class ToolRouter:
         except Exception as e:
             return f"Error executing {name}: {e}"
 
+    # Messages mentioning other devices should skip fast dispatch
+    _CROSS_MACHINE_RE = re.compile(
+        r'\b(?:windows|mac|pc|laptop|macbook|mattwell|other machine|other device|on the)\b', re.I
+    )
+
     def fast_dispatch(self, message: str):
         """Try to match message to a direct tool call.
 
         Returns (tool_name, args, result) or None.
         """
         msg = message.strip()
+        # Skip fast dispatch if message targets another device
+        if self._CROSS_MACHINE_RE.search(msg):
+            return None
         for pattern, tool_name, arg_builder in _FAST_PATTERNS:
             if tool_name is None:
                 continue
