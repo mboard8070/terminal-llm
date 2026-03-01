@@ -2494,6 +2494,15 @@ def execute_tool(name: str, arguments: dict) -> str:
     """Execute a tool and return the result."""
     global vision_call_count, web_call_count, claude_call_count
 
+    # Pre-flight readiness check
+    try:
+        from health import check_tool_ready
+        ready, reason = check_tool_ready(name)
+        if not ready:
+            return f"Tool '{name}' unavailable: {reason}. Tell the user this tool isn't currently available and suggest alternatives."
+    except ImportError:
+        pass  # health module not available — skip check
+
     # Rate limiting for Claude calls - prevent loops
     if name == "send_to_claude":
         claude_call_count += 1
