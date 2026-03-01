@@ -1,4 +1,4 @@
-import { FC } from "react";
+import { FC, useState } from "react";
 import type { Conversation } from "../hooks/useConversations";
 
 interface Props {
@@ -44,6 +44,7 @@ export const ConversationDrawer: FC<Props> = ({
   onNewChat,
 }) => {
   const groups = groupByDate(conversations);
+  const [editing, setEditing] = useState(false);
 
   return (
     <>
@@ -57,18 +58,27 @@ export const ConversationDrawer: FC<Props> = ({
       <div
         className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-maude-border bg-maude-surface transition-transform duration-200 ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
-        {/* Drawer header */}
-        <div className="flex items-center justify-between border-b border-maude-border px-4 py-3">
+        {/* Drawer header — safe-top for iOS notch */}
+        <div className="safe-top flex items-center justify-between border-b border-maude-border px-4 py-3">
           <h2 className="text-sm font-semibold text-maude-text">Conversations</h2>
-          <button
-            onClick={() => {
-              onNewChat();
-              onClose();
-            }}
-            className="rounded-lg bg-maude-bg px-3 py-1 text-xs text-maude-accent hover:text-maude-text"
-          >
-            + New Chat
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditing(!editing)}
+              className={`rounded-lg px-3 py-1 text-xs ${editing ? "bg-maude-accent text-white" : "bg-maude-bg text-maude-muted"}`}
+            >
+              {editing ? "Done" : "Edit"}
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false);
+                onNewChat();
+                onClose();
+              }}
+              className="rounded-lg bg-maude-bg px-3 py-1 text-xs text-maude-accent"
+            >
+              + New
+            </button>
+          </div>
         </div>
 
         {/* Conversation list */}
@@ -85,30 +95,34 @@ export const ConversationDrawer: FC<Props> = ({
               {group.items.map((conv) => (
                 <div
                   key={conv.id}
-                  className={`group flex items-center rounded-lg px-2 py-2 text-sm transition-colors ${
+                  className={`flex items-center rounded-lg px-2 py-2 text-sm transition-colors ${
                     conv.id === activeId
                       ? "bg-maude-bg text-maude-accent"
                       : "text-maude-text hover:bg-maude-bg"
                   }`}
                 >
+                  {editing && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(conv.id);
+                      }}
+                      className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-xs text-white"
+                      aria-label="Delete conversation"
+                    >
+                      &minus;
+                    </button>
+                  )}
                   <button
                     className="min-w-0 flex-1 truncate text-left"
                     onClick={() => {
-                      onSelect(conv.id);
-                      onClose();
+                      if (!editing) {
+                        onSelect(conv.id);
+                        onClose();
+                      }
                     }}
                   >
                     {conv.title}
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(conv.id);
-                    }}
-                    className="ml-1 shrink-0 rounded px-1 text-maude-muted opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
-                    aria-label="Delete conversation"
-                  >
-                    &times;
                   </button>
                 </div>
               ))}

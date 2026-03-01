@@ -27,7 +27,7 @@ from maude_client.config import (
     SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
     CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
 )
-from maude_client.client_tools import TOOLS, execute_tool, get_tools_for_message, fast_dispatch
+from maude_client.tool_router import ToolRouter
 from maude_client.heartbeat import start_heartbeat, stop_heartbeat
 from maude_client.shared_sync import start_sync, stop_sync, sync_now
 
@@ -379,6 +379,9 @@ Voice Commands:
 
     return False
 
+# Tool router (initialized in main())
+router: ToolRouter = None
+
 # API endpoint
 API_URL = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
 
@@ -416,6 +419,17 @@ SHARED FOLDER:
 SERVER TOOLS (operate on Spark):
 - run_server_command: Run commands on server
 - send_to_server_maude: Message the server MAUDE instance (for tasks that need the server-side MAUDE specifically)
+
+WEB TOOLS:
+- web_search: Search the web using DuckDuckGo. Use for current events, news, docs, prices, reviews, or any question needing up-to-date info.
+- web_browse: Fetch and read content from a web URL.
+You CAN and SHOULD search the web when the user asks about anything requiring current information.
+
+COLLABORATION TOOLS:
+- mesh_status: Show who's online across all devices in the MAUDE mesh.
+- dispatch_task: Send a task to another device (e.g. run a command on Spark).
+- create_project, list_projects: Manage shared projects.
+- list_tasks: Check dispatched task status.
 
 Note: Google Workspace tools (Gmail, Drive, Sheets, Calendar, etc.) are handled server-side by the gateway's tool loop. Just ask naturally and the gateway will call the right tools.
 
@@ -456,7 +470,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     messages.append({"role": "user", "content": user_message})
 
     # Fast dispatch — try direct tool call first
-    result = fast_dispatch(user_message)
+    result = router.fast_dispatch(user_message)
     if result:
         tool_name, args, tool_result = result
         yield f"\n[{tool_name}]\n{tool_result}\n"
@@ -467,7 +481,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     payload = {
         "model": current_model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": get_tools_for_message(user_message),
+        "tools": router.get_tools_for_message(user_message),
         "tool_choice": "auto",
         "temperature": TEMPERATURE,
         "max_tokens": 4096,
@@ -567,7 +581,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
                 yield f"\n[Tool: {func_name}]\n"
 
-                result = execute_tool(func_name, args)
+                result = router.execute(func_name, args)
 
                 # Truncate long results
                 if len(result) > 3000:
@@ -603,7 +617,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
     payload = {
         "model": current_model,
         "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": get_tools_for_message(""),
+        "tools": router.get_tools_for_message(""),
         "tool_choice": "auto",
         "temperature": TEMPERATURE,
         "max_tokens": 4096,
@@ -694,7 +708,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
                     args = {}
 
                 yield f"\n[Tool: {func_name}]\n"
-                result = execute_tool(func_name, args)
+                result = router.execute(func_name, args)
 
                 if len(result) > 3000:
                     result = result[:3000] + "\n... (truncated)"
@@ -789,6 +803,19 @@ def main():
         print(f"  2. Server is running on spark-e26c:{SERVER_LLM_PORT}")
         print("\nThen restart this client.")
         sys.exit(1)
+
+    # Initialize tool router
+    global router
+    router = ToolRouter()
+    print("Fetching tool catalog...", end=" ", flush=True)
+    router.fetch_catalog()
+    if router.is_online:
+        tool_count = len(router._all_tools)
+        print(f"OK ({tool_count} tools)")
+    else:
+        print("OFFLINE (local tools only)")
+    for warning in router.health_warnings():
+        print(f"  WARNING: {warning}")
 
     # Start heartbeat
     print("Starting heartbeat...", end=" ", flush=True)
