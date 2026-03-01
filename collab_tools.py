@@ -5,6 +5,7 @@ Lets MAUDE manage presence, projects, tasks, and activity through natural langua
 """
 
 import json
+import time
 from collab import get_hub
 
 # ── Tool definitions (OpenAI function-calling format) ────────────
@@ -167,7 +168,19 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
             target_platform=arguments.get("target_platform", ""),
         )
         dest = task.get("target_client_id") or task.get("target_platform") or task.get("target") or "local"
-        return f"Task dispatched: {task['id']} → {dest} (status: {task['status']})"
+        task_id = task["id"]
+
+        # For client-targeted tasks, wait for the result (client polls every 10s)
+        if task.get("status") == "queued":
+            for _ in range(30):  # wait up to 30s
+                time.sleep(1)
+                updated = hub.tasks.get(task_id)
+                if updated and updated.get("status") in ("completed", "failed"):
+                    result = updated.get("result", "(no output)")
+                    return f"Task {updated['status']} on {dest}:\n{result}"
+            return f"Task {task_id} dispatched to {dest} but no result yet (client may be slow). Use list_tasks to check later."
+
+        return f"Task dispatched: {task_id} → {dest} (status: {task['status']})"
 
     elif name == "create_project":
         proj = hub.create_project(
