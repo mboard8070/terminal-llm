@@ -39,6 +39,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse, parse_qs, urljoin
 import http.client
 import time
+import uuid
 
 logger = logging.getLogger("maude.gateway")
 
@@ -359,6 +360,95 @@ def handle_terminal_websocket(handler):
 
 
 # ─────────────────────────────────────────────────────────────────
+# HTTP Terminal Transport (iOS fallback — SSE output + POST input)
+# iOS WKWebView can't do WSS with self-signed certs, so we provide
+# an HTTP-based terminal transport using SSE for output streaming
+# and POST requests for input/resize.
+# ─────────────────────────────────────────────────────────────────
+
+_http_terminal_sessions = {}  # session_id -> {master_fd, pid, created}
+
+
+def _create_terminal_session():
+    """Create a PTY session for HTTP-based terminal access. Returns session_id."""
+    session_id = uuid.uuid4().hex[:12]
+    master_fd, slave_fd = pty.openpty()
+    pid = os.fork()
+    if pid == 0:
+        os.close(master_fd)
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+        os.close(slave_fd)
+        os.execvp("/bin/bash", ["/bin/bash", "--login"])
+        sys.exit(0)
+    os.close(slave_fd)
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    _http_terminal_sessions[session_id] = {
+        "master_fd": master_fd,
+        "pid": pid,
+        "created": time.time(),
+    }
+    logger.info("HTTP terminal session created: %s (pid=%d)", session_id, pid)
+    return session_id
+
+
+def _cleanup_terminal_session(session_id):
+    """Clean up a terminal session."""
+    session = _http_terminal_sessions.pop(session_id, None)
+    if session:
+        try:
+            os.close(session["master_fd"])
+        except Exception:
+            pass
+        try:
+            os.kill(session["pid"], signal.SIGTERM)
+            os.waitpid(session["pid"], 0)
+        except Exception:
+            pass
+        logger.info("HTTP terminal session cleaned up: %s", session_id)
+
+
+def handle_terminal_stream(handler, session_id):
+    """Stream PTY output as SSE events with base64-encoded data."""
+    session = _http_terminal_sessions.get(session_id)
+    if not session:
+        handler.send_response(404)
+        handler.end_headers()
+        handler.wfile.write(b'{"error":"session not found"}')
+        return
+
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "keep-alive")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+
+    master_fd = session["master_fd"]
+    try:
+        while session_id in _http_terminal_sessions:
+            r, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in r:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                b64 = base64.b64encode(data).decode()
+                handler.wfile.write(f"data: {b64}\n\n".encode())
+                handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+    finally:
+        _cleanup_terminal_session(session_id)
+
+
+# ─────────────────────────────────────────────────────────────────
 # PersonaPlex WebSocket Proxy
 # ─────────────────────────────────────────────────────────────────
 
@@ -547,6 +637,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"error": "WebSocket upgrade required"}, 400)
             return
 
+        # HTTP terminal SSE stream (iOS fallback)
+        if parsed.path == "/api/terminal/stream":
+            sid = query.get("sid", [None])[0]
+            if sid:
+                handle_terminal_stream(self, sid)
+            else:
+                self._json_response({"error": "missing sid"}, 400)
+            return
+
         if parsed.path == "/list":
             req_path = query.get("path", [None])[0]
             if req_path:
@@ -599,6 +698,43 @@ class GatewayHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(self.path)
         parsed = urlparse(path)
+
+        # HTTP terminal endpoints (iOS fallback)
+        if parsed.path == "/api/terminal/create":
+            sid = _create_terminal_session()
+            self._json_response({"sid": sid})
+            return
+        if parsed.path == "/api/terminal/input":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+            sid = body.get("sid", "")
+            data = body.get("data", "")
+            session = _http_terminal_sessions.get(sid)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            try:
+                os.write(session["master_fd"], data.encode() if isinstance(data, str) else data)
+            except OSError:
+                _cleanup_terminal_session(sid)
+                self._json_response({"error": "session closed"}, 410)
+                return
+            self._json_response({"ok": True})
+            return
+        if parsed.path == "/api/terminal/resize":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+            sid = body.get("sid", "")
+            session = _http_terminal_sessions.get(sid)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            cols = body.get("cols", 80)
+            rows = body.get("rows", 24)
+            winsize = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(session["master_fd"], termios.TIOCSWINSZ, winsize)
+            self._json_response({"ok": True})
+            return
 
         if parsed.path == "/api/tools/execute":
             self._execute_tool_api()
@@ -764,6 +900,52 @@ class GatewayHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _close_sse_with_error(self, error_msg: str):
+        """Send an error trace and close the SSE stream cleanly."""
+        try:
+            self._send_trace_sse("error", {"message": error_msg})
+            # Send [DONE] and close chunked encoding
+            done_line = b"data: [DONE]\n\n"
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _compact_tool_result(name: str, result: str) -> str:
+        """Truncate tool results to prevent context bloat across loop iterations.
+
+        The full result is already sent to the client via SSE trace — this only
+        affects what the LLM sees when planning its next step."""
+        if not result:
+            return result
+        n = len(result)
+        # write_file / edit_file results are already short
+        if name in ("write_file", "edit_file", "change_directory", "get_working_directory"):
+            return result
+        # read_file: keep first 80 + last 20 lines, drop middle
+        if name == "read_file" and n > 3000:
+            lines = result.split("\n")
+            if len(lines) > 100:
+                head = "\n".join(lines[:80])
+                tail = "\n".join(lines[-20:])
+                return f"{head}\n\n... ({len(lines) - 100} lines omitted) ...\n\n{tail}"
+            return result[:3000] + f"\n... (truncated, {n} chars total)"
+        # run_command: keep first 2000 + last 800
+        if name == "run_command" and n > 3000:
+            return result[:2000] + f"\n\n... ({n - 2800} chars omitted) ...\n\n" + result[-800:]
+        # list_directory: keep first 60 entries
+        if name == "list_directory" and n > 2000:
+            lines = result.split("\n")
+            if len(lines) > 65:
+                return "\n".join(lines[:65]) + f"\n... ({len(lines) - 65} more entries)"
+            return result[:2000] + "\n... (truncated)"
+        # Everything else: hard cap at 4000
+        if n > 4000:
+            return result[:3500] + f"\n... (truncated, {n} chars total)"
+        return result
+
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
         """Send content as word-boundary SSE chunks for typewriter effect.
         Headers must already be sent."""
@@ -843,14 +1025,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
-            "If the user has attached an image, use the view_image tool to analyze it before responding. "
+            "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
+            "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
+            "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
+            "After starting a server: curl it and confirm it responds. After creating files: check they exist. "
+            "3. FIX errors yourself. If a build fails, read the error, fix the code, and rebuild. "
+            "Do NOT just report the error and stop. "
+            "4. NEVER give tutorials or step-by-step instructions for things you can do yourself. "
+            "If the user asks for a URL, start the server and give them the working URL. "
+            "5. NEVER guess system info. Use run_command to check IPs, ports, processes, etc. "
+            "6. When serving web apps: bind to 0.0.0.0, check which ports are free first "
+            "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
+            "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
+            "If building a site, it should be built, running, and accessible before you respond. "
+            "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
             "The image path is provided in the message. Do NOT tell the user to upload it — it is "
             "already here. If the user asks to 'upload to the server' or 'save to the server', "
             "the file is already on the server in the shared/ folder. You can move or copy it "
             "elsewhere if they want, but acknowledge it is already present. "
-            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "\n\nYou also have full access to Google Workspace: Gmail (read, send), Google Drive "
             "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
             "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
             "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
@@ -859,7 +1054,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
-            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
@@ -878,7 +1073,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         api_path = parsed_url.path.rstrip("/") + "/v1/chat/completions"
 
         reset_rate_limits()
-        max_iterations = 15
+        max_iterations = 40
         recent_tool_calls = []
         is_streaming = req.get("stream", False)
         sse_started = False
@@ -888,29 +1083,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._start_sse_headers()
             sse_started = True
 
-        # Create connection once, reuse across all tool-loop iterations
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=120)
-
         for iteration in range(max_iterations):
+            # On last iteration, drop tools to force a summary response
+            is_final = iteration == max_iterations - 1
+            if is_final:
+                messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
             # Build non-streaming request for tool loop
             loop_req = {
                 "model": resolved_name,
                 "messages": messages,
-                "tools": active_tools,
-                "tool_choice": "auto",
                 "stream": False,
                 "max_tokens": req.get("max_tokens", 4096),
                 "temperature": req.get("temperature", 0.7),
             }
+            if not is_final:
+                loop_req["tools"] = active_tools
+                loop_req["tool_choice"] = "auto"
 
             body = json.dumps(loop_req).encode()
             llm_start = time.time()
 
             try:
+                # Fresh connection per iteration — avoids stale sockets after long tool calls
+                if use_ssl:
+                    ctx = ssl.create_default_context()
+                    conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
+                else:
+                    conn = http.client.HTTPConnection(host, port, timeout=300)
+
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {api_key}",
@@ -920,15 +1121,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 conn.request("POST", api_path, body=body, headers=headers)
                 resp = conn.getresponse()
                 resp_body = resp.read()
+                conn.close()
 
                 if resp.status != 200:
                     try:
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
-                    if not sse_started:
+                    if sse_started:
+                        self._close_sse_with_error(f"LLM error: {resp.status}")
+                    else:
                         self._json_response(err, resp.status)
-                    conn.close()
                     return
 
                 result = json.loads(resp_body)
@@ -937,14 +1140,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 finish_reason = choice.get("finish_reason", "")
 
             except ConnectionRefusedError:
-                if not sse_started:
-                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
-                conn.close()
+                err_msg = f"Provider {route['provider']} connection refused"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
-                if not sse_started:
-                    self._json_response({"error": f"Tool loop error: {e}"}, 502)
-                conn.close()
+                err_msg = f"Tool loop error: {e}"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 502)
                 return
 
             # Emit LLM call trace
@@ -992,7 +1199,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         recent_tool_calls.append(call_sig)
                         logger.info("tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
-                        tool_result = execute_tool(func_name, func_args)
+
+                        # Run tool in thread so we can send keepalive pings
+                        import threading
+                        tool_result_box = [None]
+                        def _run_tool():
+                            tool_result_box[0] = execute_tool(func_name, func_args)
+                        t = threading.Thread(target=_run_tool)
+                        t.start()
+                        while t.is_alive():
+                            t.join(timeout=15)
+                            if t.is_alive() and sse_started:
+                                elapsed_so_far = time.time() - tool_start
+                                self._send_trace_sse("keepalive", {
+                                    "name": func_name,
+                                    "elapsed": round(elapsed_so_far, 1),
+                                })
+                        tool_result = tool_result_box[0]
                         tool_elapsed = time.time() - tool_start
 
                         # Emit tool_result trace
@@ -1006,11 +1229,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
                                 "elapsed": round(tool_elapsed, 2),
                             })
 
-                    # Add tool result to messages
+                    # Add compacted tool result to messages (full result already sent via SSE trace)
                     messages.append({
                         "role": "tool",
                         "name": func_name,
-                        "content": tool_result or "",
+                        "content": self._compact_tool_result(func_name, tool_result or ""),
                         "tool_call_id": tc["id"],
                     })
 
@@ -1042,8 +1265,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             conn.close()
             return
 
-        # Max iterations reached
-        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        # Max iterations reached (shouldn't normally happen — last iteration drops tools)
+        fallback = "I've completed as many steps as I can in one go. Ask me to continue if there's more to do."
         if not is_streaming:
             self._json_response({
                 "id": f"chatcmpl-tool-{int(time.time())}",
@@ -1184,14 +1407,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
-            "If the user has attached an image, use the view_image tool to analyze it before responding. "
+            "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
+            "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
+            "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
+            "After starting a server: curl it and confirm it responds. After creating files: check they exist. "
+            "3. FIX errors yourself. If a build fails, read the error, fix the code, and rebuild. "
+            "Do NOT just report the error and stop. "
+            "4. NEVER give tutorials or step-by-step instructions for things you can do yourself. "
+            "If the user asks for a URL, start the server and give them the working URL. "
+            "5. NEVER guess system info. Use run_command to check IPs, ports, processes, etc. "
+            "6. When serving web apps: bind to 0.0.0.0, check which ports are free first "
+            "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
+            "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
+            "If building a site, it should be built, running, and accessible before you respond. "
+            "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
             "The image path is provided in the message. Do NOT tell the user to upload it — it is "
             "already here. If the user asks to 'upload to the server' or 'save to the server', "
             "the file is already on the server in the shared/ folder. You can move or copy it "
             "elsewhere if they want, but acknowledge it is already present. "
-            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "\n\nYou also have full access to Google Workspace: Gmail (read, send), Google Drive "
             "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
             "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
             "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
@@ -1200,7 +1436,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
-            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
@@ -1224,7 +1460,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         api_path = "/v1/messages"
 
         reset_rate_limits()
-        max_iterations = 15
+        max_iterations = 40
         recent_tool_calls = []
         is_streaming = req.get("stream", False)
         sse_started = False
@@ -1234,27 +1470,33 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._start_sse_headers()
             sse_started = True
 
-        # Create connection once, reuse across all tool-loop iterations
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=120)
-
         for iteration in range(max_iterations):
+            # On last iteration, drop tools to force a summary response
+            is_final = iteration == max_iterations - 1
+            if is_final:
+                claude_messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
             # Build non-streaming request for tool loop
             loop_req = {
                 "model": resolved_name,
                 "max_tokens": req.get("max_tokens", 4096),
                 "system": system_blocks,
                 "messages": claude_messages,
-                "tools": claude_tools,
             }
+            if not is_final:
+                loop_req["tools"] = claude_tools
 
             body = json.dumps(loop_req).encode()
             llm_start = time.time()
 
             try:
+                # Fresh connection per iteration — avoids stale sockets after long tool calls
+                if use_ssl:
+                    ctx = ssl.create_default_context()
+                    conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
+                else:
+                    conn = http.client.HTTPConnection(host, port, timeout=300)
+
                 headers = {
                     "Content-Type": "application/json",
                     "x-api-key": api_key,
@@ -1265,6 +1507,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 conn.request("POST", api_path, body=body, headers=headers)
                 resp = conn.getresponse()
                 resp_body = resp.read()
+                conn.close()
 
                 if resp.status != 200:
                     try:
@@ -1274,27 +1517,26 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     if not sse_started:
                         self._json_response(err, resp.status)
                     else:
-                        # Already streaming — send error as content
-                        chunk_id = f"chatcmpl-claude-{int(time.time())}"
-                        created = int(time.time())
                         err_msg = err.get("error", {}).get("message", str(err)) if isinstance(err.get("error"), dict) else str(err)
-                        self._send_content_chunks(f"[Error: {err_msg}]", resolved_name, chunk_id, created)
-                        self._send_sse_done(resolved_name, chunk_id, created)
-                    conn.close()
+                        self._close_sse_with_error(f"Claude error: {err_msg}")
                     return
 
                 result = json.loads(resp_body)
                 stop_reason = result.get("stop_reason", "")
 
             except ConnectionRefusedError:
-                if not sse_started:
-                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
-                conn.close()
+                err_msg = f"Provider {route['provider']} connection refused"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
-                if not sse_started:
-                    self._json_response({"error": f"Claude tool loop error: {e}"}, 502)
-                conn.close()
+                err_msg = f"Claude tool loop error: {e}"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 502)
                 return
 
             # Emit LLM call trace (include cache stats)
@@ -1365,7 +1607,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         recent_tool_calls.append(call_sig)
                         logger.info("claude tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
-                        tool_result = execute_tool(func_name, func_args)
+
+                        # Run tool in thread so we can send keepalive pings
+                        tool_result_box = [None]
+                        def _run_tool(fn=func_name, fa=func_args):
+                            tool_result_box[0] = execute_tool(fn, fa)
+                        t = threading.Thread(target=_run_tool)
+                        t.start()
+                        while t.is_alive():
+                            t.join(timeout=15)
+                            if t.is_alive() and sse_started:
+                                elapsed_so_far = time.time() - tool_start
+                                self._send_trace_sse("keepalive", {
+                                    "name": func_name,
+                                    "elapsed": round(elapsed_so_far, 1),
+                                })
+                        tool_result = tool_result_box[0]
                         tool_elapsed = time.time() - tool_start
 
                         # Emit tool_result trace
@@ -1382,7 +1639,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": tool_result or "",
+                        "content": self._compact_tool_result(func_name, tool_result or ""),
                     })
 
                 # Add tool results as a user message (Claude API format)
@@ -1422,8 +1679,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             conn.close()
             return
 
-        # Max iterations reached
-        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        # Max iterations reached (shouldn't normally happen — last iteration drops tools)
+        fallback = "I've completed as many steps as I can in one go. Ask me to continue if there's more to do."
         if not is_streaming:
             self._json_response({
                 "id": f"chatcmpl-claude-{int(time.time())}",
