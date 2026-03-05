@@ -1193,7 +1193,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "to display images inline, include the markdown ![description](url) in your response. "
             "For generated/shared images use ![description](/download/filename.png). "
             "For web images use the full URL from the search results."
+            "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
+            "available on EVERY request. Use save_memory PROACTIVELY when the user "
+            "shares personal facts, preferences, names, dates, project details, or "
+            "anything worth remembering across sessions. Do NOT ask permission to save "
+            "— just save it. Use recall_memory when the user references something from "
+            "a previous conversation or when context from past sessions would help. "
+            "Categories: fact, preference, person, task."
         )
+        # Inject device location if provided by mobile app
+        location = req.get("location")
+        if location and isinstance(location, dict):
+            lat = location.get("lat")
+            lng = location.get("lng")
+            if lat is not None and lng is not None:
+                tool_addendum += (
+                    f"\n\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                    f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                    "Use this for location-aware responses — nearby places, weather, directions, etc. "
+                    "You do NOT need to ask the user where they are."
+                )
+
         messages = list(req.get("messages", []))
         for msg in messages:
             if msg.get("role") == "system":
@@ -1624,7 +1644,28 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "to display images inline, include the markdown ![description](url) in your response. "
             "For generated/shared images use ![description](/download/filename.png). "
             "For web images use the full URL from the search results."
+            "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
+            "available on EVERY request. Use save_memory PROACTIVELY when the user "
+            "shares personal facts, preferences, names, dates, project details, or "
+            "anything worth remembering across sessions. Do NOT ask permission to save "
+            "\xe2\x80\x94 just save it. Use recall_memory when the user references something from "
+            "a previous conversation or when context from past sessions would help. "
+            "Categories: fact, preference, person, task."
         )
+
+        # Inject device location if provided by mobile app
+        location = req.get("location")
+        if location and isinstance(location, dict):
+            lat = location.get("lat")
+            lng = location.get("lng")
+            if lat is not None and lng is not None:
+                tool_addendum += (
+                    f"\n\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                    f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                    "Use this for location-aware responses — nearby places, weather, directions, etc. "
+                    "You do NOT need to ask the user where they are."
+                )
+
         system_text += tool_addendum
 
         # Use block format for system prompt with cache_control
@@ -1940,9 +1981,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             if override_body is not None:
                 body = override_body
+                method = "POST"
+                path = "/v1/chat/completions"
             else:
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length) if content_length > 0 else None
+                method = self.command
+                path = self.path
 
             headers = {}
             for key, val in self.headers.items():
@@ -1950,8 +1995,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     headers[key] = val
             if body is not None:
                 headers["Content-Length"] = str(len(body))
+                headers["Content-Type"] = "application/json"
 
-            conn.request(self.command, self.path, body=body, headers=headers)
+            conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
 
             is_streaming = (
