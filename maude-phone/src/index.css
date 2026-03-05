@@ -38,6 +38,19 @@
     --maude-font: "VT323", "Share Tech Mono", monospace;
   }
 
+  /* Modern Terminal: Slate + Indigo */
+  html[data-theme="modern"] {
+    --maude-bg: #111827;
+    --maude-surface: #1e293b;
+    --maude-card: #1e293b;
+    --maude-border: #334155;
+    --maude-text: #f1f5f9;
+    --maude-muted: #94a3b8;
+    --maude-accent: #6366f1;
+    --maude-accent-light: #818cf8;
+    --maude-font: "Inter", sans-serif;
+  }
+
   /* 80s Retro Terminal: Amber */
   html[data-theme="retro-amber"] {
     --maude-bg: #0a0800;
