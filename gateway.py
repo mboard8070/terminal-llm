@@ -381,6 +381,7 @@ _http_terminal_sessions = {}  # session_id -> {master_fd, pid, created}
 # iOS WKWebView can't reliably stream fetch() responses with self-signed certs.
 # Same pattern as terminal: POST to create session, GET EventSource for stream.
 _chat_sessions = {}  # session_id -> {"req": dict, "created": float}
+_device_location = {}  # latest phone GPS: {"lat": float, "lng": float, "accuracy": float, "ts": float}
 
 
 def _create_terminal_session():
@@ -699,6 +700,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/api/conversations/") and parsed.path.endswith("/messages"):
             conv_id = parsed.path.split("/")[3]
             self._get_messages(conv_id)
+        elif parsed.path == "/api/location":
+            if _device_location and time.time() - _device_location.get("ts", 0) < 3600:
+                self._json_response(_device_location)
+            else:
+                self._json_response({"error": "no recent location"}, 404)
+            return
         elif parsed.path == "/health":
             self._serve_health()
         elif parsed.path == "/api/tools":
@@ -837,6 +844,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
         resolved_name, route = get_model_route(model_name)
         logger.debug("route requested=%s resolved=%s", model_name, resolved_name)
 
+
+        # Cache phone location and use as fallback for non-phone clients
+        global _device_location
+        if "location" in req:
+            loc = req["location"]
+            if isinstance(loc, dict) and loc.get("lat") is not None:
+                _device_location = {**loc, "ts": time.time()}
+        elif _device_location and time.time() - _device_location.get("ts", 0) < 3600:
+            # Use cached phone location for CLI/client requests (fresh within 1 hour)
+            req["location"] = _device_location
+
         if not route:
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
             return
@@ -844,7 +862,23 @@ class GatewayHandler(BaseHTTPRequestHandler):
         # Local models → proxy to llama-server
         if route["provider"] == "local":
             req["model"] = resolved_name
+            # Inject device location into system prompt for local models too
+            location = req.pop("location", None)
+            if location and isinstance(location, dict):
+                lat = location.get("lat")
+                lng = location.get("lng")
+                if lat is not None and lng is not None:
+                    loc_ctx = (
+                        f"\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                        f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                        "Use this for location-aware responses."
+                    )
+                    for msg in req.get("messages", []):
+                        if msg.get("role") == "system":
+                            msg["content"] = msg["content"] + loc_ctx
+                            break
             self._proxy_to_llm(override_body=json.dumps(req).encode())
+            return
             return
 
         # Cloud models → forward to provider API
