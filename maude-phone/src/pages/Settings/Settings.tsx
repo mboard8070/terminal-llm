@@ -7,6 +7,7 @@ function getGatewayUrl(): string { return `${window.location.protocol}//${window
 
 const THEMES = [
   { id: "dark", label: "MAUDE Dark", desc: "Default dark theme" },
+  { id: "modern", label: "Modern Terminal", desc: "Clean slate & indigo" },
   { id: "retro-green", label: "80s Green CRT", desc: "Phosphor green terminal" },
   { id: "retro-amber", label: "80s Amber CRT", desc: "Amber phosphor terminal" },
 ];
