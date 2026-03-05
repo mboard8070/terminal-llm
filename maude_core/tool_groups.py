@@ -113,8 +113,21 @@ _TOOL_GROUPS = {
                   "list_projects", "add_to_project", "list_tasks"},
     },
     "github": {
-        "keywords": ["pull request", "pr", "merge", "github", "repo"],
-        "tools": {"github_list_prs", "github_view_pr", "github_merge_pr"},
+        "keywords": ["pull request", "pr ", "prs", "merge", "github", "repo",
+                      "issue", "branch", "commit", "release", "workflow",
+                      "ci/cd", "actions", "notification"],
+        "tools": {
+            "github_list_prs", "github_view_pr", "github_create_pr",
+            "github_merge_pr", "github_close_pr", "github_pr_diff",
+            "github_pr_comments", "github_comment_pr",
+            "github_list_issues", "github_view_issue", "github_create_issue",
+            "github_close_issue", "github_comment_issue",
+            "github_list_repos", "github_view_repo",
+            "github_list_branches", "github_list_commits",
+            "github_list_runs", "github_view_run", "github_rerun",
+            "github_list_releases", "github_create_release",
+            "github_search", "github_notifications",
+        },
     },
     "agents": {
         "keywords": ["research", "analyze", "investigate", "compare", "look into",
