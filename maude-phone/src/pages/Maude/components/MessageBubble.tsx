@@ -1,5 +1,5 @@
 import { FC, useEffect, useRef, useState } from "react";
-import { ChatMessage, TraceInfo } from "../hooks/useChat";
+import { ChatMessage, TraceInfo, ToolStep } from "../hooks/useChat";
 
 function useTypewriter(content: string, active: boolean): string {
   const [pos, setPos] = useState(0);
@@ -38,11 +38,16 @@ interface Props {
 }
 
 function renderMarkdown(text: string): string {
+  // Resolve relative /download/ URLs to absolute gateway URLs
+  const baseUrl = `${window.location.protocol}//${window.location.host}`;
   let html = text
-    // Images: ![alt](url)
+    // Images: ![alt](url) — resolve relative URLs and add error handling + max-height
     .replace(
       /!\[([^\]]*)\]\(([^)]+)\)/g,
-      '<img src="$2" alt="$1" style="max-width:100%; border-radius:8px; margin:8px 0;" loading="lazy" />',
+      (_match: string, alt: string, url: string) => {
+        const resolvedUrl = url.startsWith("/") ? `${baseUrl}${url}` : url;
+        return `<img src="${resolvedUrl}" alt="${alt}" style="max-width:100%; max-height:50vh; border-radius:8px; margin:8px 0; object-fit:contain;" loading="lazy" onerror="this.style.display='none'" />`;
+      },
     )
     // Links: [text](url)
     .replace(
@@ -61,6 +66,144 @@ function renderMarkdown(text: string): string {
     .replace(/\n/g, "<br/>");
   return html;
 }
+
+const TOOL_VERBS: Record<string, string> = {
+  web_search: "searched the web",
+  web_browse: "browsed a page",
+  run_command: "ran a command",
+  read_file: "read a file",
+  write_file: "wrote a file",
+  edit_file: "edited a file",
+  list_directory: "listed a directory",
+  gmail_list: "checked email",
+  gmail_read: "read an email",
+  gmail_send: "sent an email",
+  calendar_list_events: "checked calendar",
+  calendar_create_event: "created an event",
+  drive_list: "browsed Drive",
+  drive_search: "searched Drive",
+  drive_create_doc: "created a doc",
+  contacts_list: "looked up contacts",
+  contacts_search: "searched contacts",
+  youtube_search: "searched YouTube",
+  web_image_search: "searched for images",
+  generate_image: "generated an image",
+  share_file: "shared a file",
+  view_image: "viewed an image",
+  dispatch_task: "dispatched a task",
+  change_directory: "changed directory",
+  get_working_directory: "checked directory",
+};
+
+function buildToolSummary(steps: ToolStep[]): string {
+  // Count each tool, then describe with friendly verbs
+  const counts = new Map<string, number>();
+  for (const s of steps) {
+    counts.set(s.name, (counts.get(s.name) || 0) + 1);
+  }
+  const parts: string[] = [];
+  for (const [name, count] of counts) {
+    const verb = TOOL_VERBS[name] || name.replace(/_/g, " ");
+    if (count > 1) {
+      // Pluralize: "read a file" → "read 3 files", "ran a command" → "ran 2 commands"
+      const plural = verb.replace(/(?:a |an )(\w+)$/, `${count} $1s`);
+      parts.push(plural === verb ? `${verb} x${count}` : plural);
+    } else {
+      parts.push(verb);
+    }
+  }
+  if (parts.length <= 2) return parts.join(" and ");
+  return parts.slice(0, -1).join(", ") + ", and " + parts[parts.length - 1];
+}
+
+const TOOL_ICONS: Record<string, string> = {
+  web_search: "\uD83D\uDD0D",
+  web_browse: "\uD83C\uDF10",
+  run_command: "\u26A1",
+  read_file: "\uD83D\uDCC4",
+  write_file: "\u270F\uFE0F",
+  list_directory: "\uD83D\uDCC2",
+  gmail_list: "\uD83D\uDCE7",
+  gmail_read: "\uD83D\uDCE7",
+  gmail_send: "\uD83D\uDCE8",
+  calendar_list_events: "\uD83D\uDCC5",
+  calendar_create_event: "\uD83D\uDCC5",
+  drive_list: "\uD83D\uDCBE",
+  drive_search: "\uD83D\uDCBE",
+  drive_create_doc: "\uD83D\uDCC4",
+  contacts_list: "\uD83D\uDC64",
+  contacts_search: "\uD83D\uDC64",
+  youtube_search: "\u25B6\uFE0F",
+  web_image_search: "\uD83D\uDDBC\uFE0F",
+  generate_image: "\uD83C\uDFA8",
+  share_file: "\uD83D\uDCE4",
+  view_image: "\uD83D\uDC41\uFE0F",
+};
+
+const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: boolean }> = ({ steps, streaming, contentStarted }) => {
+  if (!steps.length) return null;
+
+  const anyRunning = steps.some((s) => s.status === "running");
+
+  return (
+    <div className="mb-2 space-y-1">
+      {steps.map((step, i) => {
+        const icon = TOOL_ICONS[step.name] || "\u2699\uFE0F";
+        const isRunning = step.status === "running";
+        const isError = step.status === "error";
+        const borderColor = isRunning ? "border-cyan-400/40" : isError ? "border-red-400/40" : "border-cyan-500/20";
+
+        return (
+          <div
+            key={`${step.name}-${i}`}
+            className={`border-l-2 ${borderColor} pl-2.5 py-0.5 transition-all duration-300`}
+            style={{ animation: streaming ? "fadeSlideIn 0.3s ease-out" : "none" }}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px]">{icon}</span>
+              <span className="font-mono text-[11px] font-semibold text-cyan-400">{step.name}</span>
+              {isRunning && (
+                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
+              )}
+              {step.elapsed !== undefined && (
+                <span className="ml-auto font-mono text-[10px] text-maude-muted">{step.elapsed.toFixed(1)}s</span>
+              )}
+            </div>
+            {step.args && (
+              <div className="truncate font-mono text-[10px] leading-tight text-maude-muted">{step.args}</div>
+            )}
+            {step.result && (
+              <div className={`truncate font-mono text-[10px] leading-tight ${isError ? "text-red-400" : "text-green-400/80"}`}>
+                {isError ? "\u2717 " : "\u2713 "}{step.result}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {streaming && !anyRunning && !contentStarted && (
+        <div className="flex items-center gap-1.5 border-l-2 border-cyan-400/20 py-1 pl-2.5"
+             style={{ animation: "fadeSlideIn 0.3s ease-out" }}>
+          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-cyan-400/50" style={{ animationDelay: "0ms" }} />
+          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-cyan-400/50" style={{ animationDelay: "150ms" }} />
+          <span className="inline-block h-1 w-1 animate-bounce rounded-full bg-cyan-400/50" style={{ animationDelay: "300ms" }} />
+          <span className="animate-pulse text-[10px] text-cyan-400/50">thinking</span>
+        </div>
+      )}
+      {!streaming && steps.length > 0 && (
+        <div className="mt-1 border-l-2 border-green-400/30 py-0.5 pl-2.5">
+          <span className="text-[10px] text-green-400/70">
+            {"\u2713 "}
+            {buildToolSummary(steps)}
+            {(() => {
+              const total = steps.reduce((sum, s) => sum + (s.elapsed || 0), 0);
+              return total > 0 ? ` \u2014 ${total.toFixed(1)}s` : "";
+            })()}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const TraceBadge: FC<{ trace: TraceInfo }> = ({ trace }) => {
   const totalInput = trace.promptTokens + trace.cacheReadTokens + trace.cacheCreateTokens;
@@ -99,6 +242,9 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-sonnet-4-20250514": "Claude Sonnet",
   "mistral-large-latest": "Mistral Large",
   "codestral-latest": "Codestral",
+  "devstral-2512": "Devstral",
+  "devstral-small-latest": "Devstral Small",
+  "devstral-medium-latest": "Devstral Medium",
   "nemotron": "Nemotron",
   "llava": "LLaVA",
 };
@@ -106,6 +252,8 @@ const MODEL_LABELS: Record<string, string> = {
 export const MessageBubble: FC<Props> = ({ message, animate }) => {
   const isUser = message.role === "user";
   const displayedContent = useTypewriter(message.content, !!animate);
+  const hasToolSteps = !isUser && message.toolSteps && message.toolSteps.length > 0;
+  const showDots = !message.content && !isUser && !hasToolSteps;
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
@@ -121,9 +269,12 @@ export const MessageBubble: FC<Props> = ({ message, animate }) => {
             loading="lazy"
           />
         )}
-        <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayedContent) }} />
+        {hasToolSteps && <ToolActivity steps={message.toolSteps!} streaming={!!animate} contentStarted={!!message.content} />}
+        {displayedContent && (
+          <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayedContent) }} />
+        )}
         {!isUser && message.trace && <TraceBadge trace={message.trace} />}
-        {!message.content && !isUser && (
+        {showDots && (
           <div className="flex gap-1">
             <span className="h-2 w-2 animate-bounce rounded-full bg-maude-muted" style={{ animationDelay: "0ms" }} />
             <span className="h-2 w-2 animate-bounce rounded-full bg-maude-muted" style={{ animationDelay: "150ms" }} />

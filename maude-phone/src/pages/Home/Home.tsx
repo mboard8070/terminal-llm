@@ -66,9 +66,9 @@ export const Home: FC = () => {
 
       {/* Status */}
       <div className="mb-4 flex items-center justify-center gap-3 text-xs">
-        <span className={`flex items-center gap-1 ${health?.status === "ok" ? "text-green-400" : "text-red-400"}`}>
-          <span className={`inline-block h-2 w-2 rounded-full ${health?.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
-          Spark {health?.status === "ok" ? "Connected" : "Offline"}
+        <span className={`flex items-center gap-1 ${health?.status ? "text-green-400" : "text-red-400"}`}>
+          <span className={`inline-block h-2 w-2 rounded-full ${health?.status ? "bg-green-400" : "bg-red-400"}`} />
+          Spark {health?.status ? "Connected" : "Offline"}
         </span>
         <span className="text-maude-muted">|</span>
         <span className="text-maude-muted">Tailscale Active</span>

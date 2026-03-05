@@ -154,6 +154,39 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         cost_per_1k_input=0.0003,
         cost_per_1k_output=0.0009
     ),
+    "devstral": ProviderConfig(
+        name="Devstral 2 (123B)",
+        provider=Provider.MISTRAL,
+        api_key_env="MISTRAL_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        default_model="devstral-2512",
+        supports_vision=False,
+        supports_tools=True,
+        cost_per_1k_input=0.0004,
+        cost_per_1k_output=0.002
+    ),
+    "devstral-small": ProviderConfig(
+        name="Devstral Small",
+        provider=Provider.MISTRAL,
+        api_key_env="MISTRAL_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        default_model="devstral-small-latest",
+        supports_vision=False,
+        supports_tools=True,
+        cost_per_1k_input=0.0001,
+        cost_per_1k_output=0.0003
+    ),
+    "devstral-medium": ProviderConfig(
+        name="Devstral Medium",
+        provider=Provider.MISTRAL,
+        api_key_env="MISTRAL_API_KEY",
+        base_url="https://api.mistral.ai/v1",
+        default_model="devstral-medium-latest",
+        supports_vision=False,
+        supports_tools=True,
+        cost_per_1k_input=0.0002,
+        cost_per_1k_output=0.001
+    ),
 }
 
 

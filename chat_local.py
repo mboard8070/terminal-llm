@@ -9,6 +9,10 @@ import asyncio
 import threading
 from dotenv import load_dotenv
 load_dotenv()
+# Also load variables.env (API keys used by gateway and subagents)
+_vars_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), "variables.env")
+if os.path.exists(_vars_env):
+    load_dotenv(_vars_env, override=False)
 
 import time
 import json
@@ -173,9 +177,10 @@ NUM_CTX = maude_core.NUM_CTX
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
 
 def create_client():
-    """Create local API client."""
+    """Create API client, routing cloud models through gateway."""
+    base_url = GATEWAY_URL if MODEL in _CLOUD_MODELS else LOCAL_URL
     return OpenAI(
-        base_url=LOCAL_URL,
+        base_url=base_url,
         api_key="not-needed"
     )
 
@@ -268,51 +273,154 @@ def _escalate_to_frontier(user_question: str) -> str:
         return "I wasn't able to handle that locally. Could you give me more detail so I can try a different approach?"
 
 
+def _compact_tool_result(name: str, result: str) -> str:
+    """Truncate tool results to prevent context bloat across loop iterations."""
+    if not result:
+        return result
+    n = len(result)
+    if name in ("write_file", "edit_file", "change_directory", "get_working_directory"):
+        return result
+    if name == "read_file" and n > 3000:
+        lines = result.split("\n")
+        if len(lines) > 100:
+            head = "\n".join(lines[:80])
+            tail = "\n".join(lines[-20:])
+            return f"{head}\n\n... ({len(lines) - 100} lines omitted) ...\n\n{tail}"
+        return result[:3000] + f"\n... (truncated, {n} chars total)"
+    if name == "run_command" and n > 3000:
+        return result[:2000] + f"\n\n... ({n - 2800} chars omitted) ...\n\n" + result[-800:]
+    if name == "list_directory" and n > 2000:
+        lines = result.split("\n")
+        if len(lines) > 65:
+            return "\n".join(lines[:65]) + f"\n... ({len(lines) - 65} more entries)"
+        return result[:2000] + "\n... (truncated)"
+    if n > 4000:
+        return result[:3500] + f"\n... (truncated, {n} chars total)"
+    return result
+
+
 def chat(client, messages: list):
     """Send chat request to local LLM with tool support."""
     global show_thinking
 
-    max_tool_iterations = 15
+    max_tool_iterations = 40
     tool_iteration = 0
     recent_tool_calls = []
     consecutive_duplicates = 0
     reset_rate_limits()  # Reset per-turn limits in maude_core
 
-    # Cloud models: gateway handles tools, just send a plain request
+    # Cloud models: gateway handles tools, stream with trace support
     if MODEL in _CLOUD_MODELS:
         try:
             start_time = time.time()
-            # Strip any tool_calls/tool messages from history (local-only)
             clean_msgs = [m for m in messages if "tool_calls" not in m and m.get("role") != "tool"]
-            # Stream for TUI typewriter, non-stream for headless
             use_stream = _app and hasattr(_app, 'stream_token')
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=clean_msgs,
-                temperature=0.2,
-                max_tokens=4096,
-                timeout=300,
-                stream=use_stream,
-            )
+
             if use_stream:
+                # Raw SSE stream — captures both tool traces and content
+                import httpx
+                base_url = client.base_url if hasattr(client, 'base_url') else GATEWAY_URL
+                url = f"{str(base_url).rstrip('/')}/chat/completions"
+                payload = {
+                    "model": MODEL,
+                    "messages": clean_msgs,
+                    "temperature": 0.2,
+                    "max_tokens": 4096,
+                    "stream": True,
+                }
                 full_content = ""
                 token_count = 0
                 prompt_tokens = 0
                 first = True
-                for chunk in response:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and delta.content:
-                        _app.stream_token(delta.content, is_first=first, prefix="MAUDE: ")
-                        full_content += delta.content
-                        first = False
-                    # Some providers send usage in the final chunk
-                    if hasattr(chunk, 'usage') and chunk.usage:
-                        token_count = chunk.usage.completion_tokens or 0
-                        prompt_tokens = chunk.usage.prompt_tokens or 0
+
+                with httpx.Client(timeout=300) as http:
+                    with http.stream("POST", url, json=payload, headers={"Authorization": "Bearer not-needed"}) as resp:
+                        if resp.status_code >= 400:
+                            resp.read()
+                            raise Exception(f"Gateway returned {resp.status_code}: {resp.text[:200]}")
+                        buf = ""
+                        for text_chunk in resp.iter_text():
+                            buf += text_chunk
+                            while "\n" in buf:
+                                line, buf = buf.split("\n", 1)
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                # Tool trace comments from gateway
+                                if line.startswith(": trace "):
+                                    try:
+                                        trace = json.loads(line[8:])
+                                        ttype = trace.get("type", "")
+                                        if ttype == "tool_call":
+                                            tname = trace.get("name", "?")
+                                            targs = trace.get("args", "")
+                                            # Try to extract the most useful arg value
+                                            arg_hint = ""
+                                            try:
+                                                parsed = json.loads(targs) if targs else {}
+                                                if isinstance(parsed, dict):
+                                                    for k in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
+                                                        if k in parsed:
+                                                            arg_hint = str(parsed[k])
+                                                            if len(arg_hint) > 55:
+                                                                arg_hint = arg_hint[:55] + "…"
+                                                            break
+                                            except (json.JSONDecodeError, TypeError):
+                                                if targs and targs != "{}" and len(targs) <= 60:
+                                                    arg_hint = targs
+                                            console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tname}[/bold white]")
+                                            if arg_hint:
+                                                console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+                                        elif ttype == "tool_result":
+                                            tname = trace.get("name", "")
+                                            preview = trace.get("preview", "")
+                                            elapsed = trace.get("elapsed", 0)
+                                            status_color = "green" if not preview.startswith("Error") else "red"
+                                            console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]")
+                                        elif ttype == "llm_call":
+                                            prompt_tokens += trace.get("prompt_tokens", 0)
+                                            token_count += trace.get("completion_tokens", 0)
+                                        elif ttype == "error":
+                                            err_msg = trace.get("message", "unknown error")
+                                            console.print(f"[red]  ✗ {err_msg}[/red]")
+                                    except (json.JSONDecodeError, KeyError):
+                                        pass
+                                    continue
+                                # Normal SSE data lines
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    if data_str.strip() == "[DONE]":
+                                        continue
+                                    try:
+                                        chunk = json.loads(data_str)
+                                        choices = chunk.get("choices", [])
+                                        if choices:
+                                            delta = choices[0].get("delta", {})
+                                            content = delta.get("content", "")
+                                            if content:
+                                                _app.stream_token(content, is_first=first, prefix="MAUDE: ")
+                                                full_content += content
+                                                first = False
+                                        usage = chunk.get("usage")
+                                        if usage:
+                                            token_count = usage.get("completion_tokens", 0) or 0
+                                            prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                                    except json.JSONDecodeError:
+                                        pass
+
                 elapsed_time = time.time() - start_time
                 if full_content:
                     _app.call_from_thread(_app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
             else:
+                # Non-streaming fallback (headless / no TUI)
+                response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=clean_msgs,
+                    temperature=0.2,
+                    max_tokens=4096,
+                    timeout=300,
+                    stream=False,
+                )
                 elapsed_time = time.time() - start_time
                 msg = response.choices[0].message
                 full_content = msg.content or ""
@@ -329,6 +437,8 @@ def chat(client, messages: list):
     # Get relevant tools based on user's latest message
     user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     active_tools = get_tools_for_message(user_msg)
+
+    _tool_step = [0]  # mutable counter for tool step display
 
     while True:
         tool_iteration += 1
@@ -395,6 +505,9 @@ def chat(client, messages: list):
                             if tc.function:
                                 if tc.function.name:
                                     tool_calls_acc[i]["name"] += tc.function.name
+                                    # Show tool name immediately as it streams in
+                                    _tool_step[0] += 1
+                                    console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tool_calls_acc[i]['name']}[/bold white]")
                                 if tc.function.arguments:
                                     tool_calls_acc[i]["arguments"] += tc.function.arguments
                 elapsed_time = time.time() - start_time
@@ -453,7 +566,7 @@ def chat(client, messages: list):
                     call_signature = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_signature in recent_tool_calls:
                         consecutive_duplicates += 1
-                        console.print(f"[dim yellow]  [{func_name}] (skipped duplicate)[/dim yellow]")
+                        console.print(f"[cyan]  ╰─[/cyan] [dim yellow]skipped (duplicate call)[/dim yellow]")
                         result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user with the best answer you can based on information gathered so far.)"
                         # Break out if too many duplicates in a row
                         if consecutive_duplicates >= 3:
@@ -467,25 +580,35 @@ def chat(client, messages: list):
                     else:
                         consecutive_duplicates = 0  # Reset on successful new call
                         recent_tool_calls.append(call_signature)
-                        # Args preview — show first key arg
-                        args_preview = json.dumps(func_args, ensure_ascii=False)
-                        if len(args_preview) > 60:
-                            args_preview = args_preview[:60] + "..."
-                        console.print(f"[dim yellow]  [{func_name}] {args_preview}[/dim yellow]")
+                        # Pretty arg summary — pick the most useful arg to show
+                        arg_hint = ""
+                        for key in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
+                            if key in func_args:
+                                val = str(func_args[key])
+                                if len(val) > 55:
+                                    val = val[:55] + "…"
+                                arg_hint = val
+                                break
+                        if arg_hint:
+                            console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+
                         tool_start = time.time()
                         result = execute_tool(func_name, func_args)
                         tool_elapsed = time.time() - tool_start
-                        # Result preview
-                        preview = (result or "")[:80].replace("\n", " ").strip()
-                        if len(result or "") > 80:
-                            preview += "..."
-                        console.print(f"[dim]    → {preview} ({tool_elapsed:.1f}s)[/dim]")
 
-                    # Add tool result to messages
+                        # Result preview
+                        result_str = result or ""
+                        preview = result_str[:80].replace("\n", " ").strip()
+                        if len(result_str) > 80:
+                            preview += "…"
+                        status_color = "green" if not result_str.startswith("Error") else "red"
+                        console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({tool_elapsed:.1f}s)[/dim]")
+
+                    # Add compacted tool result to messages (prevents context bloat)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": result
+                        "content": _compact_tool_result(func_name, result)
                     })
 
                 # Continue loop to get next response
@@ -524,8 +647,12 @@ def chat(client, messages: list):
 
 AVAILABLE_MODELS = {
     "nemotron": "nemotron",
+    "llava": "llava",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "devstral": "devstral-2512",
+    "devstral-small": "devstral-small-latest",
+    "devstral-medium": "devstral-medium-latest",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }
@@ -533,7 +660,12 @@ AVAILABLE_MODELS = {
 # Cloud models route through the gateway's HTTP mirror (same port as local)
 GATEWAY_URL = "http://localhost:30080/v1"
 
-_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
+_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "devstral-2512", "devstral-small-latest", "devstral-medium-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
+
+# Resolve short model name (e.g. "mistral") to full ID (e.g. "mistral-large-latest")
+if MODEL in AVAILABLE_MODELS and MODEL not in _CLOUD_MODELS:
+    MODEL = AVAILABLE_MODELS[MODEL]
+    maude_core.MODEL = MODEL
 
 def _switch_model(name: str) -> str:
     """Switch the active model at runtime, routing cloud models via gateway."""
@@ -555,6 +687,39 @@ def _switch_model(name: str) -> str:
     return f"Switched to {key} ({MODEL}) via {'gateway' if MODEL in _CLOUD_MODELS else 'local'}"
 
 
+def _use_model_for_message(model_name: str):
+    """Temporarily switch to a model for a single message. Returns the previous MODEL for restoration."""
+    global MODEL
+    prev = MODEL
+    key = model_name.lower().strip()
+    if key in AVAILABLE_MODELS:
+        full_id = AVAILABLE_MODELS[key]
+        if full_id != MODEL:
+            MODEL = full_id
+            maude_core.MODEL = MODEL
+            if MODEL in _CLOUD_MODELS:
+                base_url = GATEWAY_URL
+            else:
+                base_url = LOCAL_URL
+            if _app and hasattr(_app, 'client'):
+                _app.client = OpenAI(base_url=base_url, api_key="not-needed")
+    return prev
+
+
+def _restore_model(prev_model: str):
+    """Restore model after per-message auto-switch."""
+    global MODEL
+    if prev_model != MODEL:
+        MODEL = prev_model
+        maude_core.MODEL = MODEL
+        if MODEL in _CLOUD_MODELS:
+            base_url = GATEWAY_URL
+        else:
+            base_url = LOCAL_URL
+        if _app and hasattr(_app, 'client'):
+            _app.client = OpenAI(base_url=base_url, api_key="not-needed")
+
+
 def handle_command(cmd: str) -> str:
     """Handle slash commands. Returns response or None if not a command."""
     if not cmd.startswith("/"):
@@ -571,7 +736,7 @@ def handle_command(cmd: str) -> str:
 
 /help              - Show this help
 /model             - Show current model configuration
-/model switch NAME - Switch model (nemotron, mistral, codestral, claude, sonnet)
+/model switch NAME - Switch model (nemotron, llava, mistral, codestral, devstral, claude, sonnet)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -593,7 +758,7 @@ Say "quit" to exit."""
         if len(parts) >= 3 and parts[1].lower() == "switch":
             return _switch_model(parts[2])
         elif len(parts) >= 2 and parts[1].lower() == "switch":
-            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral"
+            return "Usage: /model switch <name>\nAvailable: nemotron, llava, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
         from frontier import list_available_providers
         frontier_providers = list_available_providers()
         frontier_info = ", ".join(frontier_providers) if frontier_providers else "none configured"
@@ -605,8 +770,14 @@ Context:      {NUM_CTX} tokens
 
 Available models:
   nemotron            local (llama-server)
+  llava               LLaVA (local, vision)
   mistral             Mistral Large (cloud)
   codestral           Codestral (cloud, code)
+  devstral            Devstral 2 (cloud, code agent)
+  devstral-small      Devstral Small (cloud, code light)
+  devstral-medium     Devstral Medium (cloud, code mid)
+  claude              Claude Opus (cloud)
+  sonnet              Claude Sonnet (cloud)
 
 Vision:       {maude_core.VISION_MODEL}
 Vision URL:   {maude_core.VISION_URL}
@@ -676,9 +847,18 @@ Say "stop", "exit", or "quit" during talk mode to end."""
         return f"Unknown command: /{command}\nType /help for available commands."
 
 
-SYSTEM_PROMPT = f"""You are MAUDE, a local AI assistant running {MODEL}.
+SYSTEM_PROMPT = f"""You are MAUDE, a local AI assistant running on Matt's DGX Spark ({MODEL}).
 
 STYLE: Be brief. Action over explanation. Use tools proactively.
+
+CRITICAL RULES — FOLLOW THESE EXACTLY:
+1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it.
+2. VERIFY your work. After writing code: run the build/compile step and check for errors. After starting a server: curl it and confirm it responds. After creating files: check they exist.
+3. FIX errors yourself. If a build fails, read the error, fix the code, and rebuild. Do NOT just report the error and stop.
+4. NEVER give tutorials or step-by-step instructions for things you can do yourself. If the user asks for a URL, start the server and give them the URL. Don't explain how to start it.
+5. NEVER guess system info. Use tools to check IPs, ports, running processes, etc.
+6. When serving web apps: bind to 0.0.0.0, check which ports are free first (ss -tlnp), and give the Tailscale URL (run: tailscale ip -4) directly.
+7. Complete the ENTIRE task. Don't stop halfway and describe what remains. If you're building a site, it should be built, running, and accessible before you respond.
 
 TOOLS AVAILABLE:
 - File ops: read_file, write_file, edit_file, search_file, search_directory, list_directory, change_directory, get_working_directory
@@ -696,6 +876,22 @@ TOOLS AVAILABLE:
 - Browser: browser_open, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
 - Social media: skill_post_social (Twitter/X, LinkedIn, Bluesky), skill_social_status
 - Scheduling: schedule_task
+
+CROSS-MACHINE (collab):
+- mesh_status: Show online devices with client_id and platform
+- dispatch_task: Run a shell command on ANY client device (Mac, Windows, Linux).
+  Use target= with hostname, client_id, or platform name (e.g. "windows", "macos").
+  Example: dispatch_task(prompt="ls ~/Desktop", target="macos", capability="SHELL")
+  Example: dispatch_task(prompt="dir Desktop", target="windows", capability="SHELL")
+  The command runs on the target client and the result is returned.
+- list_tasks: Check task status and results
+IMPORTANT: When the user asks to do something "on the mac/windows/pc", use dispatch_task with the right target. Do NOT say you can't access other machines — you CAN via dispatch_task.
+
+PERSISTENT MEMORY:
+- save_memory: Proactively save facts, preferences, and context the user shares (e.g. names, projects, preferences)
+- recall_memory: Search memory when the user references past conversations or asks "do you remember"
+- list_memories, forget_memory: Manage stored memories
+IMPORTANT: Save memories proactively when the user shares personal info, preferences, or project context. Relevant memories are automatically loaded into your context each turn.
 
 DELEGATION TO CLAUDE:
 Use send_to_claude when user says "ask Claude", "delegate to Claude", or for complex multi-file tasks.
@@ -971,16 +1167,40 @@ class MaudeApp(App):
         status = self.query_one("#status", Static)
         status.update("")
 
+    def _inject_memory_context(self, user_input: str):
+        """Inject relevant memories into the system prompt for this turn."""
+        try:
+            from maude_core.memory_utils import get_memory
+            mem = get_memory()
+            if mem:
+                context = mem.get_context_for_prompt(user_input, max_memories=5)
+                if context:
+                    # Update system message with memory context appended
+                    base_prompt = SYSTEM_PROMPT
+                    self.messages[0] = {
+                        "role": "system",
+                        "content": base_prompt + "\n\n" + context
+                    }
+                else:
+                    # Reset to base prompt (no stale context from prior turns)
+                    self.messages[0] = {"role": "system", "content": SYSTEM_PROMPT}
+        except Exception:
+            pass  # Memory unavailable — proceed without context
+
     @work(thread=True)
     def process_message(self, user_input: str):
         """Process message with LLM in background thread."""
         self.messages.append({"role": "user", "content": user_input})
+
+        # Inject relevant memories into system prompt
+        self._inject_memory_context(user_input)
 
         # Start spinner
         self.call_from_thread(self.start_spinner)
 
         # Fast path: direct tool dispatch without LLM reasoning
         response = None
+        fast_dispatch_response = False
         try:
             result = fast_dispatch(user_input)
             if result:
@@ -994,24 +1214,38 @@ class MaudeApp(App):
                     {"role": "user", "content": f"Tool result:\n{tool_result[:3000]}\n\nSummarize this for me."}
                 ]
                 try:
-                    summary = self.client.chat.completions.create(
+                    sum_kwargs = dict(
                         model=MODEL,
                         messages=summary_messages,
                         temperature=0.2,
                         max_tokens=1024,
-                        extra_body={"num_ctx": NUM_CTX}
                     )
+                    if MODEL not in _CLOUD_MODELS:
+                        sum_kwargs["extra_body"] = {"num_ctx": NUM_CTX}
+                    summary = self.client.chat.completions.create(**sum_kwargs)
                     response = summary.choices[0].message.content
                 except Exception:
                     response = tool_result[:2000]
+                fast_dispatch_response = True
         except Exception as e:
             console.print(f"[dim yellow]  fast dispatch skipped: {e}[/dim yellow]")
 
-        # Auto-route: check if a subagent should handle this directly
+        # Auto-route: detect intent, switch model if appropriate, route to subagent
+        prev_model = None
+        subagent_response = False
         if not response:
             try:
                 from auto_router import route_message
                 decision = route_message(user_input, self.messages[-10:])
+
+                # Per-message model auto-switch (DISABLED — models like codestral
+                # don't support tool calling, which breaks task execution)
+                # if decision.prefer_model:
+                #     prev_model = _use_model_for_message(decision.prefer_model)
+                #     if prev_model != MODEL:
+                #         console.print(f"[dim cyan]  model: {decision.prefer_model} (auto)[/dim cyan]")
+
+                # Route to subagent if confident
                 if decision.subagent and decision.confidence >= 0.5:
                     cloud_tag = " [cloud]" if decision.prefer_cloud else ""
                     console.print(f"[dim cyan]  route: {decision.intent} → {decision.subagent} ({decision.confidence:.0%}){cloud_tag}[/dim cyan]")
@@ -1021,14 +1255,23 @@ class MaudeApp(App):
                         user_input,
                         prefer_cloud=decision.prefer_cloud
                     )
+                    subagent_response = True
             except ImportError:
                 pass
             except Exception as e:
                 console.print(f"[dim yellow]  routing skipped: {e}[/dim yellow]")
 
+        # Display non-streamed responses (fast_dispatch or subagent)
+        if response and (fast_dispatch_response or subagent_response):
+            self.call_from_thread(self.write_output, f"[bold magenta]MAUDE:[/bold magenta] {response}")
+
         # Fall back to main tool-calling chat loop
         if not response:
             response = chat(self.client, self.messages)
+
+        # Restore model after per-message auto-switch
+        if prev_model is not None:
+            _restore_model(prev_model)
 
         # Stop spinner
         self.call_from_thread(self.stop_spinner)

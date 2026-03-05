@@ -222,6 +222,37 @@ def tool_run_command(command: str) -> str:
     from .paths import working_dir
     try:
         log(f"$ {command}")
+
+        # Detect server/daemon commands that block forever — run them in background
+        _SERVER_PATTERNS = [
+            "npm run start", "npm start", "npx next start", "npx serve",
+            "python -m http.server", "python3 -m http.server",
+            "node server", "nohup ",
+        ]
+        cmd_stripped = command.strip().rstrip("&").strip()
+        is_server_cmd = any(p in cmd_stripped for p in _SERVER_PATTERNS)
+
+        if is_server_cmd:
+            # Run as background process, wait briefly for startup, then return
+            log(f"  (backgrounding server command)")
+            proc = subprocess.Popen(
+                cmd_stripped,
+                shell=True,
+                cwd=str(working_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            # Wait briefly for the process to start (or fail immediately)
+            import time
+            time.sleep(3)
+            if proc.poll() is not None:
+                # Process already exited — probably an error
+                stdout = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
+                stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+                return f"Server failed to start:\n{stdout}\n{stderr}".strip()
+            return f"Server started in background (PID {proc.pid}). Use curl to verify it's running."
+
         result = subprocess.run(
             command,
             shell=True,

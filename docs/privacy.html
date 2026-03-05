@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Maude</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+        header {
+            padding: 2rem 0 1.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2rem;
+        }
+        h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #e6edf3;
+        }
+        .back { font-size: 0.9rem; margin-bottom: 0.5rem; }
+        h2 {
+            font-size: 1.2rem;
+            color: #e6edf3;
+            margin: 1.5rem 0 0.5rem;
+        }
+        p { margin-bottom: 0.75rem; }
+        .updated {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-top: 0.25rem;
+        }
+        footer {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-top: 3rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <p class="back"><a href="index.html">&larr; Back to Maude</a></p>
+            <h1>Privacy Policy</h1>
+            <p class="updated">Last updated: March 5, 2026</p>
+        </header>
+
+        <h2>Overview</h2>
+        <p>
+            Maude is a personal, single-user terminal application operated solely
+            by its developer. It is not offered as a service to the public. This
+            privacy policy describes how Maude handles data when connecting to
+            Google Workspace APIs.
+        </p>
+
+        <h2>Data Collection</h2>
+        <p>
+            Maude does not collect, store, or transmit any personal data or
+            Google user data to third parties. No analytics, tracking, cookies,
+            or telemetry of any kind are used.
+        </p>
+
+        <h2>Google Workspace Data</h2>
+        <p>
+            When the user issues a command that involves a Google service (Gmail,
+            Drive, Sheets, Slides, Calendar, Contacts, or YouTube), Maude calls
+            the relevant Google API and displays the response in the terminal.
+            API responses are used transiently during the session and are not
+            persisted to disk or forwarded to any external service.
+        </p>
+
+        <h2>Authentication &amp; Credentials</h2>
+        <p>
+            Maude uses Google OAuth 2.0 for authentication. The OAuth refresh
+            token is stored locally on the user's own machine in an
+            application-specific configuration directory. Credentials are never
+            shared, uploaded, or transmitted to any third party.
+        </p>
+
+        <h2>Data Retention</h2>
+        <p>
+            Maude does not retain any Google user data beyond the current
+            terminal session. No databases, logs, or caches of Google data are
+            maintained.
+        </p>
+
+        <h2>Data Sharing</h2>
+        <p>
+            No user data is shared with any third party, service, or individual
+            under any circumstances.
+        </p>
+
+        <h2>Changes to This Policy</h2>
+        <p>
+            This policy may be updated from time to time. Any changes will be
+            reflected on this page with an updated date.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+            For questions about this privacy policy, reach out via
+            <a href="https://github.com/mboard76">GitHub</a>.
+        </p>
+
+        <footer>
+            <p>&copy; 2025&ndash;2026 Maude.</p>
+        </footer>
+    </div>
+</body>
+</html>

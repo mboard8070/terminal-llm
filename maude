@@ -1,92 +1,156 @@
 #!/bin/bash
 # MAUDE - Multi-Agent Unified Dispatch Engine
-# Starts all agents in separate tmux sessions
+# Single entry point — starts all services in tmux sessions.
+#
+# Usage:
+#   ./maude          Start everything and attach to MAUDE TUI
+#   ./maude -n       Start everything in background (no attach)
+#   ./maude stop     Stop all sessions
+#   ./maude status   Show what's running
 
 cd /home/mboard76/nvidia-workbench/terminal-llm
+VENV="./venv/bin/python"
 
-# Clear kill switch if it exists
+# ── Stop command ──────────────────────────────────────────────
+if [[ "$1" == "stop" ]]; then
+    echo "Stopping MAUDE..."
+    for s in nemo personaplex gateway fileserver maude claude watcher; do
+        if tmux has-session -t "$s" 2>/dev/null; then
+            tmux kill-session -t "$s"
+            echo "  Stopped $s"
+        fi
+    done
+    # Kill any orphaned processes still holding our ports
+    for port in 30010 30000 30080 30002 8998; do
+        pid=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null
+            echo "  Killed orphan on port $port (pid $pid)"
+        fi
+    done
+    touch ~/.config/maude/stop
+    echo "Done."
+    exit 0
+fi
+
+# ── Status command ────────────────────────────────────────────
+if [[ "$1" == "status" ]]; then
+    echo "MAUDE Services:"
+    for s in nemo personaplex gateway fileserver maude claude watcher; do
+        if tmux has-session -t "$s" 2>/dev/null; then
+            echo "  ● $s"
+        else
+            echo "  ○ $s (not running)"
+        fi
+    done
+    echo ""
+    echo "Ports:"
+    ss -tlnp 2>/dev/null | grep -E '30010|8998|30000|30080|30002' | awk '{print "  "$4}'
+    exit 0
+fi
+
+# ── Start everything ──────────────────────────────────────────
+
+# Clear kill switch
 rm -f ~/.config/maude/stop
 mkdir -p ~/.config/maude
 
-# Initialize activity log
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SYSTEM] Agent system starting" >> ~/.config/maude/activity.log
 
-echo "Starting MAUDE Agent System..."
+echo "Starting MAUDE..."
 echo ""
 
-# Start Nemotron server if not running
+# 1. Nemotron (llama-server on 30010) — must be up before gateway
 if ! tmux has-session -t nemo 2>/dev/null; then
-    echo "Starting Nemotron server..."
+    echo "  Starting Nemotron (port 30010)..."
     tmux new-session -d -s nemo "cd /home/mboard76/nvidia-workbench/terminal-llm && ./start_nemo.sh; exec bash"
-    sleep 3
 else
-    echo "Nemotron server already running"
+    echo "  Nemotron already running"
 fi
 
-# Start Claude if not running
+# Wait for Nemotron to be ready (gateway depends on it)
+printf "  Waiting for Nemotron..."
+for i in $(seq 1 60); do
+    curl -s http://localhost:30010/v1/models > /dev/null 2>&1 && break
+    printf "."
+    sleep 1
+done
+if curl -s http://localhost:30010/v1/models > /dev/null 2>&1; then
+    echo " ready"
+else
+    echo " timeout (gateway may have issues with local model)"
+fi
+
+# 2. PersonaPlex voice server (port 8998)
+if ! tmux has-session -t personaplex 2>/dev/null; then
+    echo "  Starting PersonaPlex (port 8998)..."
+    tmux new-session -d -s personaplex "cd /home/mboard76/nvidia-workbench/terminal-llm && $VENV moshi_bridge.py --ssl ./certs --static ./maude-phone/dist; exec bash"
+else
+    echo "  PersonaPlex already running"
+fi
+
+# 3. Gateway (ports 30000 HTTPS / 30080 HTTP — routes LLM, tools API, web UI)
+if ! tmux has-session -t gateway 2>/dev/null; then
+    echo "  Starting Gateway (ports 30000/30080)..."
+    tmux new-session -d -s gateway "cd /home/mboard76/nvidia-workbench/terminal-llm && $VENV gateway.py; exec bash"
+else
+    echo "  Gateway already running"
+fi
+
+# 4. File Server (port 30002)
+if ! tmux has-session -t fileserver 2>/dev/null; then
+    echo "  Starting File Server (port 30002)..."
+    tmux new-session -d -s fileserver "cd /home/mboard76/nvidia-workbench/terminal-llm && $VENV file_server.py; exec bash"
+else
+    echo "  File Server already running"
+fi
+
+# 5. Claude Code
 if ! tmux has-session -t claude 2>/dev/null; then
-    echo "Starting Claude Code..."
+    echo "  Starting Claude Code..."
     tmux new-session -d -s claude "cd /home/mboard76/nvidia-workbench/terminal-llm && claude; exec bash"
 else
-    echo "Claude already running"
+    echo "  Claude already running"
 fi
 
-# Start Watcher if not running
+# 6. Watcher (permission bridge)
 if ! tmux has-session -t watcher 2>/dev/null; then
-    echo "Starting Watcher..."
-    tmux new-session -d -s watcher "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 claude_watcher.py; exec bash"
+    echo "  Starting Watcher..."
+    tmux new-session -d -s watcher "cd /home/mboard76/nvidia-workbench/terminal-llm && $VENV claude_watcher.py; exec bash"
 else
-    echo "Watcher already running"
+    echo "  Watcher already running"
 fi
 
-# Start File Server if not running
-if ! tmux has-session -t fileserver 2>/dev/null; then
-    echo "Starting File Server (port 30002)..."
-    tmux new-session -d -s fileserver "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 file_server.py; exec bash"
-else
-    echo "File Server already running"
-fi
-
-# Start Gateway if not running (ports 30000/30080 — routes LLM, tools API, web UI)
-if ! tmux has-session -t gateway 2>/dev/null; then
-    echo "Starting Gateway (ports 30000/30080)..."
-    tmux new-session -d -s gateway "cd /home/mboard76/nvidia-workbench/terminal-llm && ./venv/bin/python gateway.py; exec bash"
-else
-    echo "Gateway already running"
-fi
-
-# Start MAUDE if not running
+# 7. MAUDE TUI (main interface — start last)
 if ! tmux has-session -t maude 2>/dev/null; then
-    echo "Starting MAUDE..."
-    tmux new-session -d -s maude "cd /home/mboard76/nvidia-workbench/terminal-llm && source venv/bin/activate && python3 chat_local.py; exec bash"
+    echo "  Starting MAUDE TUI..."
+    tmux new-session -d -s maude "cd /home/mboard76/nvidia-workbench/terminal-llm && $VENV chat_local.py; exec bash"
 else
-    echo "MAUDE already running"
+    echo "  MAUDE TUI already running"
 fi
 
 echo ""
-echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║  MAUDE Agent System                                           ║"
-echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Sessions (each in separate tmux):                            ║"
-echo "║    tmux attach -t nemo     - Nemotron server                  ║"
-echo "║    tmux attach -t gateway  - Gateway (30000/30080)            ║"
-echo "║    tmux attach -t maude    - Your main interface              ║"
-echo "║    tmux attach -t claude   - Claude Code                      ║"
-echo "║    tmux attach -t watcher  - Permission bridge                ║"
-echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  New SSH session (copy/paste):                                ║"
-echo "║    ssh -L 3000:localhost:3001 mboard76@spark-e26c             ║"
-echo "║    cd ~/nvidia-workbench/terminal-llm && tmux attach -t claude║"
-echo "╠═══════════════════════════════════════════════════════════════╣"
-echo "║  Detach: Ctrl+B d    Logs: tail -f ~/.config/maude/activity.log"
-echo "║  Stop all: touch ~/.config/maude/stop                         ║"
-echo "╚═══════════════════════════════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║  MAUDE Agent System                                     ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  tmux attach -t maude        Main interface             ║"
+echo "║  tmux attach -t claude       Claude Code                ║"
+echo "║  tmux attach -t nemo         Nemotron (30010)           ║"
+echo "║  tmux attach -t gateway      Gateway (30000/30080)      ║"
+echo "║  tmux attach -t personaplex  Voice server (8998)        ║"
+echo "║  tmux attach -t fileserver   File server (30002)        ║"
+echo "║  tmux attach -t watcher      Permission bridge          ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  ./maude stop     Stop all services                     ║"
+echo "║  ./maude status   Show what's running                   ║"
+echo "║  Ctrl+B d         Detach from session                   ║"
+echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-# Skip attach if -n flag provided
+
+# Attach unless -n flag
 if [[ "$1" != "-n" ]]; then
     echo "Attaching to MAUDE..."
-    echo ""
     tmux attach -t maude
 else
-    echo "Use 'tmux attach -t maude' to connect"
+    echo "Running in background. Use 'tmux attach -t maude' to connect."
 fi

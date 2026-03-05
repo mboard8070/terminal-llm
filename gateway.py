@@ -20,6 +20,7 @@ Sits on port 30000. Routes:
 import os
 import sys
 import json
+import re
 import ssl
 import logging
 import mimetypes
@@ -39,6 +40,7 @@ from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse, parse_qs, urljoin
 import http.client
 import time
+import uuid
 
 logger = logging.getLogger("maude.gateway")
 
@@ -84,36 +86,63 @@ MODEL_ROUTES = {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 128000,
     },
     # Codestral — code tasks (uses separate endpoint + key)
     "codestral-latest": {
         "provider": "mistral",
         "base_url": "https://codestral.mistral.ai",
         "api_key_env": "CODESTRAL_API_KEY",
+        "max_context": 32000,
+    },
+    # Devstral 2 — frontier code agents (123B, 256K context)
+    "devstral-2512": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 256000,
+    },
+    # Devstral Small — lightweight code agents
+    "devstral-small-latest": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 32000,
+    },
+    # Devstral Medium — mid-tier code agents
+    "devstral-medium-latest": {
+        "provider": "mistral",
+        "base_url": "https://api.mistral.ai",
+        "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 128000,
     },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
+        "max_context": 8192,
     },
     # LLaVA — vision (local)
     "llava": {
         "provider": "local",
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
+        "max_context": 4096,
     },
     # Claude Opus — most capable, deep reasoning
     "claude-opus-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
+        "max_context": 200000,
     },
     # Claude Sonnet — fast, capable, cost-effective
     "claude-sonnet-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
+        "max_context": 200000,
     },
 }
 
@@ -121,6 +150,9 @@ MODEL_ROUTES = {
 MODEL_ALIASES = {
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
+    "devstral": "devstral-2512",
+    "devstral-small": "devstral-small-latest",
+    "devstral-medium": "devstral-medium-latest",
     "local": "nemotron",
     "vision": "llava",
     "claude": "claude-opus-4-20250514",
@@ -338,6 +370,99 @@ def handle_terminal_websocket(handler):
 
 
 # ─────────────────────────────────────────────────────────────────
+# HTTP Terminal Transport (iOS fallback — SSE output + POST input)
+# iOS WKWebView can't do WSS with self-signed certs, so we provide
+# an HTTP-based terminal transport using SSE for output streaming
+# and POST requests for input/resize.
+# ─────────────────────────────────────────────────────────────────
+
+_http_terminal_sessions = {}  # session_id -> {master_fd, pid, created}
+
+# iOS WKWebView can't reliably stream fetch() responses with self-signed certs.
+# Same pattern as terminal: POST to create session, GET EventSource for stream.
+_chat_sessions = {}  # session_id -> {"req": dict, "created": float}
+
+
+def _create_terminal_session():
+    """Create a PTY session for HTTP-based terminal access. Returns session_id."""
+    session_id = uuid.uuid4().hex[:12]
+    master_fd, slave_fd = pty.openpty()
+    pid = os.fork()
+    if pid == 0:
+        os.close(master_fd)
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+        os.close(slave_fd)
+        os.execvp("/bin/bash", ["/bin/bash", "--login"])
+        sys.exit(0)
+    os.close(slave_fd)
+    flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    _http_terminal_sessions[session_id] = {
+        "master_fd": master_fd,
+        "pid": pid,
+        "created": time.time(),
+    }
+    logger.info("HTTP terminal session created: %s (pid=%d)", session_id, pid)
+    return session_id
+
+
+def _cleanup_terminal_session(session_id):
+    """Clean up a terminal session."""
+    session = _http_terminal_sessions.pop(session_id, None)
+    if session:
+        try:
+            os.close(session["master_fd"])
+        except Exception:
+            pass
+        try:
+            os.kill(session["pid"], signal.SIGTERM)
+            os.waitpid(session["pid"], 0)
+        except Exception:
+            pass
+        logger.info("HTTP terminal session cleaned up: %s", session_id)
+
+
+def handle_terminal_stream(handler, session_id):
+    """Stream PTY output as SSE events with base64-encoded data."""
+    session = _http_terminal_sessions.get(session_id)
+    if not session:
+        handler.send_response(404)
+        handler.end_headers()
+        handler.wfile.write(b'{"error":"session not found"}')
+        return
+
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "keep-alive")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+
+    master_fd = session["master_fd"]
+    try:
+        while session_id in _http_terminal_sessions:
+            r, _, _ = select.select([master_fd], [], [], 0.1)
+            if master_fd in r:
+                try:
+                    data = os.read(master_fd, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                b64 = base64.b64encode(data).decode()
+                handler.wfile.write(f"data: {b64}\n\n".encode())
+                handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass
+    finally:
+        _cleanup_terminal_session(session_id)
+
+
+# ─────────────────────────────────────────────────────────────────
 # PersonaPlex WebSocket Proxy
 # ─────────────────────────────────────────────────────────────────
 
@@ -362,11 +487,17 @@ def handle_personaplex_proxy(handler):
     if parsed.query:
         upstream_path += "?" + parsed.query
 
-    # Connect to PersonaPlex upstream
+    # Connect to PersonaPlex upstream (bridge runs with --ssl)
     upstream_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
     upstream_sock.settimeout(10)
     try:
         upstream_sock.connect(("localhost", PERSONAPLEX_PORT))
+        # Wrap with TLS — bridge uses a self-signed cert
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+        upstream_sock = ctx.wrap_socket(upstream_sock, server_hostname="localhost")
     except Exception as e:
         try:
             client_sock.sendall(ws_encode_frame(f"PersonaPlex connection failed: {e}", opcode=0x08))
@@ -520,6 +651,31 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"error": "WebSocket upgrade required"}, 400)
             return
 
+        # HTTP terminal SSE stream (iOS fallback)
+        if parsed.path == "/api/terminal/stream":
+            sid = query.get("sid", [None])[0]
+            if sid:
+                handle_terminal_stream(self, sid)
+            else:
+                self._json_response({"error": "missing sid"}, 400)
+            return
+
+        # HTTP chat SSE stream (iOS fallback — same pattern as terminal)
+        if parsed.path == "/api/chat/stream":
+            sid = query.get("sid", [None])[0]
+            if not sid:
+                self._json_response({"error": "missing sid"}, 400)
+                return
+            session = _chat_sessions.pop(sid, None)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            req = session["req"]
+            req["stream"] = True
+            self._eventstream_mode = True  # traces as named events for EventSource
+            self._route_model_request(pre_parsed_req=req)
+            return
+
         if parsed.path == "/list":
             req_path = query.get("path", [None])[0]
             if req_path:
@@ -573,6 +729,61 @@ class GatewayHandler(BaseHTTPRequestHandler):
         path = unquote(self.path)
         parsed = urlparse(path)
 
+        # HTTP terminal endpoints (iOS fallback)
+        if parsed.path == "/api/terminal/create":
+            sid = _create_terminal_session()
+            self._json_response({"sid": sid})
+            return
+        if parsed.path == "/api/terminal/input":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+            sid = body.get("sid", "")
+            data = body.get("data", "")
+            session = _http_terminal_sessions.get(sid)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            try:
+                os.write(session["master_fd"], data.encode() if isinstance(data, str) else data)
+            except OSError:
+                _cleanup_terminal_session(sid)
+                self._json_response({"error": "session closed"}, 410)
+                return
+            self._json_response({"ok": True})
+            return
+        if parsed.path == "/api/terminal/resize":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(content_length)) if content_length else {}
+            sid = body.get("sid", "")
+            session = _http_terminal_sessions.get(sid)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            cols = body.get("cols", 80)
+            rows = body.get("rows", 24)
+            winsize = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(session["master_fd"], termios.TIOCSWINSZ, winsize)
+            self._json_response({"ok": True})
+            return
+
+        # HTTP chat session create (iOS fallback — EventSource-based streaming)
+        if parsed.path == "/api/chat/create":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._json_response({"error": "invalid JSON"}, 400)
+                return
+            sid = uuid.uuid4().hex[:12]
+            _chat_sessions[sid] = {"req": req, "created": time.time()}
+            # Cleanup stale sessions (>5 min)
+            cutoff = time.time() - 300
+            for k in [k for k, v in _chat_sessions.items() if v["created"] < cutoff]:
+                del _chat_sessions[k]
+            self._json_response({"sid": sid})
+            return
+
         if parsed.path == "/api/tools/execute":
             self._execute_tool_api()
         elif parsed.path.startswith("/api/collab/"):
@@ -610,16 +821,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
         self._json_response({"models": models})
 
-    def _route_model_request(self):
+    def _route_model_request(self, pre_parsed_req=None):
         """Route POST /v1/chat/completions to the right provider based on model field."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-
-        # Parse the model from the request
-        try:
-            req = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            req = {}
+        if pre_parsed_req is not None:
+            req = pre_parsed_req
+        else:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                req = {}
 
         model_name = req.get("model", "mistral-large-latest")
         resolved_name, route = get_model_route(model_name)
@@ -727,15 +939,143 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_trace_sse(self, trace_type: str, data: dict):
-        """Send a trace event via SSE as a comment (ignored by OpenAI SDK).
+        """Send a trace event via SSE.
+
+        Normal mode: SSE comment (ignored by OpenAI SDK / fetch parser).
+        EventSource mode: named event (visible to EventSource on iOS).
         Headers must already be sent."""
         payload = json.dumps({"type": trace_type, **data})
-        line = f": trace {payload}\n\n".encode()
+        if getattr(self, '_eventstream_mode', False):
+            line = f"event: trace\ndata: {payload}\n\n".encode()
+        else:
+            line = f": trace {payload}\n\n".encode()
         try:
             self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
             self.wfile.flush()
         except Exception:
             pass
+
+    def _close_sse_with_error(self, error_msg: str):
+        """Send an error trace and close the SSE stream cleanly."""
+        try:
+            self._send_trace_sse("error", {"message": error_msg})
+            # Send [DONE] and close chunked encoding
+            done_line = b"data: [DONE]\n\n"
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _compact_tool_result(name: str, result: str) -> str:
+        """Truncate tool results to prevent context bloat across loop iterations.
+
+        The full result is already sent to the client via SSE trace — this only
+        affects what the LLM sees when planning its next step."""
+        if not result:
+            return result
+        n = len(result)
+        # write_file / edit_file results are already short
+        if name in ("write_file", "edit_file", "change_directory", "get_working_directory"):
+            return result
+        # read_file: keep first 80 + last 20 lines, drop middle
+        if name == "read_file" and n > 3000:
+            lines = result.split("\n")
+            if len(lines) > 100:
+                head = "\n".join(lines[:80])
+                tail = "\n".join(lines[-20:])
+                return f"{head}\n\n... ({len(lines) - 100} lines omitted) ...\n\n{tail}"
+            return result[:3000] + f"\n... (truncated, {n} chars total)"
+        # run_command: keep first 2000 + last 800
+        if name == "run_command" and n > 3000:
+            return result[:2000] + f"\n\n... ({n - 2800} chars omitted) ...\n\n" + result[-800:]
+        # list_directory: keep first 60 entries
+        if name == "list_directory" and n > 2000:
+            lines = result.split("\n")
+            if len(lines) > 65:
+                return "\n".join(lines[:65]) + f"\n... ({len(lines) - 65} more entries)"
+            return result[:2000] + "\n... (truncated)"
+        # Everything else: hard cap at 4000
+        if n > 4000:
+            return result[:3500] + f"\n... (truncated, {n} chars total)"
+        return result
+
+    @staticmethod
+    def _estimate_tokens(messages):
+        """Rough token estimate: chars / 4. Handles both string and list content (Claude blocks)."""
+        total = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                total += len(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        total += len(json.dumps(block))
+                    elif isinstance(block, str):
+                        total += len(block)
+            # Also count tool_calls if present
+            tc = msg.get("tool_calls")
+            if tc:
+                total += len(json.dumps(tc))
+        return total // 4
+
+    @staticmethod
+    def _trim_messages(messages, max_tokens, format="openai"):
+        """Remove oldest middle messages to fit within max_tokens (80% threshold).
+
+        Preserves first 2 messages (system/user) and the most recent messages.
+        In openai format: removes assistant+tool pairs together.
+        In claude format: removes assistant+user-tool-result pairs together.
+        Returns number of messages removed.
+        """
+        threshold = int(max_tokens * 0.8)
+
+        # Check if we even need to trim
+        est = GatewayHandler._estimate_tokens(messages)
+        if est <= threshold:
+            return 0
+
+        removed = 0
+        # Keep trimming from position 2 (after system/first-user) until under threshold
+        while GatewayHandler._estimate_tokens(messages) > threshold and len(messages) > 4:
+            idx = 2  # Start removing from after the first 2 messages
+
+            if idx >= len(messages) - 2:
+                break  # Don't remove the most recent messages
+
+            if format == "openai":
+                # Remove assistant message + any following tool messages
+                if messages[idx].get("role") == "assistant":
+                    messages.pop(idx)
+                    removed += 1
+                    # Remove consecutive tool messages that followed it
+                    while idx < len(messages) - 2 and messages[idx].get("role") == "tool":
+                        messages.pop(idx)
+                        removed += 1
+                else:
+                    messages.pop(idx)
+                    removed += 1
+            elif format == "claude":
+                # Remove assistant message + following user message (tool results)
+                if messages[idx].get("role") == "assistant":
+                    messages.pop(idx)
+                    removed += 1
+                    # Remove following user message with tool results
+                    if idx < len(messages) - 2 and messages[idx].get("role") == "user":
+                        content = messages[idx].get("content", "")
+                        is_tool_result = isinstance(content, list) and any(
+                            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+                        )
+                        if is_tool_result:
+                            messages.pop(idx)
+                            removed += 1
+                else:
+                    messages.pop(idx)
+                    removed += 1
+
+        return removed
 
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
         """Send content as word-boundary SSE chunks for typewriter effect.
@@ -806,8 +1146,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 user_msg = msg.get("content", "")
                 break
 
-        # Select relevant tools based on message content
-        active_tools = get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message content
+        active_tools = req.get("tools") or get_tools_for_message(user_msg)
 
         # Enhance system prompt so Mistral knows it has tool access
         tool_addendum = (
@@ -816,14 +1156,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
-            "If the user has attached an image, use the view_image tool to analyze it before responding. "
+            "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
+            "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
+            "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
+            "After starting a server: curl it and confirm it responds. After creating files: check they exist. "
+            "3. FIX errors yourself. If a build fails, read the error, fix the code, and rebuild. "
+            "Do NOT just report the error and stop. "
+            "4. NEVER give tutorials or step-by-step instructions for things you can do yourself. "
+            "If the user asks for a URL, start the server and give them the working URL. "
+            "5. NEVER guess system info. Use run_command to check IPs, ports, processes, etc. "
+            "6. When serving web apps: bind to 0.0.0.0, check which ports are free first "
+            "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
+            "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
+            "If building a site, it should be built, running, and accessible before you respond. "
+            "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
             "The image path is provided in the message. Do NOT tell the user to upload it — it is "
             "already here. If the user asks to 'upload to the server' or 'save to the server', "
             "the file is already on the server in the shared/ folder. You can move or copy it "
             "elsewhere if they want, but acknowledge it is already present. "
-            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "\n\nYou also have full access to Google Workspace: Gmail (read, send), Google Drive "
             "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
             "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
             "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
@@ -832,11 +1185,35 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
-            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
+            "to display images inline, include the markdown ![description](url) in your response. "
+            "For generated/shared images use ![description](/download/filename.png). "
+            "For web images use the full URL from the search results."
+            "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
+            "available on EVERY request. Use save_memory PROACTIVELY when the user "
+            "shares personal facts, preferences, names, dates, project details, or "
+            "anything worth remembering across sessions. Do NOT ask permission to save "
+            "— just save it. Use recall_memory when the user references something from "
+            "a previous conversation or when context from past sessions would help. "
+            "Categories: fact, preference, person, task."
         )
+        # Inject device location if provided by mobile app
+        location = req.get("location")
+        if location and isinstance(location, dict):
+            lat = location.get("lat")
+            lng = location.get("lng")
+            if lat is not None and lng is not None:
+                tool_addendum += (
+                    f"\n\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                    f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                    "Use this for location-aware responses — nearby places, weather, directions, etc. "
+                    "You do NOT need to ask the user where they are."
+                )
+
         messages = list(req.get("messages", []))
         for msg in messages:
             if msg.get("role") == "system":
@@ -851,8 +1228,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         api_path = parsed_url.path.rstrip("/") + "/v1/chat/completions"
 
         reset_rate_limits()
-        max_iterations = 15
+        max_iterations = 40
         recent_tool_calls = []
+        pending_images = []  # Collect image URLs from tool results for auto-injection
         is_streaming = req.get("stream", False)
         sse_started = False
 
@@ -861,47 +1239,89 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._start_sse_headers()
             sse_started = True
 
-        # Create connection once, reuse across all tool-loop iterations
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=120)
-
         for iteration in range(max_iterations):
+            # On last iteration, drop tools to force a summary response
+            is_final = iteration == max_iterations - 1
+            if is_final:
+                messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
+            # Context trimming — keep messages within model's context window
+            max_ctx = route.get("max_context", 128000)
+            tool_schema_overhead = len(json.dumps(active_tools)) // 4 if active_tools else 0
+            effective_max = max_ctx - tool_schema_overhead
+            trimmed = self._trim_messages(messages, effective_max, format="openai")
+            if trimmed:
+                logger.info("Trimmed %d messages to fit %s context (%d tokens)", trimmed, resolved_name, effective_max)
+                if sse_started:
+                    self._send_trace_sse("context_trim", {"removed": trimmed, "max_tokens": effective_max})
+
             # Build non-streaming request for tool loop
             loop_req = {
                 "model": resolved_name,
                 "messages": messages,
-                "tools": active_tools,
-                "tool_choice": "auto",
                 "stream": False,
                 "max_tokens": req.get("max_tokens", 4096),
                 "temperature": req.get("temperature", 0.7),
             }
+            if not is_final:
+                loop_req["tools"] = active_tools
+                loop_req["tool_choice"] = "auto"
 
             body = json.dumps(loop_req).encode()
             llm_start = time.time()
 
             try:
+                # Fresh connection per iteration — avoids stale sockets after long tool calls
+                if use_ssl:
+                    ctx = ssl.create_default_context()
+                    conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
+                else:
+                    conn = http.client.HTTPConnection(host, port, timeout=300)
+
                 headers = {
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {api_key}",
                     "Content-Length": str(len(body)),
                 }
 
-                conn.request("POST", api_path, body=body, headers=headers)
-                resp = conn.getresponse()
-                resp_body = resp.read()
+                # Run LLM call in thread with keepalive pings
+                llm_result_box = [None, None, None]  # [status, body, exception]
+                def _llm_call():
+                    try:
+                        conn.request("POST", api_path, body=body, headers=headers)
+                        resp = conn.getresponse()
+                        llm_result_box[0] = resp.status
+                        llm_result_box[1] = resp.read()
+                        conn.close()
+                    except Exception as exc:
+                        llm_result_box[2] = exc
+                t = threading.Thread(target=_llm_call)
+                t.start()
+                while t.is_alive():
+                    t.join(timeout=15)
+                    if t.is_alive() and sse_started:
+                        elapsed_so_far = time.time() - llm_start
+                        self._send_trace_sse("keepalive", {
+                            "name": "llm_call",
+                            "elapsed": round(elapsed_so_far, 1),
+                        })
+                t.join()
 
-                if resp.status != 200:
+                if llm_result_box[2] is not None:
+                    raise llm_result_box[2]
+
+                resp_status = llm_result_box[0]
+                resp_body = llm_result_box[1]
+
+                if resp_status != 200:
                     try:
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
-                    if not sse_started:
-                        self._json_response(err, resp.status)
-                    conn.close()
+                    if sse_started:
+                        self._close_sse_with_error(f"LLM error: {resp_status}")
+                    else:
+                        self._json_response(err, resp_status)
                     return
 
                 result = json.loads(resp_body)
@@ -910,14 +1330,18 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 finish_reason = choice.get("finish_reason", "")
 
             except ConnectionRefusedError:
-                if not sse_started:
-                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
-                conn.close()
+                err_msg = f"Provider {route['provider']} connection refused"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
-                if not sse_started:
-                    self._json_response({"error": f"Tool loop error: {e}"}, 502)
-                conn.close()
+                err_msg = f"Tool loop error: {e}"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 502)
                 return
 
             # Emit LLM call trace
@@ -965,7 +1389,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         recent_tool_calls.append(call_sig)
                         logger.info("tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
-                        tool_result = execute_tool(func_name, func_args)
+
+                        # Run tool in thread so we can send keepalive pings
+                        tool_result_box = [None]
+                        def _run_tool():
+                            tool_result_box[0] = execute_tool(func_name, func_args)
+                        t = threading.Thread(target=_run_tool)
+                        t.start()
+                        while t.is_alive():
+                            t.join(timeout=15)
+                            if t.is_alive() and sse_started:
+                                elapsed_so_far = time.time() - tool_start
+                                self._send_trace_sse("keepalive", {
+                                    "name": func_name,
+                                    "elapsed": round(elapsed_so_far, 1),
+                                })
+                        tool_result = tool_result_box[0]
                         tool_elapsed = time.time() - tool_start
 
                         # Emit tool_result trace
@@ -979,18 +1418,29 @@ class GatewayHandler(BaseHTTPRequestHandler):
                                 "elapsed": round(tool_elapsed, 2),
                             })
 
-                    # Add tool result to messages
+                    # Add compacted tool result to messages (full result already sent via SSE trace)
                     messages.append({
                         "role": "tool",
                         "name": func_name,
-                        "content": tool_result or "",
+                        "content": self._compact_tool_result(func_name, tool_result or ""),
                         "tool_call_id": tc["id"],
                     })
+
+                    # Collect image URLs from tool results for auto-injection
+                    for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
+                        pending_images.append((_m.group(1), _m.group(2)))
 
                 continue  # Loop back to get next response from model
 
             # No tool calls — final text response
             final_content = message.get("content", "")
+
+            # Auto-inject images from tool results that the LLM didn't include
+            if pending_images:
+                for alt, url in pending_images:
+                    if url not in final_content:
+                        final_content += f"\n\n![{alt}]({url})"
+
             if not is_streaming:
                 self._json_response({
                     "id": f"chatcmpl-tool-{int(time.time())}",
@@ -1015,8 +1465,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             conn.close()
             return
 
-        # Max iterations reached
-        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        # Max iterations reached (shouldn't normally happen — last iteration drops tools)
+        fallback = "I've completed as many steps as I can in one go. Ask me to continue if there's more to do."
         if not is_streaming:
             self._json_response({
                 "id": f"chatcmpl-tool-{int(time.time())}",
@@ -1121,8 +1571,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 user_msg = msg.get("content", "")
                 break
 
-        # Select relevant tools based on message content
-        active_tools_openai = get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message content
+        active_tools_openai = req.get("tools") or get_tools_for_message(user_msg)
 
         # Convert OpenAI tool format to Claude format
         claude_tools = []
@@ -1157,14 +1607,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
-            "If the user has attached an image, use the view_image tool to analyze it before responding. "
+            "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
+            "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
+            "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
+            "After starting a server: curl it and confirm it responds. After creating files: check they exist. "
+            "3. FIX errors yourself. If a build fails, read the error, fix the code, and rebuild. "
+            "Do NOT just report the error and stop. "
+            "4. NEVER give tutorials or step-by-step instructions for things you can do yourself. "
+            "If the user asks for a URL, start the server and give them the working URL. "
+            "5. NEVER guess system info. Use run_command to check IPs, ports, processes, etc. "
+            "6. When serving web apps: bind to 0.0.0.0, check which ports are free first "
+            "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
+            "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
+            "If building a site, it should be built, running, and accessible before you respond. "
+            "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
             "The image path is provided in the message. Do NOT tell the user to upload it — it is "
             "already here. If the user asks to 'upload to the server' or 'save to the server', "
             "the file is already on the server in the shared/ folder. You can move or copy it "
             "elsewhere if they want, but acknowledge it is already present. "
-            "You also have full access to Google Workspace: Gmail (read, send), Google Drive "
+            "\n\nYou also have full access to Google Workspace: Gmail (read, send), Google Drive "
             "(list, search, read, upload, create docs, create folders), Sheets (read, write, create), "
             "Calendar (list, create, update events), Contacts, YouTube, and Slides. Use these tools "
             "when the user asks about their email, documents, spreadsheets, schedule, or contacts. "
@@ -1173,11 +1636,36 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "already handle authentication and API calls. For example, to upload a file to Drive, "
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
-            "You can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
+            "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
+            "to display images inline, include the markdown ![description](url) in your response. "
+            "For generated/shared images use ![description](/download/filename.png). "
+            "For web images use the full URL from the search results."
+            "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
+            "available on EVERY request. Use save_memory PROACTIVELY when the user "
+            "shares personal facts, preferences, names, dates, project details, or "
+            "anything worth remembering across sessions. Do NOT ask permission to save "
+            "\xe2\x80\x94 just save it. Use recall_memory when the user references something from "
+            "a previous conversation or when context from past sessions would help. "
+            "Categories: fact, preference, person, task."
         )
+
+        # Inject device location if provided by mobile app
+        location = req.get("location")
+        if location and isinstance(location, dict):
+            lat = location.get("lat")
+            lng = location.get("lng")
+            if lat is not None and lng is not None:
+                tool_addendum += (
+                    f"\n\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                    f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                    "Use this for location-aware responses — nearby places, weather, directions, etc. "
+                    "You do NOT need to ask the user where they are."
+                )
+
         system_text += tool_addendum
 
         # Use block format for system prompt with cache_control
@@ -1197,8 +1685,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
         api_path = "/v1/messages"
 
         reset_rate_limits()
-        max_iterations = 15
+        max_iterations = 40
         recent_tool_calls = []
+        pending_images = []  # Collect image URLs from tool results for auto-injection
         is_streaming = req.get("stream", False)
         sse_started = False
 
@@ -1207,27 +1696,44 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._start_sse_headers()
             sse_started = True
 
-        # Create connection once, reuse across all tool-loop iterations
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
-        else:
-            conn = http.client.HTTPConnection(host, port, timeout=120)
-
         for iteration in range(max_iterations):
+            # On last iteration, drop tools to force a summary response
+            is_final = iteration == max_iterations - 1
+            if is_final:
+                claude_messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
+            # Context trimming — keep messages within model's context window
+            max_ctx = route.get("max_context", 200000)
+            system_overhead = len(json.dumps(system_blocks)) // 4
+            tool_schema_overhead = len(json.dumps(claude_tools)) // 4 if claude_tools else 0
+            effective_max = max_ctx - system_overhead - tool_schema_overhead
+            trimmed = self._trim_messages(claude_messages, effective_max, format="claude")
+            if trimmed:
+                logger.info("Trimmed %d Claude messages to fit %s context (%d tokens)", trimmed, resolved_name, effective_max)
+                if sse_started:
+                    self._send_trace_sse("context_trim", {"removed": trimmed, "max_tokens": effective_max})
+
             # Build non-streaming request for tool loop
             loop_req = {
                 "model": resolved_name,
                 "max_tokens": req.get("max_tokens", 4096),
                 "system": system_blocks,
                 "messages": claude_messages,
-                "tools": claude_tools,
             }
+            if not is_final:
+                loop_req["tools"] = claude_tools
 
             body = json.dumps(loop_req).encode()
             llm_start = time.time()
 
             try:
+                # Fresh connection per iteration — avoids stale sockets after long tool calls
+                if use_ssl:
+                    ctx = ssl.create_default_context()
+                    conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
+                else:
+                    conn = http.client.HTTPConnection(host, port, timeout=300)
+
                 headers = {
                     "Content-Type": "application/json",
                     "x-api-key": api_key,
@@ -1235,39 +1741,63 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "Content-Length": str(len(body)),
                 }
 
-                conn.request("POST", api_path, body=body, headers=headers)
-                resp = conn.getresponse()
-                resp_body = resp.read()
+                # Run LLM call in thread with keepalive pings
+                llm_result_box = [None, None, None]  # [status, body, exception]
+                def _llm_call():
+                    try:
+                        conn.request("POST", api_path, body=body, headers=headers)
+                        resp = conn.getresponse()
+                        llm_result_box[0] = resp.status
+                        llm_result_box[1] = resp.read()
+                        conn.close()
+                    except Exception as exc:
+                        llm_result_box[2] = exc
+                t = threading.Thread(target=_llm_call)
+                t.start()
+                while t.is_alive():
+                    t.join(timeout=15)
+                    if t.is_alive() and sse_started:
+                        elapsed_so_far = time.time() - llm_start
+                        self._send_trace_sse("keepalive", {
+                            "name": "llm_call",
+                            "elapsed": round(elapsed_so_far, 1),
+                        })
+                t.join()
 
-                if resp.status != 200:
+                if llm_result_box[2] is not None:
+                    raise llm_result_box[2]
+
+                resp_status = llm_result_box[0]
+                resp_body = llm_result_box[1]
+
+                if resp_status != 200:
                     try:
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
                     if not sse_started:
-                        self._json_response(err, resp.status)
+                        self._json_response(err, resp_status)
                     else:
-                        # Already streaming — send error as content
-                        chunk_id = f"chatcmpl-claude-{int(time.time())}"
-                        created = int(time.time())
                         err_msg = err.get("error", {}).get("message", str(err)) if isinstance(err.get("error"), dict) else str(err)
-                        self._send_content_chunks(f"[Error: {err_msg}]", resolved_name, chunk_id, created)
-                        self._send_sse_done(resolved_name, chunk_id, created)
-                    conn.close()
+                        self._close_sse_with_error(f"Claude error: {err_msg}")
                     return
 
                 result = json.loads(resp_body)
                 stop_reason = result.get("stop_reason", "")
 
             except ConnectionRefusedError:
-                if not sse_started:
-                    self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
-                conn.close()
+                err_msg = f"Provider {route['provider']} connection refused"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
-                if not sse_started:
-                    self._json_response({"error": f"Claude tool loop error: {e}"}, 502)
-                conn.close()
+                err_msg = f"Claude tool loop error: {e}"
+                if sse_started:
+                    self._close_sse_with_error(err_msg)
+                else:
+                    self._json_response({"error": err_msg}, 502)
                 return
 
             # Emit LLM call trace (include cache stats)
@@ -1338,7 +1868,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         recent_tool_calls.append(call_sig)
                         logger.info("claude tool %s(%s)", func_name, func_args)
                         tool_start = time.time()
-                        tool_result = execute_tool(func_name, func_args)
+
+                        # Run tool in thread so we can send keepalive pings
+                        tool_result_box = [None]
+                        def _run_tool(fn=func_name, fa=func_args):
+                            tool_result_box[0] = execute_tool(fn, fa)
+                        t = threading.Thread(target=_run_tool)
+                        t.start()
+                        while t.is_alive():
+                            t.join(timeout=15)
+                            if t.is_alive() and sse_started:
+                                elapsed_so_far = time.time() - tool_start
+                                self._send_trace_sse("keepalive", {
+                                    "name": func_name,
+                                    "elapsed": round(elapsed_so_far, 1),
+                                })
+                        tool_result = tool_result_box[0]
                         tool_elapsed = time.time() - tool_start
 
                         # Emit tool_result trace
@@ -1355,8 +1900,12 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": tool_result or "",
+                        "content": self._compact_tool_result(func_name, tool_result or ""),
                     })
+
+                    # Collect image URLs from tool results for auto-injection
+                    for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
+                        pending_images.append((_m.group(1), _m.group(2)))
 
                 # Add tool results as a user message (Claude API format)
                 claude_messages.append({
@@ -1368,6 +1917,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             # No tool calls — final text response
             final_content = "\n\n".join(text_parts) if text_parts else ""
+
+            # Auto-inject images from tool results that the LLM didn't include
+            if pending_images:
+                for alt, url in pending_images:
+                    if url not in final_content:
+                        final_content += f"\n\n![{alt}]({url})"
+
             if not is_streaming:
                 self._json_response({
                     "id": f"chatcmpl-claude-{int(time.time())}",
@@ -1395,8 +1951,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             conn.close()
             return
 
-        # Max iterations reached
-        fallback = "I've reached the maximum number of tool calls. Here's what I found so far."
+        # Max iterations reached (shouldn't normally happen — last iteration drops tools)
+        fallback = "I've completed as many steps as I can in one go. Ask me to continue if there's more to do."
         if not is_streaming:
             self._json_response({
                 "id": f"chatcmpl-claude-{int(time.time())}",
@@ -1425,9 +1981,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             if override_body is not None:
                 body = override_body
+                method = "POST"
+                path = "/v1/chat/completions"
             else:
                 content_length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_length) if content_length > 0 else None
+                method = self.command
+                path = self.path
 
             headers = {}
             for key, val in self.headers.items():
@@ -1435,8 +1995,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     headers[key] = val
             if body is not None:
                 headers["Content-Length"] = str(len(body))
+                headers["Content-Type"] = "application/json"
 
-            conn.request(self.command, self.path, body=body, headers=headers)
+            conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
 
             is_streaming = (
@@ -1720,6 +2281,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "Project not found"}, 404)
         elif path == "/api/collab/tasks":
             self._json_response(hub.tasks.list_all())
+        elif path == "/api/collab/tasks/poll":
+            client_id = query.get("client_id", [""])[0]
+            if not client_id:
+                self._json_response({"error": "client_id required"}, 400)
+            else:
+                # Resolve platform-targeted tasks first
+                hub.tasks.resolve_platform_targets(hub.presence.get_all())
+                tasks = hub.tasks.get_queued_for_client(client_id)
+                self._json_response(tasks)
         elif path.startswith("/api/collab/tasks/"):
             task_id = path.split("/")[4]
             task = hub.tasks.get(task_id)
@@ -1747,6 +2317,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 activity=data.get("activity", ""),
                 conversation_id=data.get("conversation_id", ""),
                 project_id=data.get("project_id", ""),
+                hostname=data.get("hostname", ""),
+                platform=data.get("platform", ""),
             )
             self._json_response({"ok": True})
         elif path == "/api/collab/activity":
@@ -1783,8 +2355,32 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 target=data.get("target", ""),
                 capability=data.get("capability", "LLM"),
                 project_id=data.get("project_id", ""),
+                target_client_id=data.get("target_client_id", ""),
+                target_platform=data.get("target_platform", ""),
             )
             self._json_response(task, 201)
+        elif path.endswith("/claim") and path.startswith("/api/collab/tasks/"):
+            # POST /api/collab/tasks/{id}/claim
+            task_id = path.split("/")[4]
+            task = hub.tasks.get(task_id)
+            if not task:
+                self._json_response({"error": "Task not found"}, 404)
+            elif task.get("status") != "queued":
+                self._json_response({"error": "Task already claimed", "status": task.get("status")}, 409)
+            else:
+                hub.tasks.update_status(task_id, "running")
+                self._json_response({"ok": True, "task_id": task_id})
+        elif path.endswith("/result") and path.startswith("/api/collab/tasks/"):
+            # POST /api/collab/tasks/{id}/result
+            task_id = path.split("/")[4]
+            task = hub.tasks.get(task_id)
+            if not task:
+                self._json_response({"error": "Task not found"}, 404)
+            else:
+                status = data.get("status", "completed")
+                result = data.get("result", "")
+                hub.tasks.update_status(task_id, status, result)
+                self._json_response({"ok": True, "task_id": task_id})
         elif path == "/api/collab/tasks/execute":
             result = hub.execute_task(data)
             self._json_response(result)
