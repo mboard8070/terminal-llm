@@ -37,6 +37,7 @@ class RoutingDecision:
     confidence: float                               # 0.0-1.0 confidence score
     subagent: Optional[str] = None                  # Which subagent to route to (None = main LLM)
     prefer_cloud: bool = False                      # Whether to prefer cloud for this request
+    prefer_model: Optional[str] = None              # Short model name to auto-switch to (e.g. "codestral")
     context_hints: Optional[Dict] = field(          # Extra context to inject
         default_factory=lambda: None
     )
@@ -44,10 +45,11 @@ class RoutingDecision:
     def __repr__(self) -> str:
         cloud = " [cloud]" if self.prefer_cloud else ""
         agent = self.subagent or "main"
+        model = f" model={self.prefer_model}" if self.prefer_model else ""
         hints = f" hints={self.context_hints}" if self.context_hints else ""
         return (
             f"RoutingDecision(intent={self.intent!r}, confidence={self.confidence:.2f}, "
-            f"agent={agent}{cloud}{hints})"
+            f"agent={agent}{cloud}{model}{hints})"
         )
 
 
@@ -65,11 +67,11 @@ class _WeightedPattern:
 # ---------------------------------------------------------------------------
 
 _INTENT_TO_SUBAGENT: Dict[str, Optional[str]] = {
-    "code":         "code",
+    "code":         None,       # Main LLM — code tasks need tool access (write_file, run_command, etc.)
     "search":       "search",
     "vision":       "vision",
-    "writing":      "writer",
-    "reasoning":    "reasoning",
+    "writing":      None,       # Main LLM — writing tasks may need file/web tools
+    "reasoning":    None,       # Main LLM — reasoning tasks often need tools for verification
     "social_media": None,       # Flagged but handled by skill system, not a subagent
     "browser":      None,       # Flagged but handled by browser automation
     "general":      None,       # Main LLM
@@ -84,6 +86,17 @@ _INTENT_PREFER_CLOUD: Dict[str, bool] = {
     "social_media": True,       # Needs API access
     "browser":      False,      # Local browser automation
     "general":      False,      # Local nemotron
+}
+
+_INTENT_TO_MODEL: Dict[str, Optional[str]] = {
+    "code":         "codestral",    # Purpose-built for code
+    "search":       None,           # Handled by subagent (grok/gemini), no main model switch
+    "vision":       "llava",        # Local vision model
+    "writing":      None,           # Most models write well — keep user's choice
+    "reasoning":    "devstral",     # Good reasoning, avoids costly claude auto-switch
+    "social_media": None,           # Keep current model
+    "browser":      None,           # Keep current model
+    "general":      None,           # Respect user's chosen model
 }
 
 # Confidence threshold — below this, route to general
@@ -456,9 +469,10 @@ class MessageRouter:
                 context_hints["ambiguous_with"] = runner_up_intent
                 context_hints["runner_up_confidence"] = f"{runner_up_score:.2f}"
 
-        # Map to subagent
+        # Map to subagent and preferred model
         subagent = _INTENT_TO_SUBAGENT.get(best_intent)
         prefer_cloud = _INTENT_PREFER_CLOUD.get(best_intent, False)
+        prefer_model = _INTENT_TO_MODEL.get(best_intent)
 
         # Special case: if the message contains code AND asks to explain,
         # it might be better as reasoning
@@ -474,6 +488,7 @@ class MessageRouter:
                     best_score = normalized.get("reasoning", best_score)
                     subagent = _INTENT_TO_SUBAGENT.get("reasoning")
                     prefer_cloud = _INTENT_PREFER_CLOUD.get("reasoning", False)
+                    prefer_model = _INTENT_TO_MODEL.get("reasoning")
 
         # Special case: search requests about code/programming topics
         # should stay with search, not get reclassified as code
@@ -491,6 +506,7 @@ class MessageRouter:
             confidence=round(best_score, 3),
             subagent=subagent,
             prefer_cloud=prefer_cloud,
+            prefer_model=prefer_model,
             context_hints=context_hints if context_hints else None,
         )
 
@@ -587,6 +603,7 @@ class MessageRouter:
             f"Decision: {decision.intent} (confidence: {decision.confidence:.2f})",
             f"Subagent: {decision.subagent or 'main LLM'}",
             f"Prefer cloud: {decision.prefer_cloud}",
+            f"Prefer model: {decision.prefer_model or '(none — keep current)'}",
         ]
 
         if decision.context_hints:
@@ -714,4 +731,5 @@ if __name__ == "__main__":
             conf_bar = "#" * int(decision.confidence * 20)
             agent_label = decision.subagent or "main"
             cloud_flag = " [cloud]" if decision.prefer_cloud else ""
-            print(f"  [{decision.intent:13}] {conf_bar:20} {decision.confidence:.2f}  -> {agent_label:10}{cloud_flag}  | {msg[:60]}")
+            model_flag = f" model={decision.prefer_model}" if decision.prefer_model else ""
+            print(f"  [{decision.intent:13}] {conf_bar:20} {decision.confidence:.2f}  -> {agent_label:10}{cloud_flag}{model_flag}  | {msg[:60]}")

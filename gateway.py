@@ -20,6 +20,7 @@ Sits on port 30000. Routes:
 import os
 import sys
 import json
+import re
 import ssl
 import logging
 import mimetypes
@@ -85,54 +86,63 @@ MODEL_ROUTES = {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 128000,
     },
     # Codestral — code tasks (uses separate endpoint + key)
     "codestral-latest": {
         "provider": "mistral",
         "base_url": "https://codestral.mistral.ai",
         "api_key_env": "CODESTRAL_API_KEY",
+        "max_context": 32000,
     },
     # Devstral 2 — frontier code agents (123B, 256K context)
     "devstral-2512": {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 256000,
     },
     # Devstral Small — lightweight code agents
     "devstral-small-latest": {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 32000,
     },
     # Devstral Medium — mid-tier code agents
     "devstral-medium-latest": {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai",
         "api_key_env": "MISTRAL_API_KEY",
+        "max_context": 128000,
     },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
+        "max_context": 8192,
     },
     # LLaVA — vision (local)
     "llava": {
         "provider": "local",
         "base_url": f"http://localhost:{LLM_PORT}",
         "api_key_env": None,
+        "max_context": 4096,
     },
     # Claude Opus — most capable, deep reasoning
     "claude-opus-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
+        "max_context": 200000,
     },
     # Claude Sonnet — fast, capable, cost-effective
     "claude-sonnet-4-20250514": {
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "api_key_env": "CLAUDE_API_KEY",
+        "max_context": 200000,
     },
 }
 
@@ -367,6 +377,10 @@ def handle_terminal_websocket(handler):
 # ─────────────────────────────────────────────────────────────────
 
 _http_terminal_sessions = {}  # session_id -> {master_fd, pid, created}
+
+# iOS WKWebView can't reliably stream fetch() responses with self-signed certs.
+# Same pattern as terminal: POST to create session, GET EventSource for stream.
+_chat_sessions = {}  # session_id -> {"req": dict, "created": float}
 
 
 def _create_terminal_session():
@@ -646,6 +660,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "missing sid"}, 400)
             return
 
+        # HTTP chat SSE stream (iOS fallback — same pattern as terminal)
+        if parsed.path == "/api/chat/stream":
+            sid = query.get("sid", [None])[0]
+            if not sid:
+                self._json_response({"error": "missing sid"}, 400)
+                return
+            session = _chat_sessions.pop(sid, None)
+            if not session:
+                self._json_response({"error": "session not found"}, 404)
+                return
+            req = session["req"]
+            req["stream"] = True
+            self._eventstream_mode = True  # traces as named events for EventSource
+            self._route_model_request(pre_parsed_req=req)
+            return
+
         if parsed.path == "/list":
             req_path = query.get("path", [None])[0]
             if req_path:
@@ -736,6 +766,24 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": True})
             return
 
+        # HTTP chat session create (iOS fallback — EventSource-based streaming)
+        if parsed.path == "/api/chat/create":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                self._json_response({"error": "invalid JSON"}, 400)
+                return
+            sid = uuid.uuid4().hex[:12]
+            _chat_sessions[sid] = {"req": req, "created": time.time()}
+            # Cleanup stale sessions (>5 min)
+            cutoff = time.time() - 300
+            for k in [k for k, v in _chat_sessions.items() if v["created"] < cutoff]:
+                del _chat_sessions[k]
+            self._json_response({"sid": sid})
+            return
+
         if parsed.path == "/api/tools/execute":
             self._execute_tool_api()
         elif parsed.path.startswith("/api/collab/"):
@@ -773,16 +821,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
         self._json_response({"models": models})
 
-    def _route_model_request(self):
+    def _route_model_request(self, pre_parsed_req=None):
         """Route POST /v1/chat/completions to the right provider based on model field."""
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b""
-
-        # Parse the model from the request
-        try:
-            req = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            req = {}
+        if pre_parsed_req is not None:
+            req = pre_parsed_req
+        else:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            try:
+                req = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                req = {}
 
         model_name = req.get("model", "mistral-large-latest")
         resolved_name, route = get_model_route(model_name)
@@ -890,10 +939,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_trace_sse(self, trace_type: str, data: dict):
-        """Send a trace event via SSE as a comment (ignored by OpenAI SDK).
+        """Send a trace event via SSE.
+
+        Normal mode: SSE comment (ignored by OpenAI SDK / fetch parser).
+        EventSource mode: named event (visible to EventSource on iOS).
         Headers must already be sent."""
         payload = json.dumps({"type": trace_type, **data})
-        line = f": trace {payload}\n\n".encode()
+        if getattr(self, '_eventstream_mode', False):
+            line = f"event: trace\ndata: {payload}\n\n".encode()
+        else:
+            line = f": trace {payload}\n\n".encode()
         try:
             self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
             self.wfile.flush()
@@ -945,6 +1000,82 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if n > 4000:
             return result[:3500] + f"\n... (truncated, {n} chars total)"
         return result
+
+    @staticmethod
+    def _estimate_tokens(messages):
+        """Rough token estimate: chars / 4. Handles both string and list content (Claude blocks)."""
+        total = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                total += len(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        total += len(json.dumps(block))
+                    elif isinstance(block, str):
+                        total += len(block)
+            # Also count tool_calls if present
+            tc = msg.get("tool_calls")
+            if tc:
+                total += len(json.dumps(tc))
+        return total // 4
+
+    @staticmethod
+    def _trim_messages(messages, max_tokens, format="openai"):
+        """Remove oldest middle messages to fit within max_tokens (80% threshold).
+
+        Preserves first 2 messages (system/user) and the most recent messages.
+        In openai format: removes assistant+tool pairs together.
+        In claude format: removes assistant+user-tool-result pairs together.
+        Returns number of messages removed.
+        """
+        threshold = int(max_tokens * 0.8)
+
+        # Check if we even need to trim
+        est = GatewayHandler._estimate_tokens(messages)
+        if est <= threshold:
+            return 0
+
+        removed = 0
+        # Keep trimming from position 2 (after system/first-user) until under threshold
+        while GatewayHandler._estimate_tokens(messages) > threshold and len(messages) > 4:
+            idx = 2  # Start removing from after the first 2 messages
+
+            if idx >= len(messages) - 2:
+                break  # Don't remove the most recent messages
+
+            if format == "openai":
+                # Remove assistant message + any following tool messages
+                if messages[idx].get("role") == "assistant":
+                    messages.pop(idx)
+                    removed += 1
+                    # Remove consecutive tool messages that followed it
+                    while idx < len(messages) - 2 and messages[idx].get("role") == "tool":
+                        messages.pop(idx)
+                        removed += 1
+                else:
+                    messages.pop(idx)
+                    removed += 1
+            elif format == "claude":
+                # Remove assistant message + following user message (tool results)
+                if messages[idx].get("role") == "assistant":
+                    messages.pop(idx)
+                    removed += 1
+                    # Remove following user message with tool results
+                    if idx < len(messages) - 2 and messages[idx].get("role") == "user":
+                        content = messages[idx].get("content", "")
+                        is_tool_result = isinstance(content, list) and any(
+                            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+                        )
+                        if is_tool_result:
+                            messages.pop(idx)
+                            removed += 1
+                else:
+                    messages.pop(idx)
+                    removed += 1
+
+        return removed
 
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
         """Send content as word-boundary SSE chunks for typewriter effect.
@@ -1015,8 +1146,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 user_msg = msg.get("content", "")
                 break
 
-        # Select relevant tools based on message content
-        active_tools = get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message content
+        active_tools = req.get("tools") or get_tools_for_message(user_msg)
 
         # Enhance system prompt so Mistral knows it has tool access
         tool_addendum = (
@@ -1058,6 +1189,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
+            "to display images inline, include the markdown ![description](url) in your response. "
+            "For generated/shared images use ![description](/download/filename.png). "
+            "For web images use the full URL from the search results."
         )
         messages = list(req.get("messages", []))
         for msg in messages:
@@ -1075,6 +1210,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         reset_rate_limits()
         max_iterations = 40
         recent_tool_calls = []
+        pending_images = []  # Collect image URLs from tool results for auto-injection
         is_streaming = req.get("stream", False)
         sse_started = False
 
@@ -1088,6 +1224,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
             is_final = iteration == max_iterations - 1
             if is_final:
                 messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
+            # Context trimming — keep messages within model's context window
+            max_ctx = route.get("max_context", 128000)
+            tool_schema_overhead = len(json.dumps(active_tools)) // 4 if active_tools else 0
+            effective_max = max_ctx - tool_schema_overhead
+            trimmed = self._trim_messages(messages, effective_max, format="openai")
+            if trimmed:
+                logger.info("Trimmed %d messages to fit %s context (%d tokens)", trimmed, resolved_name, effective_max)
+                if sse_started:
+                    self._send_trace_sse("context_trim", {"removed": trimmed, "max_tokens": effective_max})
 
             # Build non-streaming request for tool loop
             loop_req = {
@@ -1118,20 +1264,44 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "Content-Length": str(len(body)),
                 }
 
-                conn.request("POST", api_path, body=body, headers=headers)
-                resp = conn.getresponse()
-                resp_body = resp.read()
-                conn.close()
+                # Run LLM call in thread with keepalive pings
+                llm_result_box = [None, None, None]  # [status, body, exception]
+                def _llm_call():
+                    try:
+                        conn.request("POST", api_path, body=body, headers=headers)
+                        resp = conn.getresponse()
+                        llm_result_box[0] = resp.status
+                        llm_result_box[1] = resp.read()
+                        conn.close()
+                    except Exception as exc:
+                        llm_result_box[2] = exc
+                t = threading.Thread(target=_llm_call)
+                t.start()
+                while t.is_alive():
+                    t.join(timeout=15)
+                    if t.is_alive() and sse_started:
+                        elapsed_so_far = time.time() - llm_start
+                        self._send_trace_sse("keepalive", {
+                            "name": "llm_call",
+                            "elapsed": round(elapsed_so_far, 1),
+                        })
+                t.join()
 
-                if resp.status != 200:
+                if llm_result_box[2] is not None:
+                    raise llm_result_box[2]
+
+                resp_status = llm_result_box[0]
+                resp_body = llm_result_box[1]
+
+                if resp_status != 200:
                     try:
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
                     if sse_started:
-                        self._close_sse_with_error(f"LLM error: {resp.status}")
+                        self._close_sse_with_error(f"LLM error: {resp_status}")
                     else:
-                        self._json_response(err, resp.status)
+                        self._json_response(err, resp_status)
                     return
 
                 result = json.loads(resp_body)
@@ -1201,7 +1371,6 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         tool_start = time.time()
 
                         # Run tool in thread so we can send keepalive pings
-                        import threading
                         tool_result_box = [None]
                         def _run_tool():
                             tool_result_box[0] = execute_tool(func_name, func_args)
@@ -1237,10 +1406,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         "tool_call_id": tc["id"],
                     })
 
+                    # Collect image URLs from tool results for auto-injection
+                    for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
+                        pending_images.append((_m.group(1), _m.group(2)))
+
                 continue  # Loop back to get next response from model
 
             # No tool calls — final text response
             final_content = message.get("content", "")
+
+            # Auto-inject images from tool results that the LLM didn't include
+            if pending_images:
+                for alt, url in pending_images:
+                    if url not in final_content:
+                        final_content += f"\n\n![{alt}]({url})"
+
             if not is_streaming:
                 self._json_response({
                     "id": f"chatcmpl-tool-{int(time.time())}",
@@ -1371,8 +1551,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 user_msg = msg.get("content", "")
                 break
 
-        # Select relevant tools based on message content
-        active_tools_openai = get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message content
+        active_tools_openai = req.get("tools") or get_tools_for_message(user_msg)
 
         # Convert OpenAI tool format to Claude format
         claude_tools = []
@@ -1440,6 +1620,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "using web_browse. When the user asks about current events, recent news, documentation, "
             "prices, reviews, or anything that requires up-to-date information, USE web_search. "
             "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
+            "to display images inline, include the markdown ![description](url) in your response. "
+            "For generated/shared images use ![description](/download/filename.png). "
+            "For web images use the full URL from the search results."
         )
         system_text += tool_addendum
 
@@ -1462,6 +1646,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         reset_rate_limits()
         max_iterations = 40
         recent_tool_calls = []
+        pending_images = []  # Collect image URLs from tool results for auto-injection
         is_streaming = req.get("stream", False)
         sse_started = False
 
@@ -1475,6 +1660,17 @@ class GatewayHandler(BaseHTTPRequestHandler):
             is_final = iteration == max_iterations - 1
             if is_final:
                 claude_messages.append({"role": "user", "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)"})
+
+            # Context trimming — keep messages within model's context window
+            max_ctx = route.get("max_context", 200000)
+            system_overhead = len(json.dumps(system_blocks)) // 4
+            tool_schema_overhead = len(json.dumps(claude_tools)) // 4 if claude_tools else 0
+            effective_max = max_ctx - system_overhead - tool_schema_overhead
+            trimmed = self._trim_messages(claude_messages, effective_max, format="claude")
+            if trimmed:
+                logger.info("Trimmed %d Claude messages to fit %s context (%d tokens)", trimmed, resolved_name, effective_max)
+                if sse_started:
+                    self._send_trace_sse("context_trim", {"removed": trimmed, "max_tokens": effective_max})
 
             # Build non-streaming request for tool loop
             loop_req = {
@@ -1504,18 +1700,42 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "Content-Length": str(len(body)),
                 }
 
-                conn.request("POST", api_path, body=body, headers=headers)
-                resp = conn.getresponse()
-                resp_body = resp.read()
-                conn.close()
+                # Run LLM call in thread with keepalive pings
+                llm_result_box = [None, None, None]  # [status, body, exception]
+                def _llm_call():
+                    try:
+                        conn.request("POST", api_path, body=body, headers=headers)
+                        resp = conn.getresponse()
+                        llm_result_box[0] = resp.status
+                        llm_result_box[1] = resp.read()
+                        conn.close()
+                    except Exception as exc:
+                        llm_result_box[2] = exc
+                t = threading.Thread(target=_llm_call)
+                t.start()
+                while t.is_alive():
+                    t.join(timeout=15)
+                    if t.is_alive() and sse_started:
+                        elapsed_so_far = time.time() - llm_start
+                        self._send_trace_sse("keepalive", {
+                            "name": "llm_call",
+                            "elapsed": round(elapsed_so_far, 1),
+                        })
+                t.join()
 
-                if resp.status != 200:
+                if llm_result_box[2] is not None:
+                    raise llm_result_box[2]
+
+                resp_status = llm_result_box[0]
+                resp_body = llm_result_box[1]
+
+                if resp_status != 200:
                     try:
                         err = json.loads(resp_body)
                     except Exception:
                         err = {"error": resp_body.decode(errors="replace")}
                     if not sse_started:
-                        self._json_response(err, resp.status)
+                        self._json_response(err, resp_status)
                     else:
                         err_msg = err.get("error", {}).get("message", str(err)) if isinstance(err.get("error"), dict) else str(err)
                         self._close_sse_with_error(f"Claude error: {err_msg}")
@@ -1642,6 +1862,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         "content": self._compact_tool_result(func_name, tool_result or ""),
                     })
 
+                    # Collect image URLs from tool results for auto-injection
+                    for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
+                        pending_images.append((_m.group(1), _m.group(2)))
+
                 # Add tool results as a user message (Claude API format)
                 claude_messages.append({
                     "role": "user",
@@ -1652,6 +1876,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             # No tool calls — final text response
             final_content = "\n\n".join(text_parts) if text_parts else ""
+
+            # Auto-inject images from tool results that the LLM didn't include
+            if pending_images:
+                for alt, url in pending_images:
+                    if url not in final_content:
+                        final_content += f"\n\n![{alt}]({url})"
+
             if not is_streaming:
                 self._json_response({
                     "id": f"chatcmpl-claude-{int(time.time())}",

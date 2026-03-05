@@ -1,0 +1,38 @@
+<!--
+  MAUDE iOS Info.plist Patches
+
+  Add these entries to ios/App/App/Info.plist inside the top-level <dict> block.
+  The ios-setup.sh script applies these automatically. This file is a reference
+  in case you need to apply them manually.
+-->
+
+<!-- Microphone permission (for PersonaPlex voice chat) -->
+<key>NSMicrophoneUsageDescription</key>
+<string>MAUDE needs microphone access for voice chat</string>
+
+<!-- Camera permission (for image capture) -->
+<key>NSCameraUsageDescription</key>
+<string>MAUDE needs camera access to capture images</string>
+
+<!-- Local network access (for Tailscale/LAN connection to Spark) -->
+<key>NSLocalNetworkUsageDescription</key>
+<string>MAUDE connects to your local Spark server</string>
+
+<!-- App Transport Security exception for self-signed certificate -->
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+    <key>NSExceptionDomains</key>
+    <dict>
+        <key>100.107.132.16</key>
+        <dict>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <true/>
+            <key>NSTemporaryExceptionAllowsInsecureHTTPSLoads</key>
+            <true/>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+        </dict>
+    </dict>
+</dict>

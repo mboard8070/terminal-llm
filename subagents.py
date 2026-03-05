@@ -38,7 +38,6 @@ SUBAGENTS: Dict[str, SubAgent] = {
         name="Code Agent",
         description="Code generation, completion, refactoring, debugging",
         providers=[
-            AgentProvider(type="local", model="codestral:latest", url_env="CODE_AGENT_URL"),
             AgentProvider(type="cloud", provider="codestral-cloud"),
             AgentProvider(type="cloud", provider="claude"),
         ],
@@ -108,7 +107,7 @@ Use proper formatting (markdown). Be thorough but not verbose.""",
         name="Reasoning Agent",
         description="Complex reasoning, planning, analysis",
         providers=[
-            AgentProvider(type="local", model="nemotron", url_env="LLM_SERVER_URL"),
+            AgentProvider(type="cloud", provider="devstral"),
             AgentProvider(type="cloud", provider="claude-opus"),
             AgentProvider(type="cloud", provider="openai-o1"),
         ],
@@ -122,6 +121,28 @@ Use proper formatting (markdown). Be thorough but not verbose.""",
 Show your reasoning process. Be thorough and systematic.""",
         temperature=0.3,
         max_tokens=8192
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # RESEARCH - Multi-step web research with tool access
+    # ─────────────────────────────────────────────────────────────────
+    "research": SubAgent(
+        name="Research Agent",
+        description="Multi-step web research, gathering and synthesizing information with tool access",
+        providers=[
+            AgentProvider(type="cloud", provider="mistral"),
+            AgentProvider(type="cloud", provider="claude"),
+        ],
+        system_prompt="""You are a research specialist with tool access. Your role is to:
+- Conduct thorough multi-step web research on topics
+- Search for, read, and synthesize information from multiple sources
+- Cross-reference facts and identify consensus vs. conflicting information
+- Produce well-organized research summaries with key findings
+- Use your tools (web_search, web_browse, file operations) to gather real data
+
+Be systematic: search first, read promising results, then synthesize. Cite sources.""",
+        temperature=0.2,
+        max_tokens=4096
     ),
 
     # ─────────────────────────────────────────────────────────────────
@@ -145,6 +166,30 @@ Be accurate. Cite sources when possible. Note when information may be outdated."
         temperature=0.3,
         max_tokens=2048
     ),
+}
+
+
+# Tool scopes — which tools each agent can use when running with tool access
+AGENT_TOOL_SCOPES: Dict[str, List[str]] = {
+    "code": [
+        "read_file", "write_file", "edit_file", "list_directory",
+        "search_file", "search_directory", "run_command", "change_directory",
+    ],
+    "research": [
+        "web_search", "web_browse", "read_file", "list_directory",
+        "search_file", "search_directory",
+    ],
+    "writer": [
+        "read_file", "write_file", "web_search", "web_browse",
+        "list_directory", "search_file",
+    ],
+    "reasoning": [
+        "read_file", "list_directory", "search_file", "search_directory",
+        "web_search", "web_browse", "run_command",
+    ],
+    "search": [
+        "web_search", "web_browse",
+    ],
 }
 
 
