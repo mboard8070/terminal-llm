@@ -900,9 +900,22 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._claude_tool_loop(req, route, resolved_name)
                 return
 
-        # Ensure model name in body matches; strip non-standard fields
+        # Inject location into system prompt before stripping from body
         req["model"] = resolved_name
-        req.pop("location", None)
+        location = req.pop("location", None)
+        if location and isinstance(location, dict):
+            lat = location.get("lat")
+            lng = location.get("lng")
+            if lat is not None and lng is not None:
+                loc_ctx = (
+                    f"\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
+                    f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
+                    "Use this for location-aware responses."
+                )
+                for msg in req.get("messages", []):
+                    if msg.get("role") == "system":
+                        msg["content"] = msg["content"] + loc_ctx
+                        break
         body = json.dumps(req).encode()
 
         parsed_url = urlparse(route["base_url"])
