@@ -900,8 +900,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 self._claude_tool_loop(req, route, resolved_name)
                 return
 
-        # Ensure model name in body matches
+        # Ensure model name in body matches; strip non-standard fields
         req["model"] = resolved_name
+        req.pop("location", None)
         body = json.dumps(req).encode()
 
         parsed_url = urlparse(route["base_url"])
