@@ -10,6 +10,7 @@ _CORE_TOOL_NAMES = {
     "change_directory", "run_command", "web_browse", "web_search",
     "search_file", "search_directory", "edit_file",
     "ask_frontier",
+    "save_memory", "recall_memory",
 }
 
 # Tool groups activated by keyword detection

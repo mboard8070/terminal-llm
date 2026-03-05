@@ -4,6 +4,24 @@ import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// Cached location — updated every 5 minutes or on first use
+let cachedLocation: { lat: number; lng: number; accuracy: number; ts: number } | null = null;
+
+function getLocation(): Promise<typeof cachedLocation> {
+  if (cachedLocation && Date.now() - cachedLocation.ts < 300_000) return Promise.resolve(cachedLocation);
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        cachedLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, ts: Date.now() };
+        resolve(cachedLocation);
+      },
+      () => resolve(cachedLocation),
+      { timeout: 5000, maximumAge: 300_000 },
+    );
+  });
+}
+
 export interface ToolStep {
   name: string;
   args?: string;
@@ -174,7 +192,10 @@ export function useChat(conversationId: string | null = null) {
           apiContent = `[Image attached: ${sharedPath} — analyze it with view_image tool]\n\n${displayContent}`;
         }
 
-        const chatBody = {
+        // Fetch device location (non-blocking, cached)
+        const loc = await getLocation();
+
+        const chatBody: Record<string, unknown> = {
           model,
           messages: [
             { role: "system", content: MAUDE_SYSTEM_PROMPT },
@@ -183,6 +204,9 @@ export function useChat(conversationId: string | null = null) {
           ],
           stream: true, max_tokens: 4096, temperature: 0.7,
         };
+        if (loc) {
+          chatBody.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+        }
 
         // ── iOS: EventSource transport ──────────────────────────────
         // WKWebView kills streaming fetch() when app goes to background.
@@ -245,13 +269,21 @@ export function useChat(conversationId: string | null = null) {
               }
             };
 
+            let inReasoning = false;
             es.onmessage = (event) => {
               if (event.data === "[DONE]") { finish(); return; }
               try {
                 const parsed = JSON.parse(event.data);
                 if (parsed.model && !actualModel) actualModel = parsed.model;
-                const delta = parsed.choices?.[0]?.delta?.content;
-                if (delta) { fullContent += delta; contentRef.current = fullContent; scheduleUpdate(); }
+                const delta = parsed.choices?.[0]?.delta;
+                if (delta?.reasoning_content) {
+                  if (!inReasoning) { fullContent += "*Thinking...*\n\n"; inReasoning = true; }
+                } else if (delta?.content) {
+                  if (inReasoning) { fullContent = fullContent.replace("*Thinking...*\n\n", ""); inReasoning = false; }
+                  fullContent += delta.content;
+                }
+                contentRef.current = fullContent;
+                scheduleUpdate();
                 if (parsed.choices?.[0]?.finish_reason === "stop") finish();
               } catch { /* skip malformed */ }
             };
@@ -328,6 +360,7 @@ export function useChat(conversationId: string | null = null) {
         let buffer = "";
         let fullContent = "";
         let currentEventType = "";
+        let fetchInReasoning = false;
         const trace: TraceInfo = {
           tools: [], promptTokens: 0, completionTokens: 0,
           cacheReadTokens: 0, cacheCreateTokens: 0, elapsed: 0,
@@ -468,9 +501,14 @@ export function useChat(conversationId: string | null = null) {
               const parsed = JSON.parse(data);
               // Capture the actual model from the response
               if (parsed.model && !actualModel) actualModel = parsed.model;
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                fullContent += delta;
+              const delta = parsed.choices?.[0]?.delta;
+              if (delta?.reasoning_content) {
+                if (!fetchInReasoning) { fullContent += "*Thinking...*\n\n"; fetchInReasoning = true; }
+              } else if (delta?.content) {
+                if (fetchInReasoning) { fullContent = fullContent.replace("*Thinking...*\n\n", ""); fetchInReasoning = false; }
+                fullContent += delta.content;
+              }
+              if (delta?.reasoning_content || delta?.content) {
                 contentRef.current = fullContent;
                 scheduleUpdate();
               }
