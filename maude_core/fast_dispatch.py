@@ -17,9 +17,9 @@ _FAST_PATTERNS = [
      "drive_search", lambda m, msg: {"query": m.group(1) or m.group(2)}),
 
     # Gmail
-    (_re.compile(r'\b(?:check|list|show|read|get|any new)\b.*\b(?:email|gmail|inbox|mail)\b', _re.I),
+    (_re.compile(r'\b(?:check|list|show|read|get|any new)\b.*\b(?:emails?|gmail|inbox|mail)\b', _re.I),
      "gmail_list", lambda m, msg: {"query": "", "max_results": 10}),
-    (_re.compile(r'\b(?:search|find)\b.*\b(?:email|gmail|mail)\b.*(?:from|about|subject)\s+(.+)', _re.I),
+    (_re.compile(r'\b(?:search|find)\b.*\b(?:emails?|gmail|mail)\b.*(?:from|about|subject)\s+(.+)', _re.I),
      "gmail_list", lambda m, msg: {"query": m.group(1).strip().rstrip('?.'), "max_results": 10}),
 
     # Calendar
@@ -53,7 +53,9 @@ _FAST_PATTERNS = [
      "substack_get_stats", lambda m, msg: {}),
 
     # Web search (common pattern)
-    (_re.compile(r'\b(?:search|google|look up|what is|what are|who is|when is|where is)\b', _re.I),
+    # NOTE: "google" alone must NOT match when followed by a service name
+    # (doc, drive, sheet, calendar, etc.) — those should go to Google tools via LLM
+    (_re.compile(r'\b(?:search|google|look up|what is|what are|who is|when is|where is)\b(?!.*\b(?:doc|drive|sheet|calendar|slide|contact|gmail|emails?|mail|inbox)\b)', _re.I),
      "web_search", lambda m, msg: {"query": _re.sub(r'^(?:search\s+(?:for\s+)?|google\s+|look\s+up\s+)', '', msg, flags=_re.I).strip().rstrip('?.'), "num_results": 5}),
 ]
 

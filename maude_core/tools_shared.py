@@ -37,7 +37,12 @@ def tool_share_file(path: str, filename: str = None) -> str:
     dest = SHARED_DIR / dest_name
     try:
         shutil.copy2(str(src), str(dest))
-        return f"Shared '{src.name}' as '{dest_name}' \u2014 client can now pull it from the shared folder."
+        result = f"Shared '{src.name}' as '{dest_name}' \u2014 client can now pull it from the shared folder."
+        # If it's an image, include markdown so phone apps display it inline
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+        if Path(dest_name).suffix.lower() in image_exts:
+            result += f"\n\n![{dest_name}](/download/{dest_name})"
+        return result
     except Exception as e:
         return f"Error sharing file: {e}"
 

@@ -406,7 +406,7 @@ def drive_create_folder(name: str, parent_id: str = None) -> str:
         return f"Error creating folder: {e}"
 
 
-def drive_create_doc(name: str, folder_id: str = None, content: str = "") -> str:
+def drive_create_doc(name: str, folder_id: str = None, folder_name: str = None, content: str = "") -> str:
     """Create a Google Doc in Google Drive."""
     status = check_google_setup()
     if status != "OK":
@@ -415,6 +415,19 @@ def drive_create_doc(name: str, folder_id: str = None, content: str = "") -> str
     try:
         creds = get_credentials()
         service = build('drive', 'v3', credentials=creds)
+
+        # Resolve folder_name to folder_id if provided
+        if folder_name and not folder_id:
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = service.files().list(q=query, fields='files(id, name)', pageSize=5).execute()
+            folders = results.get('files', [])
+            if folders:
+                folder_id = folders[0]['id']
+            else:
+                # Create the folder
+                folder_meta = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+                folder = service.files().create(body=folder_meta, fields='id').execute()
+                folder_id = folder['id']
 
         file_metadata = {
             'name': name,
@@ -455,7 +468,7 @@ def drive_create_doc(name: str, folder_id: str = None, content: str = "") -> str
         return f"Error creating Google Doc: {e}"
 
 
-def drive_create_sheet(name: str, folder_id: str = None) -> str:
+def drive_create_sheet(name: str, folder_id: str = None, folder_name: str = None) -> str:
     """Create a Google Sheet in Google Drive."""
     status = check_google_setup()
     if status != "OK":
@@ -464,6 +477,18 @@ def drive_create_sheet(name: str, folder_id: str = None) -> str:
     try:
         creds = get_credentials()
         service = build('drive', 'v3', credentials=creds)
+
+        # Resolve folder_name to folder_id if provided
+        if folder_name and not folder_id:
+            query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            results = service.files().list(q=query, fields='files(id, name)', pageSize=5).execute()
+            folders = results.get('files', [])
+            if folders:
+                folder_id = folders[0]['id']
+            else:
+                folder_meta = {'name': folder_name, 'mimeType': 'application/vnd.google-apps.folder'}
+                folder = service.files().create(body=folder_meta, fields='id').execute()
+                folder_id = folder['id']
 
         file_metadata = {
             'name': name,

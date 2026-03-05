@@ -226,3 +226,47 @@ def _dispatch_web_view(args):
 @register_tool("view_image", cacheable=True)
 def _dispatch_view_image(args):
     return tool_view_image(args.get("path", ""), args.get("question"))
+
+
+def tool_web_image_search(query: str, num_results: int = 5) -> str:
+    """Search the web for images using DuckDuckGo."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        return "Error: ddgs not installed"
+
+    try:
+        num_results = min(max(1, num_results), 10)
+        log(f"Image search: {query}")
+
+        with DDGS() as ddgs:
+            results = list(ddgs.images(query, max_results=num_results))
+
+        if not results:
+            return f"No image results found for: {query}"
+
+        # Prefer HTTPS URLs
+        output = f"Image search results for: {query}\n\n"
+        for i, r in enumerate(results, 1):
+            img_url = r.get("image", "")
+            title = r.get("title", "Image")
+            source = r.get("source", "")
+            if img_url.startswith("http://"):
+                https_url = "https://" + img_url[7:]
+                img_url = https_url
+            output += f"{i}. {title}\n"
+            output += f"   ![{title}]({img_url})\n"
+            if source:
+                output += f"   Source: {source}\n"
+            output += "\n"
+
+        log(f"Found {len(results)} image results")
+        return output
+
+    except Exception as e:
+        return f"Error searching images: {e}"
+
+
+@register_tool("web_image_search", cacheable=True)
+def _dispatch_web_image_search(args):
+    return tool_web_image_search(args.get("query", ""), args.get("num_results", 5))

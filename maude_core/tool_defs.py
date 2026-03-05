@@ -167,6 +167,21 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "web_image_search",
+            "description": "Search the web for images. Returns image URLs with markdown display syntax. Use when the user wants to find pictures, photos, or images of something.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Image search query"},
+                    "num_results": {"type": "integer", "description": "Number of results (default 5, max 10)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_file",
             "description": "Search for text/pattern in a single file.",
             "parameters": {
@@ -279,8 +294,8 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
     {"type": "function", "function": {"name": "drive_read", "description": "Read the contents of a file from Google Drive (text files, Google Docs, etc.).", "parameters": {"type": "object", "properties": {"file_id": {"type": "string", "description": "The Google Drive file ID"}}, "required": ["file_id"]}}},
     {"type": "function", "function": {"name": "drive_upload", "description": "Upload a local file to Google Drive.", "parameters": {"type": "object", "properties": {"local_path": {"type": "string", "description": "Path to the local file to upload"}, "folder_id": {"type": "string", "description": "Optional Drive folder ID to upload into"}}, "required": ["local_path"]}}},
     {"type": "function", "function": {"name": "drive_create_folder", "description": "Create a new folder in Google Drive.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name for the new folder"}, "parent_id": {"type": "string", "description": "Optional parent folder ID to create inside"}}, "required": ["name"]}}},
-    {"type": "function", "function": {"name": "drive_create_doc", "description": "Create a new Google Doc in Google Drive.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name for the new document"}, "folder_id": {"type": "string", "description": "Optional folder ID to create inside"}, "content": {"type": "string", "description": "Optional initial content for the document"}}, "required": ["name"]}}},
-    {"type": "function", "function": {"name": "drive_create_sheet", "description": "Create a new Google Sheet in Google Drive.", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name for the new spreadsheet"}, "folder_id": {"type": "string", "description": "Optional folder ID to create inside"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "drive_create_doc", "description": "Create a new Google Doc in Google Drive. Use folder_name to place it in a folder by name (auto-resolves ID, creates folder if needed).", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name for the new document"}, "folder_name": {"type": "string", "description": "Folder name to create inside (e.g. 'maude') — resolved automatically"}, "folder_id": {"type": "string", "description": "Folder ID to create inside (use folder_name instead if you only know the name)"}, "content": {"type": "string", "description": "Optional initial content for the document"}}, "required": ["name"]}}},
+    {"type": "function", "function": {"name": "drive_create_sheet", "description": "Create a new Google Sheet in Google Drive. Use folder_name to place it in a folder by name (auto-resolves ID, creates folder if needed).", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Name for the new spreadsheet"}, "folder_name": {"type": "string", "description": "Folder name to create inside (e.g. 'maude') — resolved automatically"}, "folder_id": {"type": "string", "description": "Folder ID to create inside (use folder_name instead if you only know the name)"}}, "required": ["name"]}}},
     {"type": "function", "function": {"name": "drive_update_doc", "description": "Write or append content to an existing Google Doc.", "parameters": {"type": "object", "properties": {"doc_id": {"type": "string", "description": "The Google Doc ID"}, "content": {"type": "string", "description": "The content to write to the document"}, "append": {"type": "boolean", "description": "If true, append to existing content. If false (default), replace all content."}}, "required": ["doc_id", "content"]}}},
     {"type": "function", "function": {"name": "drive_delete", "description": "Delete a file or folder from Google Drive.", "parameters": {"type": "object", "properties": {"file_id": {"type": "string", "description": "The Google Drive file or folder ID to delete"}}, "required": ["file_id"]}}},
     # Google Sheets tools
@@ -329,11 +344,93 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
     {"type": "function", "function": {"name": "substack_update_draft", "description": "Update an existing Substack draft.", "parameters": {"type": "object", "properties": {"draft_id": {"type": "string", "description": "The draft ID to update"}, "title": {"type": "string", "description": "New title"}, "body": {"type": "string", "description": "New body text"}, "subtitle": {"type": "string", "description": "New subtitle"}}, "required": ["draft_id"]}}},
     {"type": "function", "function": {"name": "substack_delete_draft", "description": "Delete a Substack draft.", "parameters": {"type": "object", "properties": {"draft_id": {"type": "string", "description": "The draft ID to delete"}}, "required": ["draft_id"]}}},
     {"type": "function", "function": {"name": "substack_get_stats", "description": "Get Substack publication statistics (subscribers, posts, etc.).", "parameters": {"type": "object", "properties": {}, "required": []}}},
+    # GitHub Tools
+    {"type": "function", "function": {"name": "github_list_prs", "description": "List pull requests for a GitHub repository. Defaults to the repo in the current directory.", "parameters": {"type": "object", "properties": {"repo": {"type": "string", "description": "Repository in owner/repo format (optional, defaults to current repo)"}, "state": {"type": "string", "description": "Filter by state: open, closed, merged, all (default: open)"}, "limit": {"type": "integer", "description": "Maximum PRs to return (default 10)"}}, "required": []}}},
+    {"type": "function", "function": {"name": "github_view_pr", "description": "View details of a specific pull request including status checks, review state, and description.", "parameters": {"type": "object", "properties": {"pr_number": {"type": "integer", "description": "The pull request number"}, "repo": {"type": "string", "description": "Repository in owner/repo format (optional)"}}, "required": ["pr_number"]}}},
+    {"type": "function", "function": {"name": "github_merge_pr", "description": "Merge a pull request. Supports merge, squash, or rebase strategies.", "parameters": {"type": "object", "properties": {"pr_number": {"type": "integer", "description": "The pull request number to merge"}, "repo": {"type": "string", "description": "Repository in owner/repo format (optional)"}, "method": {"type": "string", "description": "Merge method: merge, squash, or rebase (default: merge)"}, "delete_branch": {"type": "boolean", "description": "Delete the branch after merging (default: true)"}}, "required": ["pr_number"]}}},
+    # Memory Tools
+    {"type": "function", "function": {"name": "save_memory", "description": "Save a piece of information to persistent memory. Use this proactively when the user shares facts, preferences, or context you should remember across conversations. Categories: 'fact', 'preference', 'person', 'task'.", "parameters": {"type": "object", "properties": {"key": {"type": "string", "description": "Short unique identifier for the memory (e.g. 'favorite_language', 'project_deadline', 'wife_name')"}, "value": {"type": "string", "description": "The information to remember"}, "category": {"type": "string", "description": "Memory category", "enum": ["fact", "preference", "person", "task"]}}, "required": ["key", "value"]}}},
+    {"type": "function", "function": {"name": "recall_memory", "description": "Search persistent memory for relevant information. Use when the user references something from a previous conversation, or when you need context about the user, their preferences, or past interactions.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "What to search for in memory"}, "category": {"type": "string", "description": "Optional category filter", "enum": ["fact", "preference", "person", "task", "conversation"]}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "list_memories", "description": "List stored memories, optionally filtered by category.", "parameters": {"type": "object", "properties": {"category": {"type": "string", "description": "Filter by category", "enum": ["fact", "preference", "person", "task", "conversation"]}, "limit": {"type": "integer", "description": "Maximum results (default 20)"}}, "required": []}}},
+    {"type": "function", "function": {"name": "forget_memory", "description": "Remove a specific memory by its key.", "parameters": {"type": "object", "properties": {"key": {"type": "string", "description": "The memory key to remove"}}, "required": ["key"]}}},
     # Shared Folder / File Transfer Tools
     {"type": "function", "function": {"name": "list_shared", "description": "List files in the shared folder. Files placed here are synced to connected clients automatically. To remove files, use run_command with rm.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "share_file", "description": "Copy a file into the shared folder so the client can pull/download it. Use this when the user says 'send this to the client' or 'share this file'.", "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "Path to the file to share"}, "filename": {"type": "string", "description": "Optional name for the file in shared folder (defaults to original name)"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "list_transfers", "description": "List files uploaded by the client (in the transfers folder). Use when user asks 'what did the client send' or 'check uploads'.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "get_transfer", "description": "Copy a file from the transfers folder (client uploads) to the working directory. Use when user says 'pull that file' or 'grab the upload'.", "parameters": {"type": "object", "properties": {"filename": {"type": "string", "description": "Name of the file in transfers folder"}, "destination": {"type": "string", "description": "Where to copy it (defaults to working directory)"}}, "required": ["filename"]}}},
+    # Agent dispatch tools
+    {
+        "type": "function",
+        "function": {
+            "name": "run_agent",
+            "description": """Dispatch a task to a specialized agent that has tool access (can search the web, read/write files, run commands).
+Available agents:
+- 'code': Code generation, debugging, refactoring (has file ops + shell)
+- 'research': Multi-step web research, gathering info (has web + file read)
+- 'writer': Documentation, long-form content (has file ops + web)
+- 'reasoning': Complex analysis, planning (has file ops + web + shell)
+- 'search': Quick web lookups (has web_search + web_browse)
+
+Use this for tasks that require the agent to DO work (search, read, write) — not just answer from knowledge.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "enum": ["code", "research", "writer", "reasoning", "search"],
+                        "description": "Which specialized agent to use"
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Clear description of what the agent should do"
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Relevant context (code snippets, file paths, requirements)"
+                    }
+                },
+                "required": ["agent", "task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_agents",
+            "description": """Dispatch multiple tasks to agents in parallel. Each agent runs independently with its own tool access. Use this when you need to research/investigate multiple things at once, or split a large task across specialists.
+
+Example: research two topics simultaneously, or have one agent write code while another researches docs.""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "agent": {
+                                    "type": "string",
+                                    "enum": ["code", "research", "writer", "reasoning", "search"],
+                                    "description": "Which agent to use"
+                                },
+                                "task": {
+                                    "type": "string",
+                                    "description": "What this agent should do"
+                                },
+                                "context": {
+                                    "type": "string",
+                                    "description": "Optional context for this agent"
+                                }
+                            },
+                            "required": ["agent", "task"]
+                        },
+                        "description": "Array of agent tasks to run in parallel"
+                    }
+                },
+                "required": ["tasks"]
+            }
+        }
+    },
 ]
 
 # Add browser automation tools

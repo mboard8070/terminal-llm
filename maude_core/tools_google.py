@@ -54,12 +54,12 @@ def _dispatch_drive_create_folder(args):
 @register_tool("drive_create_doc")
 def _dispatch_drive_create_doc(args):
     from google_tools import drive_create_doc
-    return drive_create_doc(args.get("name", ""), args.get("folder_id"), args.get("content", ""))
+    return drive_create_doc(args.get("name", ""), args.get("folder_id"), args.get("folder_name"), args.get("content", ""))
 
 @register_tool("drive_create_sheet")
 def _dispatch_drive_create_sheet(args):
     from google_tools import drive_create_sheet
-    return drive_create_sheet(args.get("name", ""), args.get("folder_id"))
+    return drive_create_sheet(args.get("name", ""), args.get("folder_id"), args.get("folder_name"))
 
 @register_tool("drive_update_doc")
 def _dispatch_drive_update_doc(args):

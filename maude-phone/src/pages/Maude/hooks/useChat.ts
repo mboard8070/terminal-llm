@@ -1,6 +1,17 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+export interface ToolStep {
+  name: string;
+  args?: string;
+  result?: string;
+  elapsed?: number;
+  status: "running" | "done" | "error";
+}
+
 export interface TraceInfo {
   tools: string[];
   promptTokens: number;
@@ -18,6 +29,7 @@ export interface ChatMessage {
   imageUrl?: string;
   timestamp: number;
   trace?: TraceInfo;
+  toolSteps?: ToolStep[];
 }
 
 const MAUDE_SYSTEM_PROMPT = `You are MAUDE — a local AI assistant running on Matt's DGX Spark, handling tasks that benefit from local execution, privacy, or when cloud access isn't available.
@@ -54,6 +66,22 @@ function shouldUseCodestral(text: string): boolean {
 function getGatewayUrl(): string {
   const loc = window.location;
   return `${loc.protocol}//${loc.host}`;
+}
+
+/** Pick the most useful arg value from a JSON args string (for tool step display). */
+function extractArgHint(argsStr: string): string {
+  try {
+    const parsed = JSON.parse(argsStr);
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const k of ["command", "query", "path", "local_path", "name", "file_id", "url"]) {
+        if (k in parsed) {
+          const v = String(parsed[k]);
+          return v.length > 50 ? v.slice(0, 50) + "\u2026" : v;
+        }
+      }
+    }
+  } catch { /* raw string fallback */ }
+  return argsStr.length > 50 ? argsStr.slice(0, 50) + "\u2026" : argsStr;
 }
 
 export function useChat(conversationId: string | null = null) {
@@ -146,18 +174,142 @@ export function useChat(conversationId: string | null = null) {
           apiContent = `[Image attached: ${sharedPath} — analyze it with view_image tool]\n\n${displayContent}`;
         }
 
+        const chatBody = {
+          model,
+          messages: [
+            { role: "system", content: MAUDE_SYSTEM_PROMPT },
+            ...history,
+            { role: "user", content: apiContent },
+          ],
+          stream: true, max_tokens: 4096, temperature: 0.7,
+        };
+
+        // ── iOS: EventSource transport ──────────────────────────────
+        // WKWebView kills streaming fetch() when app goes to background.
+        // Same fix as Terminal.tsx: POST to create session, GET EventSource.
+        if (isIOS) {
+          const createResp = await fetch(`${getGatewayUrl()}/api/chat/create`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(chatBody),
+            signal: controller.signal,
+          });
+          if (!createResp.ok) {
+            const errText = await createResp.text();
+            setMessages((prev) =>
+              prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${createResp.status} — ${errText}` } : m));
+            setIsStreaming(false);
+            return;
+          }
+          const { sid } = await createResp.json();
+
+          await new Promise<void>((resolve) => {
+            const es = new EventSource(`${getGatewayUrl()}/api/chat/stream?sid=${sid}`);
+            let fullContent = "";
+            const trace: TraceInfo = {
+              tools: [], promptTokens: 0, completionTokens: 0,
+              cacheReadTokens: 0, cacheCreateTokens: 0, elapsed: 0,
+            };
+            const toolSteps: ToolStep[] = [];
+
+            const finish = () => {
+              es.close();
+              if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = 0; }
+              const finalUpdates: Partial<ChatMessage> = { content: fullContent };
+              if (actualModel) finalUpdates.model = actualModel;
+              if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+              if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
+              setMessages((prev) =>
+                prev.map((m) => m.id === assistantMsg.id ? { ...m, ...finalUpdates } : m));
+              contentRef.current = "";
+              setIsStreaming(false);
+              abortRef.current = null;
+              resolve();
+            };
+
+            controller.signal.addEventListener("abort", () => finish());
+
+            // Schedule RAF-based UI update (same pattern as fetch path)
+            const scheduleUpdate = () => {
+              if (!rafIdRef.current) {
+                rafIdRef.current = requestAnimationFrame(() => {
+                  const snap = contentRef.current;
+                  const snapTrace = { ...trace, tools: [...trace.tools] };
+                  const snapSteps = toolSteps.map((s) => ({ ...s }));
+                  setMessages((prev) =>
+                    prev.map((m) => m.id === assistantMsg.id
+                      ? { ...m, content: snap, trace: snapTrace, toolSteps: snapSteps, ...(actualModel && { model: actualModel }) }
+                      : m));
+                  rafIdRef.current = 0;
+                });
+              }
+            };
+
+            es.onmessage = (event) => {
+              if (event.data === "[DONE]") { finish(); return; }
+              try {
+                const parsed = JSON.parse(event.data);
+                if (parsed.model && !actualModel) actualModel = parsed.model;
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) { fullContent += delta; contentRef.current = fullContent; scheduleUpdate(); }
+                if (parsed.choices?.[0]?.finish_reason === "stop") finish();
+              } catch { /* skip malformed */ }
+            };
+
+            es.addEventListener("trace", ((event: MessageEvent) => {
+              try {
+                const t = JSON.parse(event.data);
+                if (t.type === "tool_call" && t.name) {
+                  trace.tools.push(t.name);
+                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                  scheduleUpdate();
+                } else if (t.type === "tool_result") {
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      toolSteps[i].result = (t.preview || "").slice(0, 60);
+                      toolSteps[i].elapsed = t.elapsed || 0;
+                      toolSteps[i].status = (toolSteps[i].result || "").startsWith("Error") ? "error" : "done";
+                      break;
+                    }
+                  }
+                  scheduleUpdate();
+                } else if (t.type === "keepalive" && t.name) {
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      toolSteps[i].elapsed = t.elapsed || 0; break;
+                    }
+                  }
+                  scheduleUpdate();
+                } else if (t.type === "llm_call") {
+                  trace.promptTokens += t.prompt_tokens || 0;
+                  trace.completionTokens += t.completion_tokens || 0;
+                  trace.cacheReadTokens += t.cache_read_tokens || 0;
+                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
+                  trace.elapsed += t.elapsed || 0;
+                } else if (t.type === "error") {
+                  fullContent += `\n\n*Error: ${t.message || "Unknown error"}*`;
+                  contentRef.current = fullContent;
+                  scheduleUpdate();
+                }
+              } catch { /* skip */ }
+            }) as EventListener);
+
+            es.onerror = () => {
+              if (!fullContent) {
+                fullContent = "Connection interrupted — send your message again to retry.";
+              }
+              finish();
+            };
+          });
+          return;
+        }
+
+        // ── Standard fetch + ReadableStream transport ───────────────
         const response = await fetch(`${getGatewayUrl()}/v1/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: MAUDE_SYSTEM_PROMPT },
-              ...history,
-              { role: "user", content: apiContent },
-            ],
-            stream: true, max_tokens: 4096, temperature: 0.7,
-          }),
+          body: JSON.stringify(chatBody),
           signal: controller.signal,
         });
 
@@ -180,6 +332,23 @@ export function useChat(conversationId: string | null = null) {
           tools: [], promptTokens: 0, completionTokens: 0,
           cacheReadTokens: 0, cacheCreateTokens: 0, elapsed: 0,
         };
+        const toolSteps: ToolStep[] = [];
+
+        // Helper: schedule a tool steps + content update via RAF
+        const scheduleUpdate = () => {
+          if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+              const snapshot = contentRef.current;
+              const snapTrace = { ...trace, tools: [...trace.tools] };
+              const snapSteps = toolSteps.map((s) => ({ ...s }));
+              setMessages((prev) =>
+                prev.map((m) => m.id === assistantMsg.id
+                  ? { ...m, content: snapshot, trace: snapTrace, toolSteps: snapSteps, ...(actualModel && { model: actualModel }) }
+                  : m));
+              rafIdRef.current = 0;
+            });
+          }
+        };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -192,7 +361,54 @@ export function useChat(conversationId: string | null = null) {
             const trimmed = line.trim();
             if (!trimmed) continue;
 
-            // Track SSE event type
+            // Handle SSE comments: ": trace {json}" from gateway
+            if (trimmed.startsWith(": trace ")) {
+              try {
+                const t = JSON.parse(trimmed.slice(8));
+                if (t.type === "tool_call" && t.name) {
+                  trace.tools.push(t.name);
+                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                  scheduleUpdate();
+                } else if (t.type === "tool_result") {
+                  // Match the last running step with this tool name
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      const preview = (t.preview || "").slice(0, 60);
+                      toolSteps[i].result = preview;
+                      toolSteps[i].elapsed = t.elapsed || 0;
+                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
+                      break;
+                    }
+                  }
+                  scheduleUpdate();
+                } else if (t.type === "keepalive" && t.name) {
+                  // Update elapsed on the running tool step (keeps connection alive)
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      toolSteps[i].elapsed = t.elapsed || 0;
+                      break;
+                    }
+                  }
+                  scheduleUpdate();
+                } else if (t.type === "llm_call") {
+                  trace.promptTokens += t.prompt_tokens || 0;
+                  trace.completionTokens += t.completion_tokens || 0;
+                  trace.cacheReadTokens += t.cache_read_tokens || 0;
+                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
+                  trace.elapsed += t.elapsed || 0;
+                } else if (t.type === "error") {
+                  // Gateway sent an error — display it as content
+                  const errMsg = t.message || "Unknown error";
+                  fullContent += `\n\n*Error: ${errMsg}*`;
+                  contentRef.current = fullContent;
+                  scheduleUpdate();
+                }
+              } catch { /* skip malformed trace */ }
+              continue;
+            }
+
+            // Track SSE event type (fallback for event: trace format)
             if (trimmed.startsWith("event: ")) {
               currentEventType = trimmed.slice(7);
               continue;
@@ -202,19 +418,46 @@ export function useChat(conversationId: string | null = null) {
             const data = trimmed.slice(6);
             if (data === "[DONE]") continue;
 
-            // Handle trace events from gateway tool loop
+            // Handle trace events via event: trace format (backward compat)
             if (currentEventType === "trace") {
               currentEventType = "";
               try {
                 const t = JSON.parse(data);
                 if (t.type === "tool_call" && t.name) {
                   trace.tools.push(t.name);
+                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                  scheduleUpdate();
+                } else if (t.type === "tool_result") {
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      const preview = (t.preview || "").slice(0, 60);
+                      toolSteps[i].result = preview;
+                      toolSteps[i].elapsed = t.elapsed || 0;
+                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
+                      break;
+                    }
+                  }
+                  scheduleUpdate();
+                } else if (t.type === "keepalive" && t.name) {
+                  for (let i = toolSteps.length - 1; i >= 0; i--) {
+                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                      toolSteps[i].elapsed = t.elapsed || 0;
+                      break;
+                    }
+                  }
+                  scheduleUpdate();
                 } else if (t.type === "llm_call") {
                   trace.promptTokens += t.prompt_tokens || 0;
                   trace.completionTokens += t.completion_tokens || 0;
                   trace.cacheReadTokens += t.cache_read_tokens || 0;
                   trace.cacheCreateTokens += t.cache_create_tokens || 0;
                   trace.elapsed += t.elapsed || 0;
+                } else if (t.type === "error") {
+                  const errMsg = t.message || "Unknown error";
+                  fullContent += `\n\n*Error: ${errMsg}*`;
+                  contentRef.current = fullContent;
+                  scheduleUpdate();
                 }
               } catch { /* skip */ }
               continue;
@@ -229,26 +472,17 @@ export function useChat(conversationId: string | null = null) {
               if (delta) {
                 fullContent += delta;
                 contentRef.current = fullContent;
-                if (!rafIdRef.current) {
-                  rafIdRef.current = requestAnimationFrame(() => {
-                    const snapshot = contentRef.current;
-                    const snapTrace = { ...trace, tools: [...trace.tools] };
-                    setMessages((prev) =>
-                      prev.map((m) => m.id === assistantMsg.id
-                        ? { ...m, content: snapshot, trace: snapTrace, ...(actualModel && { model: actualModel }) }
-                        : m));
-                    rafIdRef.current = 0;
-                  });
-                }
+                scheduleUpdate();
               }
             } catch { /* skip malformed SSE */ }
           }
         }
 
-        // Final update: model from response, trace stats
+        // Final update: model from response, trace stats, tool steps
         const finalUpdates: Partial<ChatMessage> = {};
         if (actualModel) finalUpdates.model = actualModel;
         if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+        if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
         if (Object.keys(finalUpdates).length) {
           setMessages((prev) =>
             prev.map((m) => m.id === assistantMsg.id ? { ...m, ...finalUpdates } : m));

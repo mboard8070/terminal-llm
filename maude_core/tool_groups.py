@@ -78,11 +78,27 @@ _TOOL_GROUPS = {
         "keywords": ["tweet", "post to", "social media", "twitter", "linkedin", "bluesky", "share on"],
         "tools": {"skill_post_social", "skill_social_status"},
     },
+    "web_image": {
+        "keywords": ["find image", "find picture", "find photo", "show me a picture",
+                      "show me a photo", "show me an image", "photo of", "image of",
+                      "picture of", "images of", "photos of", "pictures of",
+                      "search for image", "search for photo", "web image",
+                      "find me a picture", "find me an image", "find me a photo"],
+        "tools": {"web_image_search"},
+    },
     "vision": {
         "keywords": ["image", "photo", "picture", "camera", "see", "look at",
                       "what is this", "analyze", "describe", "view_image",
                       "attached", "screenshot", "snap"],
         "tools": {"view_image"},
+    },
+    "memory": {
+        "keywords": ["remember", "recall", "forget", "memory", "memories",
+                      "you know", "do you remember", "what do you know",
+                      "i told you", "i mentioned", "last time",
+                      "my preference", "my favorite", "i like", "i prefer",
+                      "don't forget", "keep in mind", "note that"],
+        "tools": {"save_memory", "recall_memory", "list_memories", "forget_memory"},
     },
     "collab": {
         "keywords": ["who's online", "whos online", "mesh status", "devices",
@@ -94,6 +110,16 @@ _TOOL_GROUPS = {
                       "macbook", "on the"],
         "tools": {"mesh_status", "dispatch_task", "create_project",
                   "list_projects", "add_to_project", "list_tasks"},
+    },
+    "github": {
+        "keywords": ["pull request", "pr", "merge", "github", "repo"],
+        "tools": {"github_list_prs", "github_view_pr", "github_merge_pr"},
+    },
+    "agents": {
+        "keywords": ["research", "analyze", "investigate", "compare", "look into",
+                      "deep dive", "comprehensive", "parallel", "use the .* agent",
+                      "run agent", "dispatch agent"],
+        "tools": {"run_agent", "run_agents"},
     },
     "google": {
         "keywords": ["google"],

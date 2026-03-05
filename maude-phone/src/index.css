@@ -169,6 +169,18 @@ html[data-theme="retro-amber"] select {
   letter-spacing: 0.05em;
 }
 
+/* Tool activity step animation */
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Unmask password field used for terminal input (bypasses Samsung IME composition) */
 .terminal-input {
   -webkit-text-security: none;

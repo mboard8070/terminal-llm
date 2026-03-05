@@ -64,6 +64,9 @@ from . import tools_schedule  # noqa: F401
 from . import tools_google    # noqa: F401
 from . import tools_substack  # noqa: F401
 from . import tools_collab    # noqa: F401
+from . import tools_memory    # noqa: F401
+from . import tools_github    # noqa: F401
+from . import tools_agents    # noqa: F401
 
 # ── Execution ──────────────────────────────────────────────────
 from .execute import execute_tool
