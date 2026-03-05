@@ -17,7 +17,10 @@ import asyncio
 import tempfile
 import subprocess
 import threading
-import readline
+try:
+    import readline  # Unix line editing; not available on Windows
+except ImportError:
+    pass
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
