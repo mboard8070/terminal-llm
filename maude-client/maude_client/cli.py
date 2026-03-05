@@ -17,6 +17,7 @@ import asyncio
 import tempfile
 import subprocess
 import threading
+import readline
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -64,8 +65,9 @@ class Spinner:
         self._running = False
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Clear spinner line
-        print("\r" + " " * 40 + "\r", end="", flush=True)
+        # Clear spinner line: move to column 0, erase entire line
+        sys.stdout.write("\r\033[2K")
+        sys.stdout.flush()
 
 
 def typewriter_print(chunk: str):
@@ -847,14 +849,7 @@ def main():
     # Start task executor
     print("Starting task executor...", end=" ", flush=True)
     try:
-        def _on_task_start(task):
-            print(f"\n\033[2m[Task received: {task.get('prompt', '')[:60]}]\033[0m", flush=True)
-
-        def _on_task_complete(task, status, result):
-            preview = result[:80] if result else "(no output)"
-            print(f"\n\033[2m[Task {status}: {preview}]\033[0m", flush=True)
-
-        start_task_executor(on_task_start=_on_task_start, on_task_complete=_on_task_complete)
+        start_task_executor()
         print("OK")
     except Exception as e:
         print(f"Warning: {e}")

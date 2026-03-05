@@ -1,5 +1,5 @@
 // MAUDE Service Worker — enables PWA "Add to Home Screen" on iOS Safari
-const CACHE_NAME = 'maude-v2';
+const CACHE_NAME = 'maude-v3';
 
 // App shell files to pre-cache on install
 const APP_SHELL = [

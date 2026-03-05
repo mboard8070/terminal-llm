@@ -145,6 +145,8 @@ export function startPresenceHeartbeat() {
       body: JSON.stringify({
         client_id: clientId,
         client_type: device.clientType,
+        hostname: "Matts iPhone",
+        platform: device.clientType,
         activity: document.visibilityState === "visible" ? "browsing app" : "background",
       }),
     }).catch(() => {});
