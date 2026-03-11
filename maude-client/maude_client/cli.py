@@ -547,7 +547,10 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
 
                 # Handle content
                 if 'content' in delta and delta['content']:
@@ -573,7 +576,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
                             if 'arguments' in tc['function']:
                                 tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, IndexError, KeyError):
                 continue
 
         # Process tool calls if any
@@ -682,7 +685,10 @@ def stream_chat_continuation() -> Generator[str, None, None]:
 
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
 
                 if 'content' in delta and delta['content']:
                     full_content += delta['content']
@@ -705,7 +711,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
                             if 'arguments' in tc['function']:
                                 tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, IndexError, KeyError):
                 continue
 
         # Handle recursive tool calls (limit depth)
@@ -774,7 +780,10 @@ def final_response() -> Generator[str, None, None]:
                 break
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
                 if 'content' in delta and delta['content']:
                     full_content += delta['content']
                     yield delta['content']
@@ -913,7 +922,9 @@ def main():
                         model_arg = parts[1].strip()
                         tokens = model_arg.split()
                         if tokens[0].lower() in ("switch", "use", "set") and len(tokens) > 1:
-                            model_arg = tokens[1]
+                            model_arg = "-".join(tokens[1:])
+                        else:
+                            model_arg = "-".join(tokens)
                         current_model = model_arg
                         print(f"Switched to model: {current_model}")
                     continue
