@@ -1,5 +1,5 @@
-// MAUDE Service Worker — enables PWA "Add to Home Screen" on iOS Safari
-const CACHE_NAME = 'maude-v2';
+// MAUDE Service Worker — enables PWA "Add to Home Screen"
+const CACHE_NAME = 'maude-v3';
 
 // App shell files to pre-cache on install
 const APP_SHELL = [
@@ -25,13 +25,12 @@ const NETWORK_ONLY_PATTERNS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Best-effort pre-cache — don't fail install if some assets 404
       return Promise.allSettled(
         APP_SHELL.map((url) => cache.add(url).catch(() => {}))
       );
     })
   );
-  // Activate immediately, don't wait for old tabs to close
+  // Activate immediately — don't wait for old tabs
   self.skipWaiting();
 });
 
@@ -41,10 +40,14 @@ self.addEventListener('activate', (event) => {
       Promise.all(
         names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))
       )
-    )
+    ).then(() => self.clients.claim())
+    .then(() => {
+      // Notify all open clients to reload
+      self.clients.matchAll({ type: 'window' }).then((clients) => {
+        clients.forEach((client) => client.postMessage({ type: 'SW_UPDATED' }));
+      });
+    })
   );
-  // Take control of all open tabs immediately
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
@@ -52,11 +55,17 @@ self.addEventListener('fetch', (event) => {
 
   // Network-only for API calls, WebSocket upgrades, streaming endpoints
   if (NETWORK_ONLY_PATTERNS.some((p) => url.pathname.startsWith(p))) {
-    return; // Let the browser handle it normally
+    return;
   }
 
-  // Network-first for HTML navigation requests (always get fresh app)
-  if (event.request.mode === 'navigate') {
+  // Network-first for navigation AND all JS/CSS assets
+  // This ensures new builds are always fetched from network
+  if (
+    event.request.mode === 'navigate' ||
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css')
+  ) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
@@ -69,15 +78,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for static assets (JS, CSS, images, fonts, WASM)
+  // Cache-first for static assets (images, fonts, wasm)
   if (
-    url.pathname.startsWith('/assets/') ||
-    url.pathname.endsWith('.js') ||
-    url.pathname.endsWith('.css') ||
-    url.pathname.endsWith('.wasm') ||
     url.pathname.endsWith('.png') ||
     url.pathname.endsWith('.svg') ||
-    url.pathname.endsWith('.woff2')
+    url.pathname.endsWith('.woff2') ||
+    url.pathname.endsWith('.wasm')
   ) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
@@ -92,7 +98,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Default: network-first for everything else
+  // Default: network-first
   event.respondWith(
     fetch(event.request)
       .then((response) => {

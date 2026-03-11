@@ -17,6 +17,10 @@ import asyncio
 import tempfile
 import subprocess
 import threading
+try:
+    import readline  # Unix line editing; not available on Windows
+except ImportError:
+    pass
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -64,8 +68,9 @@ class Spinner:
         self._running = False
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Clear spinner line
-        print("\r" + " " * 40 + "\r", end="", flush=True)
+        # Clear spinner line: move to column 0, erase entire line
+        sys.stdout.write("\r\033[2K")
+        sys.stdout.flush()
 
 
 def typewriter_print(chunk: str):
@@ -542,7 +547,10 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
 
                 # Handle content
                 if 'content' in delta and delta['content']:
@@ -568,7 +576,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
                             if 'arguments' in tc['function']:
                                 tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, IndexError, KeyError):
                 continue
 
         # Process tool calls if any
@@ -677,7 +685,10 @@ def stream_chat_continuation() -> Generator[str, None, None]:
 
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
 
                 if 'content' in delta and delta['content']:
                     full_content += delta['content']
@@ -700,7 +711,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
                             if 'arguments' in tc['function']:
                                 tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
 
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, IndexError, KeyError):
                 continue
 
         # Handle recursive tool calls (limit depth)
@@ -769,7 +780,10 @@ def final_response() -> Generator[str, None, None]:
                 break
             try:
                 chunk = json.loads(data)
-                delta = chunk.get('choices', [{}])[0].get('delta', {})
+                choices = chunk.get('choices', [])
+                if not choices:
+                    continue
+                delta = choices[0].get('delta', {})
                 if 'content' in delta and delta['content']:
                     full_content += delta['content']
                     yield delta['content']
@@ -847,14 +861,7 @@ def main():
     # Start task executor
     print("Starting task executor...", end=" ", flush=True)
     try:
-        def _on_task_start(task):
-            print(f"\n\033[2m[Task received: {task.get('prompt', '')[:60]}]\033[0m", flush=True)
-
-        def _on_task_complete(task, status, result):
-            preview = result[:80] if result else "(no output)"
-            print(f"\n\033[2m[Task {status}: {preview}]\033[0m", flush=True)
-
-        start_task_executor(on_task_start=_on_task_start, on_task_complete=_on_task_complete)
+        start_task_executor()
         print("OK")
     except Exception as e:
         print(f"Warning: {e}")
@@ -915,7 +922,9 @@ def main():
                         model_arg = parts[1].strip()
                         tokens = model_arg.split()
                         if tokens[0].lower() in ("switch", "use", "set") and len(tokens) > 1:
-                            model_arg = tokens[1]
+                            model_arg = "-".join(tokens[1:])
+                        else:
+                            model_arg = "-".join(tokens)
                         current_model = model_arg
                         print(f"Switched to model: {current_model}")
                     continue
