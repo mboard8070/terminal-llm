@@ -1,5 +1,5 @@
 // MAUDE Service Worker — enables PWA "Add to Home Screen"
-const CACHE_NAME = 'maude-v3';
+const CACHE_NAME = 'maude-v4';
 
 // App shell files to pre-cache on install
 const APP_SHELL = [

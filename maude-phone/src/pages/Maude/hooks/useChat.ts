@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
+import { uuid } from "./uuid";
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -165,7 +166,7 @@ export function useChat(conversationId: string | null = null) {
       const displayContent = content || (imageUrl ? "What do you see in this image?" : "");
 
       const userMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: "user", content: displayContent, imageUrl, timestamp: Date.now(),
+        id: uuid(), role: "user", content: displayContent, imageUrl, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
@@ -173,7 +174,7 @@ export function useChat(conversationId: string | null = null) {
       const model = modelRef.current;
 
       const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: "assistant", content: "", model, timestamp: Date.now(),
+        id: uuid(), role: "assistant", content: "", model, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
