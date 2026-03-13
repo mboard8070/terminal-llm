@@ -456,6 +456,99 @@ Example: research two topics simultaneously, or have one agent write code while 
             }
         }
     },
+    # ── Command Center tools ─────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "system_stats",
+            "description": "Get system stats: CPU, RAM, disk usage, GPU temperature/utilization/memory. Use when the user asks about system health, resource usage, or monitoring.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "gpu_processes",
+            "description": "Show what processes are currently using the GPU and how much VRAM each is consuming.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_browse",
+            "description": "Browse MAUDE's persistent memory database. Can filter by category or search by query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "Filter by memory category (e.g. 'fact', 'preference')"},
+                    "query": {"type": "string", "description": "Search term to find in memory keys or values"},
+                    "limit": {"type": "integer", "description": "Max results to return (default 20, max 100)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "session_list",
+            "description": "List recent conversation sessions across all channels (CLI, Telegram, etc.) with message counts and timestamps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max sessions to return (default 20, max 50)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "activity_feed",
+            "description": "Show recent activity from the chat sync log — messages across all channels with timestamps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Number of recent activities (default 20, max 100)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scheduler_status",
+            "description": "Show all scheduled MAUDE tasks — cron schedules, run counts, last results, enabled/disabled status.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "node_status",
+            "description": "Show connected nodes and service status — Spark services (gateway, llama, telegram), Tailscale peers, remote client heartbeats.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
 ]
 
 # Add browser automation tools
@@ -477,5 +570,19 @@ except Exception:
 try:
     from collab_tools import COLLAB_TOOLS
     TOOLS.extend(COLLAB_TOOLS)
+except ImportError:
+    pass
+
+# Register sandbox tools
+try:
+    from sandbox_manager import SANDBOX_TOOLS
+    TOOLS.extend(SANDBOX_TOOLS)
+except ImportError:
+    pass
+
+# Register forge tools
+try:
+    from forge import FORGE_TOOLS
+    TOOLS.extend(FORGE_TOOLS)
 except ImportError:
     pass

@@ -10,6 +10,7 @@ import { Messages } from "./pages/Messages/Messages";
 import { Files } from "./pages/Files/Files";
 import { Settings } from "./pages/Settings/Settings";
 import { Collab } from "./pages/Collab/Collab";
+import { CommandCenter } from "./pages/CommandCenter/CommandCenter";
 import { startPresenceHeartbeat } from "./pages/Collab/useCollab";
 import { TabBar } from "./components/TabBar/TabBar";
 
@@ -63,6 +64,7 @@ const router = createBrowserRouter([
       { path: "/messages", element: <Messages /> },
       { path: "/files", element: <Files /> },
       { path: "/collab", element: <Collab /> },
+      { path: "/command-center", element: <CommandCenter /> },
       { path: "/settings", element: <Settings /> },
     ],
   },
