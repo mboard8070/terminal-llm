@@ -116,6 +116,13 @@ MODEL_ROUTES = {
         "api_key_env": "MISTRAL_API_KEY",
         "max_context": 128000,
     },
+    # Nemotron 3 Super — cloud via OpenRouter (free)
+    "nvidia/nemotron-3-super-120b-a12b:free": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api",
+        "api_key_env": "OPEN_ROUTER_API_KEY",
+        "max_context": 1000000,
+    },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
@@ -153,6 +160,7 @@ MODEL_ALIASES = {
     "devstral": "devstral-2512",
     "devstral-small": "devstral-small-latest",
     "devstral-medium": "devstral-medium-latest",
+    "nemotron-super": "nvidia/nemotron-3-super-120b-a12b:free",
     "local": "nemotron",
     "vision": "llava",
     "claude": "claude-opus-4-20250514",
@@ -706,6 +714,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             else:
                 self._json_response({"error": "no recent location"}, 404)
             return
+        elif parsed.path.startswith("/api/command-center/"):
+            self._handle_command_center(parsed.path, query)
         elif parsed.path == "/health":
             self._serve_health()
         elif parsed.path == "/api/tools":
@@ -714,6 +724,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._serve_models()
         elif parsed.path.startswith("/proxy"):
             self._web_proxy(query)
+        elif parsed.path == "/v1/models":
+            self._serve_v1_models()
         elif parsed.path.startswith("/v1"):
             self._proxy_to_llm()
         elif parsed.path.startswith("/app") or parsed.path == "/":
@@ -723,7 +735,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/assets"):
             self._serve_static(parsed.path)
         elif parsed.path in ("/maude", "/maude/voice", "/terminal", "/browser",
-                              "/messages", "/files", "/settings", "/collab"):
+                              "/messages", "/files", "/settings", "/collab",
+                              "/command-center"):
             # SPA routes — serve index.html
             self._serve_static("/index.html")
         else:
@@ -828,6 +841,15 @@ class GatewayHandler(BaseHTTPRequestHandler):
             })
         self._json_response({"models": models})
 
+    def _serve_v1_models(self):
+        """Return models in OpenAI-compatible /v1/models format."""
+        data = []
+        for model_id in MODEL_ROUTES:
+            data.append({"id": model_id, "object": "model", "owned_by": "maude"})
+        for alias in MODEL_ALIASES:
+            data.append({"id": alias, "object": "model", "owned_by": "maude"})
+        self._json_response({"object": "list", "data": data})
+
     def _route_model_request(self, pre_parsed_req=None):
         """Route POST /v1/chat/completions to the right provider based on model field."""
         if pre_parsed_req is not None:
@@ -891,9 +913,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
         # Use tool-enabled path for cloud models if maude_core is available
         # Skip server-side tool loop if client already sent its own tools
+        # Also skip if response_format is set (JSON mode — plain API call)
         client_sent_tools = bool(req.get("tools"))
-        if TOOL_SUPPORT and not client_sent_tools:
-            if route["provider"] == "mistral":
+        plain_api = bool(req.get("response_format"))
+        if TOOL_SUPPORT and not client_sent_tools and not plain_api:
+            if route["provider"] in ("mistral", "openrouter"):
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
             if route["provider"] == "anthropic":
@@ -1185,6 +1209,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         tool calls locally via maude_core, until a final text response is
         produced. The final response is streamed back to the client as SSE.
         """
+        tool_retries = 0
         api_key = os.environ.get(route["api_key_env"], "")
 
         # Get the user's latest message for tool selection
@@ -1385,6 +1410,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
+                err_msg = str(e)
+                transient = any(k in err_msg.lower() for k in ("ssl", "chunked", "name resolution", "connection", "timed out", "reset by peer", "broken pipe", "bad gateway", "502", "503"))
+                if transient and tool_retries < 3:
+                    tool_retries += 1
+                    wait = 2 ** (tool_retries - 1)
+                    logger.warning("Transient error in tool loop, retry %d/3 in %ds: %s", tool_retries, wait, err_msg)
+                    if sse_started:
+                        self._send_trace_sse("error", {"message": f"Connection error, retrying ({tool_retries}/3)..."})
+                    time.sleep(wait)
+                    continue
                 err_msg = f"Tool loop error: {e}"
                 if sse_started:
                     self._close_sse_with_error(err_msg)
@@ -1610,6 +1645,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         - Tool results go in user messages as { type: "tool_result", tool_use_id }
         - Stop reasons: "tool_use" and "end_turn" (not "tool_calls" and "stop")
         """
+        claude_retries = 0
         api_key = os.environ.get(route["api_key_env"], "")
 
         # Get the user's latest message for tool selection
@@ -1841,6 +1877,16 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     self._json_response({"error": err_msg}, 503)
                 return
             except Exception as e:
+                err_msg = str(e)
+                transient = any(k in err_msg.lower() for k in ("ssl", "chunked", "name resolution", "connection", "timed out", "reset by peer", "broken pipe", "bad gateway", "502", "503", "overloaded"))
+                if transient and claude_retries < 3:
+                    claude_retries += 1
+                    wait = 2 ** (claude_retries - 1)
+                    logger.warning("Transient error in Claude tool loop, retry %d/3 in %ds: %s", claude_retries, wait, err_msg)
+                    if sse_started:
+                        self._send_trace_sse("error", {"message": f"Connection error, retrying ({claude_retries}/3)..."})
+                    time.sleep(wait)
+                    continue
                 err_msg = f"Claude tool loop error: {e}"
                 if sse_started:
                     self._close_sse_with_error(err_msg)
@@ -2434,6 +2480,63 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response(result)
         else:
             self._json_response({"error": "Not found"}, 404)
+
+    # ── Command Center API ─────────────────────────────────────────
+
+    def _handle_command_center(self, path: str, query: dict):
+        """Route /api/command-center/* to the command center tools."""
+        try:
+            from maude_core.tools_command_center import (
+                _dispatch_system_stats,
+                _dispatch_gpu_processes,
+                _dispatch_memory_browse,
+                _dispatch_session_list,
+                _dispatch_activity_feed,
+                _dispatch_scheduler_status,
+                _dispatch_node_status,
+            )
+        except ImportError:
+            self._json_response({"error": "command center module not available"}, 503)
+            return
+
+        endpoint = path.replace("/api/command-center/", "")
+
+        if endpoint == "system":
+            result = _dispatch_system_stats({})
+        elif endpoint == "gpu-processes":
+            result = _dispatch_gpu_processes({})
+        elif endpoint == "memory":
+            args = {}
+            if "category" in query:
+                args["category"] = query["category"][0]
+            if "query" in query:
+                args["query"] = query["query"][0]
+            if "limit" in query:
+                args["limit"] = int(query["limit"][0])
+            result = _dispatch_memory_browse(args)
+        elif endpoint == "sessions":
+            args = {}
+            if "limit" in query:
+                args["limit"] = int(query["limit"][0])
+            result = _dispatch_session_list(args)
+        elif endpoint == "activity":
+            args = {}
+            if "limit" in query:
+                args["limit"] = int(query["limit"][0])
+            result = _dispatch_activity_feed(args)
+        elif endpoint == "scheduler":
+            result = _dispatch_scheduler_status({})
+        elif endpoint == "nodes":
+            result = _dispatch_node_status({})
+        else:
+            self._json_response({"error": f"Unknown endpoint: {endpoint}"}, 404)
+            return
+
+        # Tools return JSON strings, parse and re-serve
+        try:
+            self._json_response(json.loads(result))
+        except (json.JSONDecodeError, TypeError):
+            self._json_response({"result": result})
 
     # ── Health & Tool Catalog API ──────────────────────────────────
 

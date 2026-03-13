@@ -67,6 +67,9 @@ from . import tools_collab    # noqa: F401
 from . import tools_memory    # noqa: F401
 from . import tools_github    # noqa: F401
 from . import tools_agents    # noqa: F401
+from . import tools_sandbox   # noqa: F401
+from . import tools_forge           # noqa: F401
+from . import tools_command_center  # noqa: F401
 
 # ── Execution ──────────────────────────────────────────────────
 from .execute import execute_tool
