@@ -1,12 +1,21 @@
 import { FC, useState, useEffect } from "react";
 
-interface HealthStatus { status: string; llm_port?: number; personaplex_port?: number; gateway_port?: number; }
+interface ServiceStatus { status: string; port: number; }
+interface HealthStatus {
+  status: string;
+  services?: {
+    llama_server?: ServiceStatus;
+    personaplex?: ServiceStatus;
+  };
+  gateway_port?: number;
+}
 interface ModelInfo { id: string; provider: string; available: boolean; }
 
 function getGatewayUrl(): string { return `${window.location.protocol}//${window.location.host}`; }
 
 const THEMES = [
   { id: "dark", label: "MAUDE Dark", desc: "Default dark theme" },
+  { id: "professional", label: "Professional", desc: "Clean corporate dark" },
   { id: "modern", label: "Modern Terminal", desc: "Clean slate & indigo" },
   { id: "retro-green", label: "80s Green CRT", desc: "Phosphor green terminal" },
   { id: "retro-amber", label: "80s Amber CRT", desc: "Amber phosphor terminal" },
@@ -24,6 +33,12 @@ export const Settings: FC = () => {
   const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem("maude-default-voice") || "NATF2.pt");
   const [theme, setTheme] = useState(() => localStorage.getItem("maude-theme") || "dark");
 
+  // Gateway reachable = Spark is connected (regardless of whether sub-services are up)
+  const sparkConnected = health !== null;
+  const gatewayPort = health?.gateway_port ?? 30000;
+  const llmService = health?.services?.llama_server;
+  const personaplexService = health?.services?.personaplex;
+
   useEffect(() => {
     fetch(`${getGatewayUrl()}/health`).then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
     fetch(`${getGatewayUrl()}/models`).then((r) => r.json()).then((d) => setModels(d.models || [])).catch(() => setModels([]));
@@ -31,6 +46,15 @@ export const Settings: FC = () => {
 
   const saveModel = (m: string) => { setDefaultModel(m); localStorage.setItem("maude-default-model", m); };
   const saveVoice = (v: string) => { setDefaultVoice(v); localStorage.setItem("maude-default-voice", v); };
+
+  const svcLabel = (svc?: ServiceStatus) => {
+    if (!svc) return { text: "\u2014", color: "text-maude-muted" };
+    if (svc.status === "up") return { text: `${svc.port} (up)`, color: "text-green-400" };
+    return { text: `${svc.port} (down)`, color: "text-red-400" };
+  };
+
+  const llm = svcLabel(llmService);
+  const ppx = svcLabel(personaplexService);
 
   return (
     <div className="no-scrollbar h-full overflow-y-auto bg-maude-bg">
@@ -44,14 +68,14 @@ export const Settings: FC = () => {
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Connection</h2>
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Spark Status</span>
-              <span className={`flex items-center gap-1.5 text-sm ${health?.status === "ok" ? "text-green-400" : "text-red-400"}`}>
-                <span className={`h-2 w-2 rounded-full ${health?.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
-                {health?.status === "ok" ? "Connected" : "Offline"}
+              <span className={`flex items-center gap-1.5 text-sm ${sparkConnected ? "text-green-400" : "text-red-400"}`}>
+                <span className={`h-2 w-2 rounded-full ${sparkConnected ? "bg-green-400" : "bg-red-400"}`} />
+                {sparkConnected ? "Connected" : "Offline"}
               </span>
             </div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className="font-mono text-sm text-maude-muted">{health?.gateway_port || "\u2014"}</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className="font-mono text-sm text-maude-muted">{health?.llm_port || "\u2014"}</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">PersonaPlex</span><span className="font-mono text-sm text-maude-muted">{health?.personaplex_port || "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className={`font-mono text-sm ${sparkConnected ? "text-green-400" : "text-maude-muted"}`}>{sparkConnected ? `${gatewayPort} (up)` : "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className={`font-mono text-sm ${llm.color}`}>{llm.text}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">PersonaPlex</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{window.location.host}</span></div>
           </div>
@@ -101,17 +125,17 @@ export const Settings: FC = () => {
         {/* Network */}
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Network</h2>
-          <div className="rounded-xl bg-maude-surface p-4"><p className="text-sm text-maude-muted">WiFi management requires native Android access. Use system settings.</p></div>
+          <div className="rounded-xl bg-maude-surface p-4"><p className="text-sm text-maude-muted">Network settings are managed via Tailscale and your device's system settings.</p></div>
         </section>
 
         {/* About */}
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">About</h2>
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">1.0.0</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Nemotron</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">PersonaPlex (NATF2)</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Character</span><span className="text-sm font-mono">MAUDE</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">1.8.3</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Claude</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">PersonaPlex ({(localStorage.getItem("maude-default-voice") || "NATF2.pt").replace(".pt", "")})</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Hub</span><span className="text-sm font-mono">DGX Spark</span></div>
             <div className="pt-2 text-center text-xs text-maude-muted"><span className="fire-gradient font-bold">MAUDE</span> — Multi-Agent Unified Dispatch Engine</div>
           </div>
         </section>

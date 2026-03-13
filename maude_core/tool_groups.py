@@ -11,6 +11,8 @@ _CORE_TOOL_NAMES = {
     "search_file", "search_directory", "edit_file",
     "ask_frontier",
     "save_memory", "recall_memory",
+    "sandbox_exec", "sandbox_write_file", "sandbox_read_file",
+    "sandbox_list", "sandbox_status", "sandbox_copy_out", "sandbox_project",
 }
 
 # Tool groups activated by keyword detection
@@ -134,6 +136,32 @@ _TOOL_GROUPS = {
                       "deep dive", "comprehensive", "parallel", "use the .* agent",
                       "run agent", "dispatch agent"],
         "tools": {"run_agent", "run_agents"},
+    },
+    "sandbox": {
+        "keywords": ["sandbox", "container", "docker", "build me", "build a",
+                      "make me a", "develop", "coding project", "web app",
+                      "autonomous", "work on", "dev environment"],
+        "tools": {"sandbox_exec", "sandbox_write_file", "sandbox_read_file",
+                  "sandbox_list", "sandbox_status", "sandbox_copy_out",
+                  "sandbox_project"},
+    },
+    "forge": {
+        "keywords": ["forge", "build me", "build a", "create an app",
+                      "make me a", "autonomous", "build autonomously",
+                      "develop", "web app", "api service", "saas",
+                      "mvp", "prototype", "ai tool"],
+        "tools": {"forge_build", "forge_status", "forge_log"},
+    },
+    "command_center": {
+        "keywords": ["system stats", "cpu", "gpu", "temperature", "memory usage",
+                      "ram", "disk", "vram", "what's running", "whats running",
+                      "processes", "sessions", "activity", "recent activity",
+                      "scheduler", "scheduled tasks", "nodes", "services",
+                      "status", "monitoring", "dashboard", "command center",
+                      "health", "uptime", "resources"],
+        "tools": {"system_stats", "gpu_processes", "memory_browse",
+                  "session_list", "activity_feed", "scheduler_status",
+                  "node_status"},
     },
     "google": {
         "keywords": ["google"],
