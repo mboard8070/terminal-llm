@@ -261,14 +261,25 @@ export const MessageBubble: FC<Props> = ({ message, animate }) => {
         {message.model && !isUser && (
           <div className="mb-1 text-[10px] font-medium tracking-wider text-maude-muted">{MODEL_LABELS[message.model] || message.model}</div>
         )}
-        {message.imageUrl && (
-          <img
-            src={`${window.location.protocol}//${window.location.host}${message.imageUrl}`}
-            alt="Attached photo"
-            className="mb-2 max-w-full rounded-lg"
-            loading="lazy"
-          />
-        )}
+        {/* Render attached images (supports both legacy imageUrl and new imageUrls) */}
+        {(() => {
+          const urls = message.imageUrls || (message.imageUrl ? [message.imageUrl] : []);
+          if (!urls.length) return null;
+          const base = `${window.location.protocol}//${window.location.host}`;
+          return (
+            <div className={`mb-2 flex gap-2 ${urls.length > 1 ? "overflow-x-auto" : ""}`}>
+              {urls.map((url, i) => (
+                <img
+                  key={url}
+                  src={`${base}${url}`}
+                  alt={`Attached photo ${i + 1}`}
+                  className={`rounded-lg ${urls.length > 1 ? "h-32 w-32 shrink-0 object-cover" : "max-w-full"}`}
+                  loading="lazy"
+                />
+              ))}
+            </div>
+          );
+        })()}
         {hasToolSteps && <ToolActivity steps={message.toolSteps!} streaming={!!animate} contentStarted={!!message.content} />}
         {displayedContent && (
           <div className="break-words text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMarkdown(displayedContent) }} />

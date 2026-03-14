@@ -35,13 +35,13 @@ const ChatView: FC<{
   }, [isStreaming]);
 
   const handleSend = useCallback(
-    (text: string, imageUrl?: string) => {
+    (text: string, imageUrls?: string[]) => {
       if (!convIdRef.current) {
-        const displayText = text || (imageUrl ? "Image conversation" : "New chat");
+        const displayText = text || (imageUrls?.length ? "Image conversation" : "New chat");
         const newId = onFirstMessage(displayText, currentModel);
         convIdRef.current = newId;
       }
-      sendMessage(text, imageUrl);
+      sendMessage(text, imageUrls);
       onMessageSent();
     },
     [sendMessage, onFirstMessage, onMessageSent, currentModel],
@@ -99,7 +99,7 @@ const ChatView: FC<{
       </div>
 
       <ChatInput
-        onSend={(text, imageUrl) => handleSend(text, imageUrl)}
+        onSend={(text, imageUrls) => handleSend(text, imageUrls)}
         isStreaming={isStreaming}
         onStop={stopStreaming}
       />

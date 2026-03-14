@@ -6,14 +6,14 @@ function getGatewayUrl(): string {
 }
 
 interface Props {
-  onSend: (text: string, imageUrl?: string) => void;
+  onSend: (text: string, imageUrls?: string[]) => void;
   isStreaming: boolean;
   onStop: () => void;
 }
 
 export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
   const [text, setText] = useState("");
-  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,10 +22,10 @@ export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   const handleSubmit = () => {
-    if (pendingImage || text.trim()) {
-      onSend(text.trim(), pendingImage ?? undefined);
+    if (pendingImages.length > 0 || text.trim()) {
+      onSend(text.trim(), pendingImages.length > 0 ? pendingImages : undefined);
       setText("");
-      setPendingImage(null);
+      setPendingImages([]);
       if (inputRef.current) inputRef.current.style.height = "44px";
     }
   };
@@ -42,17 +42,23 @@ export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
     setUploading(true);
     try {
-      const filename = `camera_${Date.now()}.jpg`;
-      const resp = await fetch(`${getGatewayUrl()}/share/${encodeURIComponent(filename)}`, {
-        method: "POST",
-        body: file,
-      });
-      if (resp.ok) {
-        setPendingImage(`/download/${filename}`);
+      const newUrls: string[] = [];
+      for (const file of Array.from(files)) {
+        const filename = `camera_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.jpg`;
+        const resp = await fetch(`${getGatewayUrl()}/share/${encodeURIComponent(filename)}`, {
+          method: "POST",
+          body: file,
+        });
+        if (resp.ok) {
+          newUrls.push(`/download/${filename}`);
+        }
+      }
+      if (newUrls.length > 0) {
+        setPendingImages((prev) => [...prev, ...newUrls]);
       }
     } catch {
       /* upload failed silently */
@@ -63,24 +69,32 @@ export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
     }
   };
 
-  const canSend = pendingImage || text.trim();
+  const removeImage = (index: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const canSend = pendingImages.length > 0 || text.trim();
 
   return (
     <div className="border-t border-maude-border bg-maude-surface p-3">
-      {/* Thumbnail preview */}
-      {pendingImage && (
-        <div className="relative mb-2 inline-block">
-          <img
-            src={`${getGatewayUrl()}${pendingImage}`}
-            alt="Pending upload"
-            className="h-20 w-20 rounded-lg object-cover"
-          />
-          <button
-            onClick={() => setPendingImage(null)}
-            className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs text-white"
-          >
-            &times;
-          </button>
+      {/* Thumbnail previews */}
+      {pendingImages.length > 0 && (
+        <div className="mb-2 flex gap-2 overflow-x-auto">
+          {pendingImages.map((img, i) => (
+            <div key={img} className="relative shrink-0">
+              <img
+                src={`${getGatewayUrl()}${img}`}
+                alt={`Pending upload ${i + 1}`}
+                className="h-20 w-20 rounded-lg object-cover"
+              />
+              <button
+                onClick={() => removeImage(i)}
+                className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-xs text-white"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -118,6 +132,7 @@ export const ChatInput: FC<Props> = ({ onSend, isStreaming, onStop }) => {
           ref={attachInputRef}
           type="file"
           accept="image/*"
+          multiple
           onChange={handleFileSelect}
           className="hidden"
         />

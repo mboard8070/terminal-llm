@@ -45,7 +45,8 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   model?: string;
-  imageUrl?: string;
+  imageUrl?: string;       // Legacy single image (backward compat with stored messages)
+  imageUrls?: string[];    // Multiple images
   timestamp: number;
   trace?: TraceInfo;
   toolSteps?: ToolStep[];
@@ -154,8 +155,9 @@ export function useChat(conversationId: string | null = null) {
   }, [messages]);
 
   const sendMessage = useCallback(
-    async (content: string, imageUrl?: string) => {
-      if ((!content.trim() && !imageUrl) || isStreaming) return;
+    async (content: string, imageUrls?: string[]) => {
+      const hasImages = imageUrls && imageUrls.length > 0;
+      if ((!content.trim() && !hasImages) || isStreaming) return;
 
       if (content.startsWith("/")) {
         const cmd = content.trim().toLowerCase();
@@ -163,10 +165,10 @@ export function useChat(conversationId: string | null = null) {
         if (cmd.startsWith("/model ")) { setCurrentModel(cmd.slice(7).trim()); return; }
       }
 
-      const displayContent = content || (imageUrl ? "What do you see in this image?" : "");
+      const displayContent = content || (hasImages ? "What do you see in this image?" : "");
 
       const userMsg: ChatMessage = {
-        id: uuid(), role: "user", content: displayContent, imageUrl, timestamp: Date.now(),
+        id: uuid(), role: "user", content: displayContent, imageUrls: hasImages ? imageUrls : undefined, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
@@ -186,11 +188,16 @@ export function useChat(conversationId: string | null = null) {
         const history = messages.filter((m) => m.role !== "system").slice(-20)
           .map((m) => ({ role: m.role, content: m.content }));
 
-        // Build the API content — prepend image context if an image is attached
+        // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
-        if (imageUrl) {
-          const sharedPath = `/home/mboard76/nvidia-workbench/terminal-llm/shared/${imageUrl.split("/").pop()}`;
-          apiContent = `[Image attached: ${sharedPath} — analyze it with view_image tool]\n\n${displayContent}`;
+        if (hasImages) {
+          const imagePaths = imageUrls.map((u) => `/home/mboard76/nvidia-workbench/terminal-llm/shared/${u.split("/").pop()}`);
+          if (imagePaths.length === 1) {
+            apiContent = `[Image attached: ${imagePaths[0]} — analyze it with view_image tool]\n\n${displayContent}`;
+          } else {
+            const listing = imagePaths.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
+            apiContent = `[${imagePaths.length} images attached — analyze each with view_image tool:\n${listing}]\n\n${displayContent}`;
+          }
         }
 
         // Fetch device location (non-blocking, cached)
