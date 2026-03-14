@@ -718,6 +718,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._handle_command_center(parsed.path, query)
         elif parsed.path == "/health":
             self._serve_health()
+        elif parsed.path == "/vnc":
+            self._redirect_vnc()
         elif parsed.path == "/api/tools":
             self._serve_tools(query)
         elif parsed.path == "/models":
@@ -2553,6 +2555,25 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"result": result})
 
     # ── Health & Tool Catalog API ──────────────────────────────────
+
+    def _redirect_vnc(self):
+        """GET /vnc — redirect to the noVNC web viewer on port 6080.
+
+        This endpoint exists so browser_login can return a gateway-relative URL
+        (e.g. http://<gateway>:30080/vnc) instead of a raw noVNC URL that the
+        LLM might mangle.
+        """
+        try:
+            # Build redirect using the Host header the client used to reach us
+            host = self.headers.get("Host", "localhost:30080")
+            # Strip port from host to get the hostname/IP the client used
+            hostname = host.split(":")[0]
+            target = f"http://{hostname}:6080/vnc.html?autoconnect=true"
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.end_headers()
+        except Exception as e:
+            self._json_response({"error": str(e)}, 500)
 
     def _serve_health(self):
         """Enhanced /health — structured report with deps, services, tools."""

@@ -749,19 +749,19 @@ class BrowserSession:
 
                 # Build response based on whether we're using VNC or local display
                 if vnc_url:
+                    # Build VNC link using Tailscale IP (raw IP — LLMs mangle hostnames)
                     try:
-                        from vnc_session import get_vnc_session
-                        all_urls = get_vnc_session().get_all_urls()
-                    except Exception:
-                        all_urls = [vnc_url]
-
-                    url_lines = "\n".join(f"  {u}" for u in all_urls)
+                        from vnc_session import _get_tailscale_ip, NOVNC_PORT
+                        vnc_ip = _get_tailscale_ip() or "localhost"
+                    except ImportError:
+                        vnc_ip = "localhost"
+                    vnc_link = f"http://{vnc_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true"
                     return (
                         f"Browser opened via VNC for login.\n"
                         f"Page: {title}\n"
                         f"URL: {self._page.url}\n\n"
-                        f"IMPORTANT: Show the user EXACTLY these noVNC links (do NOT modify or substitute the URLs):\n"
-                        f"{url_lines}\n\n"
+                        f"VNC viewer link — give this EXACT link to the user:\n"
+                        f"  {vnc_link}\n\n"
                         f"Log in manually. Leave the browser open — do NOT close it.\n"
                         f"You can log into more accounts with browser_login('<platform>').\n"
                         f"Each gets its own tab. Sessions stay alive as long as tabs are open."
