@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import base64
+import signal
 import time
 import threading
 from pathlib import Path
@@ -72,6 +73,7 @@ class BrowserSession:
         self._playwright: Optional[Playwright] = None
         self._browser: Optional[Browser] = None
         self._page: Optional[Page] = None
+        self._platform_pages: Dict[str, Page] = {}  # platform → tab (for multi-login)
         self._last_activity: float = 0.0
         self._lock = threading.Lock()
         self._inactivity_timer: Optional[threading.Timer] = None
@@ -98,6 +100,7 @@ class BrowserSession:
             )
 
         self._ensure_dirs()
+        self._kill_orphaned_chrome()
         log("Starting browser session...")
 
         self._playwright = sync_playwright().start()
@@ -501,24 +504,78 @@ class BrowserSession:
             except Exception as e:
                 return f"Error selecting option: {e}"
 
+    @staticmethod
+    def _kill_orphaned_chrome():
+        """Kill any Chrome/Chromium processes using our browser data directory.
+
+        When the gateway restarts, the in-memory BrowserSession singleton is lost
+        but the Chrome process it spawned keeps running — orphaned. This prevents
+        a new browser from acquiring the profile lock.
+        """
+        import subprocess as _sp
+        data_dir = str(BROWSER_DATA_DIR)
+        try:
+            # Find chrome/chromium processes whose command line references our data dir
+            result = _sp.run(
+                ["pgrep", "-f", data_dir],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return  # No orphaned processes
+
+            pids = [int(p) for p in result.stdout.strip().split("\n") if p.strip()]
+            for pid in pids:
+                if pid == os.getpid():
+                    continue  # Don't kill ourselves
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    log(f"Killed orphaned Chrome process {pid}")
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+            # Brief wait for processes to exit
+            if pids:
+                time.sleep(1.0)
+
+        except Exception as e:
+            log(f"Warning: orphan cleanup failed: {e}")
+
+    def _resolve_platform(self, url: str) -> Optional[str]:
+        """Return platform key if url matches a known social login shorthand."""
+        key = url.lower().strip()
+        if key in SOCIAL_LOGIN_URLS:
+            return key
+        if key == "twitter":
+            return "x"
+        return None
+
+    def get_platform_page(self, platform: str) -> Optional[Page]:
+        """Return the open tab for a platform, or None if not tracked / closed."""
+        page = self._platform_pages.get(platform)
+        if page is not None and not page.is_closed():
+            return page
+        self._platform_pages.pop(platform, None)
+        return None
+
     def login(self, url: str) -> str:
         """Launch a VISIBLE browser for manual login. Cookies persist for future headless use.
+
+        If the browser is already running (e.g. logged into another platform),
+        opens a NEW TAB instead of tearing down the session. This keeps all
+        previous login tabs alive so background JS can maintain sessions.
 
         If no local display is available, auto-starts a VNC session with noVNC
         so the user can interact via a web browser on any device.
         """
         with self._lock:
             try:
-                # Close any existing session first
-                if self.is_active:
-                    self._close_internal()
-
                 if not PLAYWRIGHT_AVAILABLE:
                     raise RuntimeError(
                         "Playwright is not installed. Run: pip install playwright && playwright install chromium"
                     )
 
                 # Resolve shorthand names like "x", "linkedin"
+                platform = self._resolve_platform(url)
                 resolved = SOCIAL_LOGIN_URLS.get(url.lower().strip())
                 if resolved:
                     log(f"Resolved '{url}' → {resolved}")
@@ -527,6 +584,35 @@ class BrowserSession:
                     url = "https://" + url
 
                 self._ensure_dirs()
+
+                # ── Browser already running? Open a new tab ──────────────
+                if self.is_active:
+                    log(f"Browser active — opening new tab for {url}")
+                    new_page = self._browser.new_page()
+                    new_page.set_default_timeout(ACTION_TIMEOUT_MS)
+                    new_page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+
+                    title = new_page.title() or "(no title)"
+                    if platform:
+                        self._platform_pages[platform] = new_page
+                    # Keep _page pointing at the newest tab for general use
+                    self._page = new_page
+                    self._touch()
+
+                    tab_list = ", ".join(self._platform_pages.keys()) or "(none)"
+                    return (
+                        f"New tab opened for login.\n"
+                        f"Page: {title}\n"
+                        f"URL: {new_page.url}\n\n"
+                        f"Log in manually in the new tab.\n"
+                        f"Open tabs: {tab_list}\n"
+                        f"All previous login sessions are still active."
+                    )
+
+                # ── Fresh launch ─────────────────────────────────────────
+
+                # Kill any orphaned Chrome from a previous gateway process
+                self._kill_orphaned_chrome()
 
                 # Clean up stale profile state that blocks visible launch
                 import shutil
@@ -541,7 +627,6 @@ class BrowserSession:
                             p.unlink(missing_ok=True)
 
                 # Detect if we have a local display or need VNC
-                # Check if DISPLAY points to a live X server, not a stale VNC
                 local_display = os.environ.get("DISPLAY")
                 vnc_url = None
                 needs_vnc = not local_display
@@ -606,7 +691,10 @@ class BrowserSession:
                 self._page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
 
                 title = self._page.title() or "(no title)"
+                if platform:
+                    self._platform_pages[platform] = self._page
                 self._last_activity = time.time()
+
                 # Longer timeout for login sessions
                 if self._inactivity_timer is not None:
                     self._inactivity_timer.cancel()
@@ -616,7 +704,6 @@ class BrowserSession:
 
                 # Build response based on whether we're using VNC or local display
                 if vnc_url:
-                    # Get all URLs for convenience
                     try:
                         from vnc_session import get_vnc_session
                         all_urls = get_vnc_session().get_all_urls()
@@ -629,8 +716,9 @@ class BrowserSession:
                         f"Page: {title}\n"
                         f"URL: {self._page.url}\n\n"
                         f"Open this link on your device to interact:\n{url_lines}\n\n"
-                        f"Log in manually, then tell me to close the browser to save your session.\n"
-                        f"(Auto-closes after 10 minutes of inactivity.)"
+                        f"Log in manually. Leave the browser open — do NOT close it.\n"
+                        f"You can log into more accounts with browser_login('<platform>').\n"
+                        f"Each gets its own tab. Sessions stay alive as long as tabs are open."
                     )
                 else:
                     return (
@@ -638,8 +726,9 @@ class BrowserSession:
                         f"Page: {title}\n"
                         f"URL: {self._page.url}\n\n"
                         f"Log in manually in the browser window.\n"
-                        f"When done, tell me to close the browser to save your session.\n"
-                        f"(Auto-closes after 10 minutes of inactivity.)"
+                        f"Leave the browser open — do NOT close it.\n"
+                        f"You can log into more accounts with browser_login('<platform>').\n"
+                        f"Each gets its own tab. Sessions stay alive as long as tabs are open."
                     )
 
             except Exception as e:
@@ -738,6 +827,7 @@ class BrowserSession:
                 self._playwright = None
 
             self._page = None
+            self._platform_pages.clear()
             self._last_activity = 0.0
 
             # Stop VNC session if one was started for login
