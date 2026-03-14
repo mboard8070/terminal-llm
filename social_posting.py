@@ -290,6 +290,21 @@ def _post_facebook(page, content: str, image_path: Optional[str]) -> str:
     page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30_000)
     _human_pause(2, 4)
 
+    # Dismiss any popups (Remember Password, notifications, etc.)
+    for dismiss_sel in [
+        'button:has-text("Not Now")',
+        'button:has-text("Not now")',
+        '[aria-label="Close"]',
+        '[aria-label="Decline optional cookies"]',
+    ]:
+        dismiss = _first_match(page, [dismiss_sel])
+        if dismiss:
+            try:
+                dismiss.click()
+                _human_pause(0.5, 1)
+            except Exception:
+                pass
+
     if not _is_logged_in(page, "facebook"):
         return "Error: Not logged in to Facebook. Run browser_login('facebook') and keep the browser open."
 
@@ -321,18 +336,37 @@ def _post_facebook(page, content: str, image_path: Optional[str]) -> str:
 
     if image_path:
         try:
+            # Click the Photo/video button in the compose dialog
             photo_btn = _first_match(page, [
                 '[aria-label="Photo/video"]',
                 '[aria-label="Photo/Video"]',
+                '[aria-label="Photo/video "]',
+                'div[role="button"]:has-text("Photo/video")',
+                'div[role="button"]:has-text("Photo/Video")',
             ])
             if photo_btn:
                 photo_btn.click()
                 _human_pause(1, 2)
-            fi = page.locator('input[type="file"][accept*="image"]').first
-            fi.set_input_files(image_path)
-            _human_pause(3, 5)
-        except Exception:
-            log("Facebook image upload failed — continuing without image")
+
+            # Try multiple file input selectors — Facebook changes these
+            fi = None
+            for fi_sel in [
+                'input[type="file"][accept*="image"]',
+                'input[type="file"][accept*="video"]',
+                'input[type="file"]',
+            ]:
+                loc = page.locator(fi_sel)
+                if loc.count() > 0:
+                    fi = loc.first
+                    break
+
+            if fi:
+                fi.set_input_files(image_path)
+                _human_pause(3, 5)
+            else:
+                log("Facebook: no file input found — continuing without image")
+        except Exception as e:
+            log(f"Facebook image upload failed: {e} — continuing without image")
 
     post_btn = _first_match(page, [
         '[aria-label="Post"]',
@@ -356,54 +390,56 @@ def _post_instagram(page, content: str, image_path: str) -> str:
     if not _is_logged_in(page, "instagram"):
         return "Error: Not logged in to Instagram. Run browser_login('instagram') and keep the browser open."
 
-    # Instagram renamed "New post" to "Create" — try both
-    create_btn = _first_match(page, [
-        'svg[aria-label="New post"]',
+    # Instagram has "Create" and/or "Post" in the sidebar — click the outer
+    # container (a/div), not the inner SVG, so the click actually registers.
+    # Try the direct /create/select/... URL as a fallback.
+    opened = False
+    for sel in [
+        'a:has(span:has-text("Post"))',
+        'a:has(span:has-text("Create"))',
+        'div[role="button"]:has(span:has-text("Create"))',
         '[aria-label="New post"]',
-        'svg[aria-label="Create"]',
         '[aria-label="Create"]',
-        'a[href="/create/style/"]',
-        'span:has-text("Create")',
-    ])
-    if not create_btn:
-        _screenshot(page, "instagram_newpost_fail")
-        return "Error: Could not find Instagram Create button."
+        'a[href*="/create"]',
+    ]:
+        btn = _first_match(page, [sel])
+        if btn:
+            btn.click()
+            _human_pause(2, 3)
+            # Check if the create dialog appeared (file input or "Select from computer")
+            if page.locator('input[type="file"]').count() > 0:
+                opened = True
+                break
+            if _first_match(page, ['button:has-text("Select from computer")', 'button:has-text("Select From Computer")']):
+                opened = True
+                break
 
-    create_btn.click()
-    _human_pause(2, 4)
+    if not opened:
+        # Last resort: navigate directly to the create page
+        page.goto("https://www.instagram.com/create/select/", wait_until="domcontentloaded", timeout=15_000)
+        _human_pause(2, 4)
+        if page.locator('input[type="file"]').count() == 0 and not _first_match(page, ['button:has-text("Select from computer")']):
+            _screenshot(page, "instagram_newpost_fail")
+            return "Error: Could not open Instagram create dialog."
 
-    # The create dialog may show "Select from computer" or a drag-drop area.
-    # Try clicking "Select from computer" first, then look for file input.
+    # Click "Select from computer" if visible (exposes the file input)
     select_btn = _first_match(page, [
         'button:has-text("Select from computer")',
         'button:has-text("Select From Computer")',
         'button:has-text("Select from")',
     ])
     if select_btn:
-        # The file input is triggered by this button — set files on the hidden input
-        # before or after clicking. Playwright can set files on hidden inputs.
-        pass
+        select_btn.click()
+        _human_pause(1, 2)
 
-    # Find the file input (may be hidden) — wait for it to appear in the dialog
+    # Upload the image via the file input
     try:
         fi = page.locator('input[type="file"]').first
         fi.set_input_files(image_path)
         _human_pause(3, 5)
     except Exception as e:
-        # If direct set_input_files fails, try clicking "Select from computer" first
-        if select_btn:
-            try:
-                select_btn.click()
-                _human_pause(1, 2)
-                fi = page.locator('input[type="file"]').first
-                fi.set_input_files(image_path)
-                _human_pause(3, 5)
-            except Exception as e2:
-                _screenshot(page, "instagram_upload_fail")
-                return f"Error uploading image to Instagram: {e2}"
-        else:
-            _screenshot(page, "instagram_upload_fail")
-            return f"Error uploading image to Instagram: {e}"
+        _screenshot(page, "instagram_upload_fail")
+        return f"Error uploading image to Instagram: {e}"
 
     # Click through Crop → Filter → Caption steps (Next button, up to 3 times)
     for _ in range(3):
