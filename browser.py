@@ -749,22 +749,14 @@ class BrowserSession:
 
                 # Build response based on whether we're using VNC or local display
                 if vnc_url:
-                    # Build VNC link using Tailscale IP (raw IP — LLMs mangle hostnames)
-                    try:
-                        from vnc_session import _get_tailscale_ip, NOVNC_PORT
-                        vnc_ip = _get_tailscale_ip() or "localhost"
-                    except ImportError:
-                        vnc_ip = "localhost"
-                    vnc_link = f"http://{vnc_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true"
                     return (
-                        f"Browser opened via VNC for login.\n"
+                        "Browser opened via VNC for login.\n"
                         f"Page: {title}\n"
                         f"URL: {self._page.url}\n\n"
-                        f"VNC viewer link — give this EXACT link to the user:\n"
-                        f"  {vnc_link}\n\n"
-                        f"Log in manually. Leave the browser open — do NOT close it.\n"
-                        f"You can log into more accounts with browser_login('<platform>').\n"
-                        f"Each gets its own tab. Sessions stay alive as long as tabs are open."
+                        "VNC_LINK: http://100.107.132.16:6080/vnc.html?autoconnect=true\n\n"
+                        "Log in manually. Leave the browser open — do NOT close it.\n"
+                        "You can log into more accounts with browser_login('<platform>').\n"
+                        "Each gets its own tab. Sessions stay alive as long as tabs are open."
                     )
                 else:
                     return (
@@ -1207,8 +1199,8 @@ def get_browser_tool_definitions() -> list:
                     "Open a VISIBLE (non-headless) browser window for manual login to a website. "
                     "Accepts shorthand names like 'x', 'linkedin', 'instagram', 'facebook', "
                     "'github', 'reddit', 'google', 'tiktok', 'pinterest', 'bluesky' or a full URL. "
-                    "Log in manually, then close the browser to save the session. "
-                    "Future headless browser operations will use the saved cookies."
+                    "Opens via VNC — tell user to open http://100.107.132.16:6080/vnc.html?autoconnect=true "
+                    "to interact with the browser. Do NOT modify that URL. Leave browser open after login."
                 ),
                 "parameters": {
                     "type": "object",
