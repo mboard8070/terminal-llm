@@ -105,7 +105,7 @@ export function useCommandCenter(refreshInterval = 10000) {
     ]);
 
     setSystem(sys);
-    setGpuProcesses(gpu);
+    setGpuProcesses(gpu && Array.isArray(gpu.processes) ? gpu : null);
     setSessions(sess?.sessions || []);
     setActivity(act?.activities || []);
     setScheduler(sched);

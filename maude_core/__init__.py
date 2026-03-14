@@ -44,6 +44,7 @@ from .fast_dispatch import fast_dispatch
 from tool_registry import register_prefix
 
 register_prefix("browser_", "browser", "execute_browser_tool")
+register_prefix("workflow_", "browser_workflows", "execute_workflow_tool")
 
 def _skill_prefix_handler(tool_name, arguments):
     """Handle skill_* tools by stripping prefix and delegating to skill manager."""
