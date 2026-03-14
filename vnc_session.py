@@ -150,24 +150,29 @@ class VncSession:
         return "VNC session stopped."
 
     def _get_url(self) -> str:
-        """Build the noVNC access URL."""
+        """Build the noVNC access URL (prefers Tailscale hostname)."""
+        ts_host = _get_tailscale_hostname()
         ts_ip = _get_tailscale_ip()
         lan_ip = _get_lan_ip()
 
-        urls = []
+        # Prefer Tailscale hostname (readable, less likely to be mangled by LLM)
+        if ts_host:
+            return f"http://{ts_host}:{NOVNC_PORT}/vnc.html?autoconnect=true"
         if ts_ip:
-            urls.append(f"http://{ts_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true")
+            return f"http://{ts_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true"
         if lan_ip:
-            urls.append(f"http://{lan_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true")
-
-        return urls[0] if urls else f"http://localhost:{NOVNC_PORT}/vnc.html?autoconnect=true"
+            return f"http://{lan_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true"
+        return f"http://localhost:{NOVNC_PORT}/vnc.html?autoconnect=true"
 
     def get_all_urls(self) -> list:
-        """Return all access URLs (Tailscale + LAN + localhost)."""
+        """Return all access URLs (Tailscale hostname + IP + LAN + localhost)."""
         urls = []
+        ts_host = _get_tailscale_hostname()
         ts_ip = _get_tailscale_ip()
         lan_ip = _get_lan_ip()
 
+        if ts_host:
+            urls.append(f"http://{ts_host}:{NOVNC_PORT}/vnc.html?autoconnect=true")
         if ts_ip:
             urls.append(f"http://{ts_ip}:{NOVNC_PORT}/vnc.html?autoconnect=true")
         if lan_ip:
@@ -255,6 +260,25 @@ def _get_tailscale_ip() -> Optional[str]:
         )
         if result.returncode == 0:
             return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _get_tailscale_hostname() -> Optional[str]:
+    """Get the Tailscale MagicDNS hostname (e.g. 'spark-e26c')."""
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            import json
+            data = json.loads(result.stdout)
+            # Self node's DNSName, strip trailing dot
+            dns = data.get("Self", {}).get("DNSName", "")
+            if dns:
+                return dns.rstrip(".")
     except Exception:
         pass
     return None
