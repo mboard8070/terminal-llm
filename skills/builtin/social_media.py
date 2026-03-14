@@ -155,61 +155,18 @@ def _validate_image(image_path: Optional[str]) -> Tuple[Optional[str], Optional[
 # ---------------------------------------------------------------------------
 
 def _post_twitter(content: str, image_path: Optional[str] = None) -> str:
-    """Post to Twitter/X via the v2 API using tweepy.
+    """Redirect Twitter/X posting to browser-based social_post tool.
 
-    Returns a human-readable result string.
+    X's API requires a paid tier for posting. Use social_post instead,
+    which posts via browser automation using saved login cookies.
     """
-    configured, err = _twitter_configured()
-    if not configured:
-        return err
-
-    try:
-        import tweepy
-    except ImportError:
-        return (
-            "The 'tweepy' library is required for Twitter posting but is not installed.\n"
-            "Install it with: pip install tweepy"
-        )
-
-    api_key = _get_key("TWITTER_API_KEY")
-    api_secret = _get_key("TWITTER_API_SECRET")
-    access_token = _get_key("TWITTER_ACCESS_TOKEN")
-    access_secret = _get_key("TWITTER_ACCESS_SECRET")
-
-    try:
-        # v2 client for creating tweets
-        client = tweepy.Client(
-            consumer_key=api_key,
-            consumer_secret=api_secret,
-            access_token=access_token,
-            access_token_secret=access_secret,
-        )
-
-        media_ids = None
-
-        # If an image is provided, we need the v1.1 API to upload media
-        if image_path:
-            auth = tweepy.OAuth1UserHandler(
-                api_key, api_secret, access_token, access_secret
-            )
-            api_v1 = tweepy.API(auth)
-            media = api_v1.media_upload(filename=image_path)
-            media_ids = [media.media_id]
-
-        response = client.create_tweet(text=content, media_ids=media_ids)
-        tweet_data = response.data
-        tweet_id = tweet_data.get("id", "unknown")
-
-        return (
-            f"Posted to Twitter/X successfully.\n"
-            f"Tweet ID: {tweet_id}\n"
-            f"URL: https://twitter.com/i/web/status/{tweet_id}"
-        )
-
-    except tweepy.TweepyException as exc:
-        return f"Twitter API error: {exc}"
-    except Exception as exc:
-        return f"Error posting to Twitter/X: {exc}"
+    return (
+        "Twitter/X API posting is disabled (requires paid API tier).\n"
+        "Use the social_post tool instead — it posts via browser automation "
+        "using your saved login session:\n"
+        '  social_post(platform="x", content="...", image_path="...")\n'
+        "If not logged in, run browser_login('x') first."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -587,17 +544,17 @@ def _schedule_post(
 
 @skill(
     name="post_social",
-    description="Post to social media (Twitter/X, LinkedIn, Bluesky)",
-    version="1.0.0",
+    description="Post to social media via API (LinkedIn, Bluesky only — for X/Twitter use the social_post tool instead)",
+    version="1.1.0",
     author="MAUDE",
-    triggers=["tweet", "post", "social media", "twitter", "linkedin", "bluesky", "share"],
+    triggers=["linkedin post", "bluesky post", "social media api"],
     parameters={
         "type": "object",
         "properties": {
             "platform": {
                 "type": "string",
                 "enum": ["twitter", "linkedin", "bluesky", "all"],
-                "description": "Which platform to post to",
+                "description": "Which platform to post to (for X/Twitter, prefer social_post tool)",
             },
             "content": {
                 "type": "string",

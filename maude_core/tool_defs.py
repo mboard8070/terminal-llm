@@ -593,3 +593,10 @@ try:
     TOOLS.extend(WORKFLOW_TOOLS)
 except ImportError:
     pass
+
+# Register social media posting tools
+try:
+    from social_posting import SOCIAL_TOOLS
+    TOOLS.extend(SOCIAL_TOOLS)
+except ImportError:
+    pass

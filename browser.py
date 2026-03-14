@@ -541,10 +541,22 @@ class BrowserSession:
                             p.unlink(missing_ok=True)
 
                 # Detect if we have a local display or need VNC
+                # Check if DISPLAY points to a live X server, not a stale VNC
                 local_display = os.environ.get("DISPLAY")
                 vnc_url = None
+                needs_vnc = not local_display
 
-                if not local_display:
+                if local_display and local_display.startswith(":"):
+                    # DISPLAY was set (possibly from a previous login) — verify X is alive
+                    try:
+                        from vnc_session import get_vnc_session
+                        if not get_vnc_session().is_active:
+                            needs_vnc = True
+                            local_display = None
+                    except ImportError:
+                        pass
+
+                if needs_vnc:
                     # No local display — start VNC session
                     try:
                         from vnc_session import get_vnc_session
@@ -736,6 +748,10 @@ class BrowserSession:
                 if vnc.is_active:
                     vnc.stop()
                     vnc_stopped = True
+                    # Clear stale DISPLAY so next login restarts VNC
+                    display = os.environ.get("DISPLAY", "")
+                    if display == vnc.display:
+                        del os.environ["DISPLAY"]
                     log("VNC session stopped.")
             except ImportError:
                 pass
