@@ -234,10 +234,10 @@ export const CommandCenter: FC = () => {
                 <StatCard label="Runs" value={scheduler.stats.total_runs} />
               </div>
             )}
-            {scheduler?.tasks.length === 0 ? (
+            {!scheduler?.tasks?.length ? (
               <p className="py-8 text-center text-sm text-maude-muted">No scheduled tasks</p>
             ) : (
-              scheduler?.tasks.map((t) => <TaskCard key={t.id} task={t} />)
+              scheduler.tasks.map((t) => <TaskCard key={t.id} task={t} />)
             )}
           </div>
         )}

@@ -41,7 +41,24 @@ HEADLESS = os.environ.get("MAUDE_BROWSER_HEADLESS", "true").lower() in ("true", 
 BROWSER_DATA_DIR = Path.home() / ".config" / "maude" / "browser_data"
 ACTION_TIMEOUT_MS = 30_000      # 30 seconds per action
 INACTIVITY_TIMEOUT = 300        # 5 minutes auto-close
+LOGIN_INACTIVITY_TIMEOUT = 600  # 10 minutes for login sessions
 SCREENSHOT_DIR = Path.home() / ".config" / "maude" / "screenshots"
+
+# Common login URLs — lets users say browser_login("x") instead of the full URL
+SOCIAL_LOGIN_URLS = {
+    "x": "https://x.com/i/flow/login",
+    "twitter": "https://x.com/i/flow/login",
+    "linkedin": "https://www.linkedin.com/login",
+    "instagram": "https://www.instagram.com/accounts/login/",
+    "facebook": "https://www.facebook.com/login",
+    "github": "https://github.com/login",
+    "reddit": "https://www.reddit.com/login",
+    "youtube": "https://accounts.google.com/ServiceLogin?service=youtube",
+    "google": "https://accounts.google.com/ServiceLogin",
+    "tiktok": "https://www.tiktok.com/login",
+    "pinterest": "https://www.pinterest.com/login/",
+    "bluesky": "https://bsky.app/",
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -484,6 +501,187 @@ class BrowserSession:
             except Exception as e:
                 return f"Error selecting option: {e}"
 
+    def login(self, url: str) -> str:
+        """Launch a VISIBLE browser for manual login. Cookies persist for future headless use.
+
+        If no local display is available, auto-starts a VNC session with noVNC
+        so the user can interact via a web browser on any device.
+        """
+        with self._lock:
+            try:
+                # Close any existing session first
+                if self.is_active:
+                    self._close_internal()
+
+                if not PLAYWRIGHT_AVAILABLE:
+                    raise RuntimeError(
+                        "Playwright is not installed. Run: pip install playwright && playwright install chromium"
+                    )
+
+                # Resolve shorthand names like "x", "linkedin"
+                resolved = SOCIAL_LOGIN_URLS.get(url.lower().strip())
+                if resolved:
+                    log(f"Resolved '{url}' → {resolved}")
+                    url = resolved
+                elif not url.startswith(("http://", "https://")):
+                    url = "https://" + url
+
+                self._ensure_dirs()
+
+                # Detect if we have a local display or need VNC
+                local_display = os.environ.get("DISPLAY")
+                vnc_url = None
+
+                if not local_display:
+                    # No local display — start VNC session
+                    try:
+                        from vnc_session import get_vnc_session
+                        vnc = get_vnc_session()
+                        result = vnc.start()
+
+                        if result.startswith("Error"):
+                            return result
+
+                        vnc_url = result
+                        local_display = vnc.display
+                        os.environ["DISPLAY"] = local_display
+                        log(f"Using VNC display {local_display}, noVNC at {vnc_url}")
+                    except ImportError:
+                        return (
+                            "Error: No display available and vnc_session module not found.\n"
+                            "Either run from a graphical session or install VNC:\n"
+                            "  sudo apt-get install -y xvfb x11vnc novnc python3-websockify"
+                        )
+
+                log(f"Starting VISIBLE browser for login to {url} on {local_display}")
+
+                self._playwright = sync_playwright().start()
+                self._browser = self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(BROWSER_DATA_DIR),
+                    headless=False,  # VISIBLE for manual interaction
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                    ],
+                    viewport={"width": 1280, "height": 900},
+                    ignore_https_errors=True,
+                    java_script_enabled=True,
+                )
+
+                if self._browser.pages:
+                    self._page = self._browser.pages[0]
+                else:
+                    self._page = self._browser.new_page()
+
+                self._page.set_default_timeout(ACTION_TIMEOUT_MS)
+                self._page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+
+                title = self._page.title() or "(no title)"
+                self._last_activity = time.time()
+                # Longer timeout for login sessions
+                if self._inactivity_timer is not None:
+                    self._inactivity_timer.cancel()
+                self._inactivity_timer = threading.Timer(LOGIN_INACTIVITY_TIMEOUT, self._auto_close)
+                self._inactivity_timer.daemon = True
+                self._inactivity_timer.start()
+
+                # Build response based on whether we're using VNC or local display
+                if vnc_url:
+                    # Get all URLs for convenience
+                    try:
+                        from vnc_session import get_vnc_session
+                        all_urls = get_vnc_session().get_all_urls()
+                    except Exception:
+                        all_urls = [vnc_url]
+
+                    url_lines = "\n".join(f"  {u}" for u in all_urls)
+                    return (
+                        f"Browser opened via VNC for login.\n"
+                        f"Page: {title}\n"
+                        f"URL: {self._page.url}\n\n"
+                        f"Open this link on your device to interact:\n{url_lines}\n\n"
+                        f"Log in manually, then tell me to close the browser to save your session.\n"
+                        f"(Auto-closes after 10 minutes of inactivity.)"
+                    )
+                else:
+                    return (
+                        f"Browser opened in VISIBLE mode for login.\n"
+                        f"Page: {title}\n"
+                        f"URL: {self._page.url}\n\n"
+                        f"Log in manually in the browser window.\n"
+                        f"When done, tell me to close the browser to save your session.\n"
+                        f"(Auto-closes after 10 minutes of inactivity.)"
+                    )
+
+            except Exception as e:
+                return f"Error opening login browser: {e}"
+
+    def check_session(self, url: str, logged_in_selector: str) -> str:
+        """Check if a saved login session is still valid for a site."""
+        with self._lock:
+            try:
+                # Resolve shorthand names
+                resolved = SOCIAL_LOGIN_URLS.get(url.lower().strip())
+                if resolved:
+                    # For session checks, go to the main site, not the login page
+                    main_urls = {
+                        "x": "https://x.com/home",
+                        "twitter": "https://x.com/home",
+                        "linkedin": "https://www.linkedin.com/feed/",
+                        "instagram": "https://www.instagram.com/",
+                        "facebook": "https://www.facebook.com/",
+                        "github": "https://github.com/",
+                        "reddit": "https://www.reddit.com/",
+                        "youtube": "https://www.youtube.com/",
+                        "google": "https://myaccount.google.com/",
+                        "tiktok": "https://www.tiktok.com/foryou",
+                        "pinterest": "https://www.pinterest.com/",
+                        "bluesky": "https://bsky.app/",
+                    }
+                    url = main_urls.get(url.lower().strip(), resolved)
+
+                if not url.startswith(("http://", "https://")):
+                    url = "https://" + url
+
+                self._ensure_browser()
+                log(f"Checking session at {url} for '{logged_in_selector}'")
+
+                self._page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+                try:
+                    self._page.wait_for_load_state("networkidle", timeout=10_000)
+                except PlaywrightTimeout:
+                    pass
+
+                current_url = self._page.url
+                title = self._page.title() or "(no title)"
+
+                # Check for the logged-in indicator
+                element = self._resolve_element(logged_in_selector, self._page)
+
+                self._touch()
+
+                if element is not None:
+                    return (
+                        f"Session VALID — found '{logged_in_selector}' on page.\n"
+                        f"Page: {title}\n"
+                        f"URL: {current_url}"
+                    )
+                else:
+                    # Check if we got redirected to a login page
+                    login_indicators = ["login", "signin", "sign-in", "sign_in", "auth"]
+                    redirected_to_login = any(ind in current_url.lower() for ind in login_indicators)
+                    hint = " (redirected to login page)" if redirected_to_login else ""
+
+                    return (
+                        f"Session EXPIRED — '{logged_in_selector}' not found{hint}.\n"
+                        f"Page: {title}\n"
+                        f"URL: {current_url}\n"
+                        f"Use browser_login to re-authenticate."
+                    )
+
+            except Exception as e:
+                return f"Error checking session: {e}"
+
     def close(self) -> str:
         """Close the browser session and clean up."""
         with self._lock:
@@ -513,8 +711,23 @@ class BrowserSession:
             self._page = None
             self._last_activity = 0.0
 
+            # Stop VNC session if one was started for login
+            vnc_stopped = False
+            try:
+                from vnc_session import get_vnc_session
+                vnc = get_vnc_session()
+                if vnc.is_active:
+                    vnc.stop()
+                    vnc_stopped = True
+                    log("VNC session stopped.")
+            except ImportError:
+                pass
+
             log("Browser session closed.")
-            return "Browser session closed."
+            msg = "Browser session closed. Login cookies saved."
+            if vnc_stopped:
+                msg += " VNC session stopped."
+            return msg
 
         except Exception as e:
             return f"Error closing browser: {e}"
@@ -577,6 +790,17 @@ def browser_fill_form(fields: dict) -> str:
 def browser_select(selector: str, value: str) -> str:
     """Select a dropdown option by value, label, or index."""
     return _get_session().select_option(selector, value)
+
+
+def browser_login(url: str) -> str:
+    """Open a VISIBLE browser for manual login. Saves session for future headless use.
+    Accepts shorthand names: x, linkedin, instagram, facebook, github, reddit, etc."""
+    return _get_session().login(url)
+
+
+def browser_check_session(url: str, logged_in_selector: str) -> str:
+    """Check if a saved login session is still valid. Returns VALID or EXPIRED."""
+    return _get_session().check_session(url, logged_in_selector)
 
 
 def browser_close() -> str:
@@ -793,6 +1017,63 @@ def get_browser_tool_definitions() -> list:
         {
             "type": "function",
             "function": {
+                "name": "browser_login",
+                "description": (
+                    "Open a VISIBLE (non-headless) browser window for manual login to a website. "
+                    "Accepts shorthand names like 'x', 'linkedin', 'instagram', 'facebook', "
+                    "'github', 'reddit', 'google', 'tiktok', 'pinterest', 'bluesky' or a full URL. "
+                    "Log in manually, then close the browser to save the session. "
+                    "Future headless browser operations will use the saved cookies."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": (
+                                "Site to log into — shorthand name (e.g. 'x', 'linkedin', 'instagram') "
+                                "or full URL (e.g. 'https://example.com/login')"
+                            )
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_check_session",
+                "description": (
+                    "Check if a saved login session is still valid for a website. "
+                    "Opens the site headlessly and looks for a logged-in indicator element. "
+                    "Returns VALID if found, EXPIRED if not."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": (
+                                "Site to check — shorthand name (e.g. 'x', 'linkedin') "
+                                "or full URL"
+                            )
+                        },
+                        "logged_in_selector": {
+                            "type": "string",
+                            "description": (
+                                "CSS selector, text, or aria-label that indicates a logged-in state "
+                                "(e.g. 'nav[aria-label=\"Primary\"]', 'Home', 'Profile')"
+                            )
+                        }
+                    },
+                    "required": ["url", "logged_in_selector"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "browser_close",
                 "description": (
                     "Close the browser session and free resources. "
@@ -824,15 +1105,17 @@ def execute_browser_tool(name: str, args: dict) -> str:
         String result of the tool execution.
     """
     dispatch = {
-        "browser_open":       lambda a: browser_open(a.get("url", "")),
-        "browser_click":      lambda a: browser_click(a.get("selector", "")),
-        "browser_type":       lambda a: browser_type(a.get("selector", ""), a.get("text", "")),
-        "browser_navigate":   lambda a: browser_navigate(a.get("url", "")),
-        "browser_screenshot": lambda a: browser_screenshot(),
-        "browser_extract":    lambda a: browser_extract(a.get("selector")),
-        "browser_fill_form":  lambda a: browser_fill_form(a.get("fields", {})),
-        "browser_select":     lambda a: browser_select(a.get("selector", ""), a.get("value", "")),
-        "browser_close":      lambda a: browser_close(),
+        "browser_open":          lambda a: browser_open(a.get("url", "")),
+        "browser_click":         lambda a: browser_click(a.get("selector", "")),
+        "browser_type":          lambda a: browser_type(a.get("selector", ""), a.get("text", "")),
+        "browser_navigate":      lambda a: browser_navigate(a.get("url", "")),
+        "browser_screenshot":    lambda a: browser_screenshot(),
+        "browser_extract":       lambda a: browser_extract(a.get("selector")),
+        "browser_fill_form":     lambda a: browser_fill_form(a.get("fields", {})),
+        "browser_select":        lambda a: browser_select(a.get("selector", ""), a.get("value", "")),
+        "browser_login":         lambda a: browser_login(a.get("url", "")),
+        "browser_check_session": lambda a: browser_check_session(a.get("url", ""), a.get("logged_in_selector", "")),
+        "browser_close":         lambda a: browser_close(),
     }
 
     handler = dispatch.get(name)

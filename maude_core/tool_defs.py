@@ -586,3 +586,10 @@ try:
     TOOLS.extend(FORGE_TOOLS)
 except ImportError:
     pass
+
+# Register browser workflow tools
+try:
+    from browser_workflows import WORKFLOW_TOOLS
+    TOOLS.extend(WORKFLOW_TOOLS)
+except ImportError:
+    pass
