@@ -62,8 +62,13 @@ def _screenshot(page, label: str = "social") -> Optional[str]:
         return None
 
 
-def _get_page():
-    """Get the page from the running BrowserSession, or return an error."""
+def _get_page(platform: str = None):
+    """Get the page for a platform from the running BrowserSession.
+
+    If a platform-specific tab exists (from browser_login), uses that tab.
+    Otherwise falls back to the default page. This keeps each platform's
+    background JS running in its own tab to maintain sessions.
+    """
     from browser import _get_session
     session = _get_session()
     if not session.is_active:
@@ -72,6 +77,14 @@ def _get_page():
             "and keep the browser open after logging in."
         )
     session._touch()  # reset inactivity timer
+
+    # Try platform-specific tab first
+    if platform:
+        page = session.get_platform_page(platform)
+        if page is not None:
+            return page, None
+
+    # Fall back to default page
     return session._page, None
 
 
@@ -412,7 +425,7 @@ def social_post(platform: str, content: str, image_path: str = None) -> str:
             return f"Error: Image not found: {image_path}"
         image_path = str(p.resolve())
 
-    page, err = _get_page()
+    page, err = _get_page(platform)
     if err:
         return err
 
