@@ -528,6 +528,18 @@ class BrowserSession:
 
                 self._ensure_dirs()
 
+                # Clean up stale profile state that blocks visible launch
+                import shutil
+                for stale in ("SingletonLock", "SingletonSocket", "SingletonCookie",
+                              "ShaderCache", "GrShaderCache", "GraphiteDawnCache",
+                              "BrowserMetrics"):
+                    p = BROWSER_DATA_DIR / stale
+                    if p.exists():
+                        if p.is_dir():
+                            shutil.rmtree(p, ignore_errors=True)
+                        else:
+                            p.unlink(missing_ok=True)
+
                 # Detect if we have a local display or need VNC
                 local_display = os.environ.get("DISPLAY")
                 vnc_url = None
@@ -555,6 +567,9 @@ class BrowserSession:
 
                 log(f"Starting VISIBLE browser for login to {url} on {local_display}")
 
+                # Ensure DISPLAY is set before Playwright launches Chromium
+                os.environ["DISPLAY"] = local_display
+
                 self._playwright = sync_playwright().start()
                 self._browser = self._playwright.chromium.launch_persistent_context(
                     user_data_dir=str(BROWSER_DATA_DIR),
@@ -562,6 +577,8 @@ class BrowserSession:
                     args=[
                         "--disable-blink-features=AutomationControlled",
                         "--no-sandbox",
+                        "--disable-gpu",
+                        "--disable-software-rasterizer",
                     ],
                     viewport={"width": 1280, "height": 900},
                     ignore_https_errors=True,
