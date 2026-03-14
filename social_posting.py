@@ -241,6 +241,30 @@ def _post_linkedin(page, content: str, image_path: Optional[str]) -> str:
             fi = page.locator('input[type="file"]').first
             fi.set_input_files(image_path)
             _human_pause(3, 5)
+
+            # LinkedIn opens an image Editor with Back/Next buttons.
+            # Click "Next" (possibly twice) to get past it to the post view.
+            for _ in range(3):
+                next_btn = _first_match(page, [
+                    'button:has-text("Next")',
+                    '[aria-label="Next"]',
+                    'button.share-box-footer__primary-btn:has-text("Next")',
+                ])
+                if next_btn:
+                    next_btn.click()
+                    _human_pause(1, 3)
+                else:
+                    break
+
+            # After editor, LinkedIn may show a "Done" button
+            done_btn = _first_match(page, [
+                'button:has-text("Done")',
+                '[aria-label="Done"]',
+            ])
+            if done_btn:
+                done_btn.click()
+                _human_pause(1, 2)
+
         except Exception:
             log("LinkedIn image upload failed — continuing without image")
 
