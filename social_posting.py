@@ -111,6 +111,8 @@ _LOGIN_SELECTORS = {
     "instagram": [
         'svg[aria-label="New post"]',
         '[aria-label="New post"]',
+        'svg[aria-label="Create"]',
+        '[aria-label="Create"]',
         'a[href="/direct/inbox/"]',
     ],
 }
@@ -354,27 +356,57 @@ def _post_instagram(page, content: str, image_path: str) -> str:
     if not _is_logged_in(page, "instagram"):
         return "Error: Not logged in to Instagram. Run browser_login('instagram') and keep the browser open."
 
-    new_post = _first_match(page, [
+    # Instagram renamed "New post" to "Create" — try both
+    create_btn = _first_match(page, [
         'svg[aria-label="New post"]',
         '[aria-label="New post"]',
+        'svg[aria-label="Create"]',
+        '[aria-label="Create"]',
         'a[href="/create/style/"]',
+        'span:has-text("Create")',
     ])
-    if not new_post:
+    if not create_btn:
         _screenshot(page, "instagram_newpost_fail")
-        return "Error: Could not find Instagram 'New post' button."
+        return "Error: Could not find Instagram Create button."
 
-    new_post.click()
-    _human_pause(1, 3)
+    create_btn.click()
+    _human_pause(2, 4)
 
+    # The create dialog may show "Select from computer" or a drag-drop area.
+    # Try clicking "Select from computer" first, then look for file input.
+    select_btn = _first_match(page, [
+        'button:has-text("Select from computer")',
+        'button:has-text("Select From Computer")',
+        'button:has-text("Select from")',
+    ])
+    if select_btn:
+        # The file input is triggered by this button — set files on the hidden input
+        # before or after clicking. Playwright can set files on hidden inputs.
+        pass
+
+    # Find the file input (may be hidden) — wait for it to appear in the dialog
     try:
         fi = page.locator('input[type="file"]').first
         fi.set_input_files(image_path)
         _human_pause(3, 5)
     except Exception as e:
-        _screenshot(page, "instagram_upload_fail")
-        return f"Error uploading image to Instagram: {e}"
+        # If direct set_input_files fails, try clicking "Select from computer" first
+        if select_btn:
+            try:
+                select_btn.click()
+                _human_pause(1, 2)
+                fi = page.locator('input[type="file"]').first
+                fi.set_input_files(image_path)
+                _human_pause(3, 5)
+            except Exception as e2:
+                _screenshot(page, "instagram_upload_fail")
+                return f"Error uploading image to Instagram: {e2}"
+        else:
+            _screenshot(page, "instagram_upload_fail")
+            return f"Error uploading image to Instagram: {e}"
 
-    for _ in range(2):
+    # Click through Crop → Filter → Caption steps (Next button, up to 3 times)
+    for _ in range(3):
         next_btn = _first_match(page, [
             'button:has-text("Next")',
             '[aria-label="Next"]',
@@ -383,12 +415,16 @@ def _post_instagram(page, content: str, image_path: str) -> str:
         if next_btn:
             next_btn.click()
             _human_pause(1, 3)
+        else:
+            break
 
+    # Write caption
     caption_box = _first_match(page, [
         '[aria-label="Write a caption..."]',
         '[aria-label="Write a caption\u2026"]',
         'textarea[aria-label*="caption"]',
         'div[role="textbox"]',
+        '[contenteditable="true"]',
     ])
     if caption_box:
         caption_box.click()
