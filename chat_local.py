@@ -877,7 +877,8 @@ TOOLS AVAILABLE:
 - Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky" or any URL). browser_check_session (verify if saved login is still valid)
 - Browser Workflows: workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
 IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or social media, USE browser_login — do NOT give text instructions. The tool handles VNC automatically for remote access.
-- Social media: skill_post_social (Twitter/X, LinkedIn, Bluesky), skill_social_status
+- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram). Uses saved browser_login sessions. ALWAYS prefer this over skill_post_social.
+- Social media API (fallback): skill_post_social (requires API keys — only use if social_post fails), skill_social_status
 - Scheduling: schedule_task
 
 CROSS-MACHINE (collab):
