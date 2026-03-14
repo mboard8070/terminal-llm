@@ -90,8 +90,10 @@ _TOOL_GROUPS = {
                   "workflow_unschedule"},
     },
     "social": {
-        "keywords": ["tweet", "post to", "social media", "twitter", "linkedin", "bluesky", "share on"],
-        "tools": {"skill_post_social", "skill_social_status"},
+        "keywords": ["tweet", "post to", "post on", "social media", "twitter",
+                      "linkedin", "bluesky", "share on", "post about",
+                      "facebook", "instagram", "x.com"],
+        "tools": {"social_post"},
     },
     "web_image": {
         "keywords": ["find image", "find picture", "find photo", "show me a picture",
