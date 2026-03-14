@@ -405,6 +405,10 @@ def social_post(platform: str, content: str, image_path: str = None) -> str:
 
     Requires browser_login('<platform>') first — keep the browser open.
     The same browser that you logged into is used to post.
+
+    All Playwright operations are dispatched to the BrowserSession's worker
+    thread — the gateway runs each tool call in a new thread, but Playwright
+    requires all page operations on the thread that created the browser.
     """
     platform = platform.lower().strip()
     if platform == "twitter":
@@ -425,15 +429,20 @@ def social_post(platform: str, content: str, image_path: str = None) -> str:
             return f"Error: Image not found: {image_path}"
         image_path = str(p.resolve())
 
-    page, err = _get_page(platform)
-    if err:
-        return err
+    from browser import _get_session
+    session = _get_session()
 
-    try:
-        return _POSTERS[platform](page, content, image_path)
-    except Exception as e:
-        _screenshot(page, f"{platform}_error")
-        return f"Error posting to {platform}: {e}"
+    def _do_post():
+        page, err = _get_page(platform)
+        if err:
+            return err
+        try:
+            return _POSTERS[platform](page, content, image_path)
+        except Exception as e:
+            _screenshot(page, f"{platform}_error")
+            return f"Error posting to {platform}: {e}"
+
+    return session._run_on_worker(_do_post)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

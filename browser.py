@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import base64
+import queue
 import signal
 import time
 import threading
@@ -67,7 +68,14 @@ SOCIAL_LOGIN_URLS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BrowserSession:
-    """Manages a persistent Playwright browser and page with lazy initialization."""
+    """Manages a persistent Playwright browser and page with lazy initialization.
+
+    All Playwright operations run on a dedicated worker thread because
+    Playwright's sync API is thread-bound — the browser context must be
+    used from the same thread that created it. The gateway dispatches each
+    tool call in a new thread, so without this, the second call would hit:
+    "cannot switch to a different thread (which happens to have exited)".
+    """
 
     def __init__(self):
         self._playwright: Optional[Playwright] = None
@@ -77,6 +85,43 @@ class BrowserSession:
         self._last_activity: float = 0.0
         self._lock = threading.Lock()
         self._inactivity_timer: Optional[threading.Timer] = None
+        # Dedicated thread for all Playwright operations
+        self._work_queue: queue.Queue = queue.Queue()
+        self._worker: Optional[threading.Thread] = None
+
+    def _ensure_worker(self):
+        """Start the Playwright worker thread if not already running."""
+        if self._worker is not None and self._worker.is_alive():
+            return
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="browser-worker")
+        self._worker.start()
+
+    def _worker_loop(self):
+        """Process Playwright operations submitted via _run_on_worker."""
+        while True:
+            item = self._work_queue.get()
+            if item is None:
+                break  # Shutdown signal
+            fn, result_queue = item
+            try:
+                result = fn()
+                result_queue.put(("ok", result))
+            except Exception as e:
+                result_queue.put(("err", e))
+
+    def _run_on_worker(self, fn):
+        """Submit a callable to the Playwright worker thread and wait for the result.
+
+        This ensures all Playwright API calls happen on the same thread that
+        created the browser context.
+        """
+        self._ensure_worker()
+        result_queue = queue.Queue()
+        self._work_queue.put((fn, result_queue))
+        status, value = result_queue.get()
+        if status == "err":
+            raise value
+        return value
 
     @property
     def is_active(self) -> bool:
@@ -874,62 +919,78 @@ def _get_session() -> BrowserSession:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public tool functions
+#
+# Every call is dispatched to the BrowserSession's dedicated worker thread
+# via _run_on_worker. This is critical because the gateway runs each tool
+# call in a new thread, but Playwright's sync API requires all operations
+# on a browser context to happen on the thread that created it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def browser_open(url: str) -> str:
     """Open a URL in a headless Chromium browser. Returns page title and text summary."""
-    return _get_session().open(url)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.open(url))
 
 
 def browser_click(selector: str) -> str:
     """Click an element by CSS selector, text content, or aria-label."""
-    return _get_session().click(selector)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.click(selector))
 
 
 def browser_type(selector: str, text: str) -> str:
     """Type text into an input or textarea. Use selector='active' for the focused element."""
-    return _get_session().type_text(selector, text)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.type_text(selector, text))
 
 
 def browser_navigate(url: str) -> str:
     """Navigate to a new URL in the current browser session."""
-    return _get_session().navigate(url)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.navigate(url))
 
 
 def browser_screenshot() -> str:
     """Take a screenshot and return a visual description via the LLaVA vision model."""
-    return _get_session().screenshot()
+    s = _get_session()
+    return s._run_on_worker(lambda: s.screenshot())
 
 
 def browser_extract(selector: str = None) -> str:
     """Extract text content from the page or a specific CSS selector. Limited to 10,000 chars."""
-    return _get_session().extract(selector)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.extract(selector))
 
 
 def browser_fill_form(fields: dict) -> str:
     """Fill multiple form fields at once. Keys are selectors, values are text to type."""
-    return _get_session().fill_form(fields)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.fill_form(fields))
 
 
 def browser_select(selector: str, value: str) -> str:
     """Select a dropdown option by value, label, or index."""
-    return _get_session().select_option(selector, value)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.select_option(selector, value))
 
 
 def browser_login(url: str) -> str:
     """Open a VISIBLE browser for manual login. Saves session for future headless use.
     Accepts shorthand names: x, linkedin, instagram, facebook, github, reddit, etc."""
-    return _get_session().login(url)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.login(url))
 
 
 def browser_check_session(url: str, logged_in_selector: str) -> str:
     """Check if a saved login session is still valid. Returns VALID or EXPIRED."""
-    return _get_session().check_session(url, logged_in_selector)
+    s = _get_session()
+    return s._run_on_worker(lambda: s.check_session(url, logged_in_selector))
 
 
 def browser_close() -> str:
     """Close the browser session and free resources."""
-    return _get_session().close()
+    s = _get_session()
+    return s._run_on_worker(lambda: s.close())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
