@@ -40,8 +40,8 @@ except ImportError:
 HEADLESS = os.environ.get("MAUDE_BROWSER_HEADLESS", "true").lower() in ("true", "1", "yes")
 BROWSER_DATA_DIR = Path.home() / ".config" / "maude" / "browser_data"
 ACTION_TIMEOUT_MS = 30_000      # 30 seconds per action
-INACTIVITY_TIMEOUT = 300        # 5 minutes auto-close
-LOGIN_INACTIVITY_TIMEOUT = 600  # 10 minutes for login sessions
+INACTIVITY_TIMEOUT = 3600       # 1 hour auto-close (supports social posting between uses)
+LOGIN_INACTIVITY_TIMEOUT = 3600  # 1 hour for login sessions
 SCREENSHOT_DIR = Path.home() / ".config" / "maude" / "screenshots"
 
 # Common login URLs — lets users say browser_login("x") instead of the full URL
