@@ -10254,6 +10254,7 @@ ${R}`;
     "devstral-small-latest": "Devstral Small",
     "devstral-medium-latest": "Devstral Medium",
     nemotron: "Nemotron",
+    "nemotron-super": "Nemotron Super",
     llava: "LLaVA"
   }, ox = ({ message: e, animate: t }) => {
     const n = e.role === "user", r = Zv(e.content, !!t), l = !n && e.toolSteps && e.toolSteps.length > 0, a = !e.content && !n && !l;
@@ -10488,6 +10489,11 @@ ${R}`;
       id: "nemotron",
       label: "Nemotron",
       desc: "Local"
+    },
+    {
+      id: "nemotron-super",
+      label: "Nemotron Super",
+      desc: "Local 120B"
     },
     {
       id: "llava",
@@ -11119,7 +11125,7 @@ registerProcessor('ring-player', RingPlayerProcessor);
     }, []), fe = v.useCallback(async (I, K, D) => {
       try {
         const B = (await il(async () => {
-          const { default: Y } = await import("./recorder.min-C9SwhXmS.js").then((q) => q.r);
+          const { default: Y } = await import("./recorder.min-DrAV86dp.js").then((q) => q.r);
           return {
             default: Y
           };

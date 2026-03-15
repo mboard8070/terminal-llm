@@ -246,6 +246,7 @@ const MODEL_LABELS: Record<string, string> = {
   "devstral-small-latest": "Devstral Small",
   "devstral-medium-latest": "Devstral Medium",
   "nemotron": "Nemotron",
+  "nemotron-super": "Nemotron Super",
   "llava": "LLaVA",
 };
 
