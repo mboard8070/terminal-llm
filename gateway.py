@@ -137,6 +137,20 @@ MODEL_ROUTES = {
         "api_key_env": None,
         "max_context": 4096,
     },
+    # Hermes 3 70B — local (llama-server on 30011), strong tool use
+    "hermes": {
+        "provider": "local",
+        "base_url": "http://localhost:30011",
+        "api_key_env": None,
+        "max_context": 8192,
+    },
+    # Mistral Small 3.1 24B — local (llama-server on 30012), fast + tool use
+    "mistral-small-local": {
+        "provider": "local",
+        "base_url": "http://localhost:30012",
+        "api_key_env": None,
+        "max_context": 32768,
+    },
     # Claude Opus — most capable, deep reasoning
     "claude-opus-4-20250514": {
         "provider": "anthropic",
@@ -163,6 +177,10 @@ MODEL_ALIASES = {
     "nemotron-super": "nvidia/nemotron-3-super-120b-a12b:free",
     "local": "nemotron",
     "vision": "llava",
+    "hermes": "hermes",
+    "hermes3": "hermes",
+    "mistral-small-local": "mistral-small-local",
+    "msl": "mistral-small-local",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }
@@ -883,26 +901,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
             return
 
-        # Local models → proxy to llama-server
+        # Local models — tool-capable ones go through the same tool loop as cloud
         if route["provider"] == "local":
             req["model"] = resolved_name
-            # Inject device location into system prompt for local models too
-            location = req.pop("location", None)
-            if location and isinstance(location, dict):
-                lat = location.get("lat")
-                lng = location.get("lng")
-                if lat is not None and lng is not None:
-                    loc_ctx = (
-                        f"\nDEVICE LOCATION: The user's phone is at latitude {lat:.6f}, "
-                        f"longitude {lng:.6f} (accuracy: {location.get('accuracy', 'unknown')}m). "
-                        "Use this for location-aware responses."
-                    )
-                    for msg in req.get("messages", []):
-                        if msg.get("role") == "system":
-                            msg["content"] = msg["content"] + loc_ctx
-                            break
+            client_sent_tools = bool(req.get("tools"))
+            plain_api = bool(req.get("response_format"))
+            # Vision model and JSON mode → raw proxy (no tool loop)
+            if resolved_name in ("llava",) or plain_api or client_sent_tools:
+                self._proxy_to_llm(override_body=json.dumps(req).encode())
+                return
+            # Tool-capable local models → same tool loop as cloud
+            if TOOL_SUPPORT:
+                self._cloud_model_with_tools(req, route, resolved_name)
+                return
+            # Fallback: raw proxy
             self._proxy_to_llm(override_body=json.dumps(req).encode())
-            return
             return
 
         # Cloud models → forward to provider API
@@ -1212,7 +1225,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
         produced. The final response is streamed back to the client as SSE.
         """
         tool_retries = 0
-        api_key = os.environ.get(route["api_key_env"], "")
+        api_key = os.environ.get(route["api_key_env"], "") if route.get("api_key_env") else ""
 
         # Get the user's latest message for tool selection
         user_msg = ""
@@ -1244,6 +1257,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
             "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
             "If building a site, it should be built, running, and accessible before you respond. "
+            "8. DO NOT ask the user for permission at every step. When given a task, figure it out "
+            "and DO IT. Use the tools and information you already have. Only ask when you genuinely "
+            "cannot proceed without info you have no way to obtain (e.g. a password). "
+            "'Should I proceed?' and 'Do you want me to...?' are almost never appropriate — just do the work. "
             "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
@@ -1261,18 +1278,21 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
             "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
-            "using web_browse. When the user asks about current events, recent news, documentation, "
-            "prices, reviews, or anything that requires up-to-date information, USE web_search. "
-            "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "using web_browse. ONLY use web_search when the user explicitly asks you to search or "
+            "look something up, or when you genuinely need current external information (news, prices, "
+            "docs) to complete the task. Do NOT web search as a first step. For tasks like scheduling, "
+            "posting, file operations, coding, or using existing tools — just do the task directly. "
+            "Do NOT say you cannot search the web — you CAN when relevant, but don't use it reflexively."
             "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
             "to display images inline, include the markdown ![description](url) in your response. "
             "For generated/shared images use ![description](/download/filename.png). "
             "For web images use the full URL from the search results."
-            "\n\nBROWSER LOGIN: When the user asks to log in, login, or sign in to ANY website "
-            "or social media (X, LinkedIn, Instagram, Facebook, GitHub, Reddit, TikTok, Bluesky, etc.), "
-            "USE the browser_login tool — do NOT give text instructions. It accepts shorthand names "
-            "(e.g. browser_login('x'), browser_login('linkedin')) and opens a visible browser via VNC "
-            "so the user can interact remotely. browser_check_session checks if a saved login is still valid. "
+            "\n\nBROWSER: The user has a persistent browser session (Playwright) that stays logged into "
+            "social media and other sites. When the user asks to DO something on a site (search LinkedIn, "
+            "post to X, check Facebook), use browser_navigate and browser tools to act on the EXISTING "
+            "session — do NOT open a new browser or ask them to log in again. Only use browser_login "
+            "when the user explicitly asks to log in or when browser_check_session confirms the session "
+            "is expired. browser_login accepts shorthand names (e.g. 'x', 'linkedin', 'instagram'). "
             "\n\nBROWSER WORKFLOWS: workflow_create, workflow_run, workflow_list, workflow_schedule — "
             "create repeatable browser automations with change detection and email notifications. "
             "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
@@ -1362,9 +1382,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
                 headers = {
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
                     "Content-Length": str(len(body)),
                 }
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
 
                 # Run LLM call in thread with keepalive pings
                 llm_result_box = [None, None, None]  # [status, body, exception]
@@ -1451,16 +1472,34 @@ class GatewayHandler(BaseHTTPRequestHandler):
 
             # Check for tool calls
             tool_calls = message.get("tool_calls")
-            if tool_calls and finish_reason == "tool_calls":
+            if tool_calls and finish_reason in ("tool_calls", "stop"):
                 # Add assistant message with tool_calls to conversation
                 messages.append(message)
+
+                # Normalize tool_call IDs — some templates (Mistral Nemo)
+                # require exactly 9 alphanumeric chars
+                import string
+                for idx, tc in enumerate(tool_calls):
+                    tc_id = tc.get("id", "")
+                    clean_id = ''.join(c for c in tc_id if c in string.ascii_letters + string.digits)
+                    if len(clean_id) < 9:
+                        clean_id = clean_id + "x" * (9 - len(clean_id))
+                    tc["id"] = clean_id[:9]
 
                 # Execute each tool call
                 for tc in tool_calls:
                     func_name = tc["function"]["name"]
-                    try:
-                        func_args = json.loads(tc["function"]["arguments"])
-                    except (json.JSONDecodeError, ValueError):
+                    raw_args = tc["function"].get("arguments", "{}")
+                    if isinstance(raw_args, dict):
+                        func_args = raw_args
+                    elif isinstance(raw_args, str):
+                        try:
+                            func_args = json.loads(raw_args)
+                        except (json.JSONDecodeError, ValueError):
+                            logger.warning("Failed to parse tool args for %s: %s", func_name, raw_args[:200])
+                            func_args = {}
+                    else:
+                        logger.warning("Unexpected args type for %s: %s", func_name, type(raw_args))
                         func_args = {}
 
                     # Emit tool_call trace
@@ -1713,6 +1752,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "(run_command: ss -tlnp), and give the Tailscale URL (run_command: tailscale ip -4). "
             "7. Complete the ENTIRE task. Don't stop halfway and describe what remains. "
             "If building a site, it should be built, running, and accessible before you respond. "
+            "8. DO NOT ask the user for permission at every step. When given a task, figure it out "
+            "and DO IT. Use the tools and information you already have. Only ask when you genuinely "
+            "cannot proceed without info you have no way to obtain (e.g. a password). "
+            "'Should I proceed?' and 'Do you want me to...?' are almost never appropriate — just do the work. "
             "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
             "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
             "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
@@ -1730,25 +1773,28 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "use drive_upload — do NOT write a Python script that imports googleapiclient. "
             "To repeat the same operation on multiple files, call the same tool multiple times. "
             "\n\nYou can SEARCH THE WEB using the web_search tool (DuckDuckGo) and READ WEB PAGES "
-            "using web_browse. When the user asks about current events, recent news, documentation, "
-            "prices, reviews, or anything that requires up-to-date information, USE web_search. "
-            "Do NOT say you cannot search the web — you CAN and SHOULD when relevant."
+            "using web_browse. ONLY use web_search when the user explicitly asks you to search or "
+            "look something up, or when you genuinely need current external information (news, prices, "
+            "docs) to complete the task. Do NOT web search as a first step. For tasks like scheduling, "
+            "posting, file operations, coding, or using existing tools — just do the task directly. "
+            "Do NOT say you cannot search the web — you CAN when relevant, but don't use it reflexively."
             "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
             "to display images inline, include the markdown ![description](url) in your response. "
             "For generated/shared images use ![description](/download/filename.png). "
             "For web images use the full URL from the search results."
-            "\n\nBROWSER LOGIN: When the user asks to log in, login, or sign in to ANY website "
-            "or social media (X, LinkedIn, Instagram, Facebook, GitHub, Reddit, TikTok, Bluesky, etc.), "
-            "USE the browser_login tool — do NOT give text instructions. It accepts shorthand names "
-            "(e.g. browser_login('x'), browser_login('linkedin')) and opens a visible browser via VNC "
-            "so the user can interact remotely. browser_check_session checks if a saved login is still valid. "
+            "\n\nBROWSER: The user has a persistent browser session (Playwright) that stays logged into "
+            "social media and other sites. When the user asks to DO something on a site (search LinkedIn, "
+            "post to X, check Facebook), use browser_navigate and browser tools to act on the EXISTING "
+            "session — do NOT open a new browser or ask them to log in again. Only use browser_login "
+            "when the user explicitly asks to log in or when browser_check_session confirms the session "
+            "is expired. browser_login accepts shorthand names (e.g. 'x', 'linkedin', 'instagram'). "
             "\n\nBROWSER WORKFLOWS: workflow_create, workflow_run, workflow_list, workflow_schedule — "
             "create repeatable browser automations with change detection and email notifications. "
             "\n\nPERSISTENT MEMORY: You have save_memory and recall_memory tools "
             "available on EVERY request. Use save_memory PROACTIVELY when the user "
             "shares personal facts, preferences, names, dates, project details, or "
             "anything worth remembering across sessions. Do NOT ask permission to save "
-            "\xe2\x80\x94 just save it. Use recall_memory when the user references something from "
+            "— just save it. Use recall_memory when the user references something from "
             "a previous conversation or when context from past sessions would help. "
             "Categories: fact, preference, person, task."
         )

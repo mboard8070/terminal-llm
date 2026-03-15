@@ -557,9 +557,15 @@ def chat(client, messages: list):
                 # Execute each tool call
                 for tc_id, tc_data in tool_calls_data.items():
                     func_name = tc_data["name"]
-                    try:
-                        func_args = json.loads(tc_data["arguments"])
-                    except json.JSONDecodeError:
+                    raw_args = tc_data.get("arguments", "{}")
+                    if isinstance(raw_args, dict):
+                        func_args = raw_args
+                    elif isinstance(raw_args, str):
+                        try:
+                            func_args = json.loads(raw_args)
+                        except (json.JSONDecodeError, ValueError):
+                            func_args = {}
+                    else:
                         func_args = {}
 
                     # Check for duplicate tool calls (same tool + same args)
@@ -859,11 +865,13 @@ CRITICAL RULES — FOLLOW THESE EXACTLY:
 5. NEVER guess system info. Use tools to check IPs, ports, running processes, etc.
 6. When serving web apps: bind to 0.0.0.0, check which ports are free first (ss -tlnp), and give the Tailscale URL (run: tailscale ip -4) directly.
 7. Complete the ENTIRE task. Don't stop halfway and describe what remains. If you're building a site, it should be built, running, and accessible before you respond.
+8. DO NOT ask the user for permission at every step. When given a task, figure it out and do it. Use the tools and information you already have. Only ask the user when you genuinely cannot proceed without information you have no way to obtain (e.g. a password, a personal preference with no reasonable default). "Should I proceed?" and "Do you want me to...?" are almost never appropriate — just do the work.
 
 TOOLS AVAILABLE:
 - File ops: read_file, write_file, edit_file, search_file, search_directory, list_directory, change_directory, get_working_directory
 - Shell: run_command (git, pip, python, etc.)
 - Web: web_search, web_browse, web_view, view_image (LLaVA vision)
+  IMPORTANT: Do NOT use web_search unless the user explicitly asks you to search/look something up, or you genuinely need current external information (news, prices, docs) to answer. For tasks like scheduling, posting, file operations, coding, or using existing tools — just do the task directly. Never web search as a first step.
 - Cloud AI: ask_frontier (escalate to Claude/Gemini), send_to_claude (delegate to Claude Code)
 - Gmail: gmail_list, gmail_read, gmail_send
 - Google Drive: drive_list, drive_search, drive_read, drive_upload, drive_create_folder, drive_create_doc, drive_create_sheet, drive_update_doc, drive_delete
@@ -877,7 +885,7 @@ TOOLS AVAILABLE:
 - Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky" or any URL). browser_check_session (verify if saved login is still valid)
 - Browser Workflows: workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
 IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or social media, USE browser_login — do NOT give text instructions. The tool handles VNC automatically for remote access.
-- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram). Uses saved browser_login sessions. ALWAYS prefer this over skill_post_social.
+- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram). Uses saved browser_login sessions. ALWAYS prefer this over skill_post_social. When posting with an image, you MUST pass image_path to social_post — use the same file path from view_image.
 - Social media API (fallback): skill_post_social (requires API keys — only use if social_post fails), skill_social_status
 - Scheduling: schedule_task
 
@@ -910,6 +918,8 @@ Confirm before destructive operations."""
 
 class MaudeApp(App):
     """MAUDE TUI Application with fixed input at bottom."""
+
+    ALLOW_SELECT = True
 
     CSS = """
     #output {
