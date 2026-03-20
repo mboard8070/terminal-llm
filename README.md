@@ -73,8 +73,10 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Multi-client access**: Server TUI, Mac/PC CLI, phone PWA, Telegram bot
 - **Model routing**: Auto-routes between local Nemotron and cloud Mistral/Codestral via gateway
 - **Tool execution**: Files, shell, web browse/search, vision, image generation
+- **Parallel tool execution**: Read-only tools run concurrently via ThreadPoolExecutor; mutating tools stay sequential
+- **Planned execution**: `execute_plan` tool lets the model declare multi-stage tool plans with `$N.M` cross-stage references — collapses multiple LLM round-trips into one
 - **Tool result caching**: TTL-based cache (30min web, 5min vision) to reduce redundant calls
-- **Pipeline trace**: Inline display of tool calls, args, result previews, and timing
+- **Pipeline trace**: Inline display of tool calls, args, result previews, timing, and parallel execution indicators
 - **Typewriter effects**: Word-by-word response reveal on server TUI and client CLI
 - **Shared folder**: Bidirectional rsync between server and clients (`~/.maude/shared/`)
 - **Auto-routing**: Classifies messages and routes to specialized subagents
@@ -127,7 +129,7 @@ The gateway (`gateway.py`) runs on port 30000 and is the single entry point for 
 
 - **Model routing**: Routes requests to local llama.cpp or cloud APIs (Mistral, Codestral, Claude) based on model name
 - **Tool execution**: Runs server-side tool loops for cloud models with automatic tool selection
-- **SSE trace events**: Streams `tool_call`, `tool_result`, and `llm_call` trace events to clients
+- **SSE trace events**: Streams `tool_call`, `tool_result`, `llm_call`, and `parallel_start` trace events to clients
 - **Structured logging**: Uses Python `logging` module (`maude.gateway` logger) with timestamps and levels
 - **File serving**: Serves shared folder files, PWA assets, and generated images
 - **HTTPS**: Self-signed certs for Tailscale connections, HTTP mirror on port 30080
@@ -163,11 +165,13 @@ The gateway (`gateway.py`) runs on port 30000 and is the single entry point for 
 | `list_transfers` | List files uploaded by clients |
 | `get_transfer` | Copy a client upload to the working directory |
 
-### Delegation & Automation
+### Delegation, Planning & Automation
 | Tool | Description |
 |------|-------------|
 | `ask_frontier` | Escalate to cloud AI for complex reasoning |
 | `send_to_claude` | Delegate tasks to Claude Code |
+| `execute_plan` | Multi-stage tool plan — stages run sequentially, tools within each stage run in parallel. Supports `$N.M` references between stages |
+| `run_agent` / `run_agents` | Dispatch to specialized subagents (parallel execution, shared context) |
 | `schedule_task` | Create/manage cron-based automated tasks |
 
 ### Google Integration
@@ -250,11 +254,12 @@ terminal-llm/
 │   ├── tools_schedule.py  # Cron-based task scheduling
 │   ├── tools_google.py    # 30 Google Workspace tools (lazy-import)
 │   ├── tools_substack.py  # 7 Substack newsletter tools (lazy-import)
-│   └── tools_collab.py    # 6 collaboration/mesh tools (lazy-import)
+│   ├── tools_collab.py    # 6 collaboration/mesh tools (lazy-import)
+│   └── tools_plan.py      # Planned execution + PARALLEL_SAFE shared set
 ├── chat_local.py          # Server TUI (Textual)
 ├── gateway.py             # Gateway — model routing, tool loops, SSE, structured logging
 ├── auto_router.py         # Message classification and subagent routing
-├── execution.py           # Subagent execution
+├── agent_executor.py      # Parallel subagent execution with shared context
 ├── frontier.py            # Cloud AI escalation
 ├── memory.py              # Persistent conversation memory
 ├── scheduler.py           # Cron-based task scheduling
@@ -265,14 +270,16 @@ terminal-llm/
 ├── tool_catalog.py        # Tool catalog API for gateway endpoints
 ├── voice.py               # Voice mode (Whisper)
 ├── run_telegram.py        # Telegram bot
-├── tests/                 # Test suite (86+ tests)
+├── tests/                 # Test suite (122+ tests)
 │   ├── test_tool_execution.py    # Unit tests for core tools
 │   ├── test_gateway_api.py       # API endpoint tests (mock-based)
 │   ├── test_gateway_http.py      # Integration tests (real HTTP server)
 │   ├── test_health.py            # Health checker tests
 │   ├── test_tool_catalog.py      # Tool catalog tests
 │   ├── test_collab.py            # Collaboration system tests
-│   └── test_client_router.py     # Client-side routing tests
+│   ├── test_client_router.py     # Client-side routing tests
+│   ├── test_plan_execution.py    # execute_plan, $N.M refs, stage ordering
+│   └── test_parallel_tools.py    # Parallel execution timing, agent concurrency
 ├── maude-client/          # Mac/PC CLI client (pip-installable)
 │   ├── maude_client/
 │   │   ├── cli.py         # Client main loop, spinner, typewriter, SSE trace
