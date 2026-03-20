@@ -1480,17 +1480,27 @@ class GatewayHandler(BaseHTTPRequestHandler):
             tool_calls = message.get("tool_calls")
             if tool_calls and finish_reason in ("tool_calls", "stop"):
                 # Add assistant message with tool_calls to conversation
-                messages.append(message)
+                # Strip non-standard fields (e.g. reasoning from Nemotron)
+                # that may cause errors on subsequent API calls
+                clean_msg = {
+                    "role": message.get("role", "assistant"),
+                    "content": message.get("content") or "",
+                    "tool_calls": message.get("tool_calls", []),
+                }
+                messages.append(clean_msg)
 
-                # Normalize tool_call IDs — some templates (Mistral Nemo)
-                # require exactly 9 alphanumeric chars
+                # Normalize tool_call IDs — local Mistral Nemo requires exactly
+                # 9 alphanumeric chars, but cloud providers (OpenRouter, Mistral API)
+                # send longer IDs that must be preserved for result matching.
                 import string
-                for idx, tc in enumerate(tool_calls):
-                    tc_id = tc.get("id", "")
-                    clean_id = ''.join(c for c in tc_id if c in string.ascii_letters + string.digits)
-                    if len(clean_id) < 9:
-                        clean_id = clean_id + "x" * (9 - len(clean_id))
-                    tc["id"] = clean_id[:9]
+                is_local = route.get("provider") == "local"
+                if is_local:
+                    for idx, tc in enumerate(tool_calls):
+                        tc_id = tc.get("id", "")
+                        clean_id = ''.join(c for c in tc_id if c in string.ascii_letters + string.digits)
+                        if len(clean_id) < 9:
+                            clean_id = clean_id + "x" * (9 - len(clean_id))
+                        tc["id"] = clean_id[:9]
 
                 # Parse all tool calls
                 parsed_tc = []  # [(tc, func_name, func_args)]
