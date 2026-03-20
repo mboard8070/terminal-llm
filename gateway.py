@@ -1564,6 +1564,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 # Run parallel-safe tools concurrently with keepalive pings
                 if len(parallel_batch) > 1:
                     from concurrent.futures import ThreadPoolExecutor, as_completed
+                    par_names = [fn for _, fn, _ in parallel_batch]
+                    logger.info("Parallel execution: %d tools (%s)", len(parallel_batch), ", ".join(par_names))
+                    if sse_started:
+                        self._send_trace_sse("parallel_start", {
+                            "count": len(parallel_batch),
+                            "tools": par_names,
+                        })
                     parallel_results = {}
                     tool_start = time.time()
                     with ThreadPoolExecutor(max_workers=min(len(parallel_batch), 6)) as pool:
@@ -2132,6 +2139,13 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 # Run parallel-safe tools concurrently with keepalive
                 if len(par_batch) > 1:
                     from concurrent.futures import ThreadPoolExecutor, as_completed
+                    par_names = [fn for _, fn, _, _ in par_batch]
+                    logger.info("Parallel execution: %d tools (%s)", len(par_batch), ", ".join(par_names))
+                    if sse_started:
+                        self._send_trace_sse("parallel_start", {
+                            "count": len(par_batch),
+                            "tools": par_names,
+                        })
                     par_results = {}
                     tool_start = time.time()
                     with ThreadPoolExecutor(max_workers=min(len(par_batch), 6)) as pool:

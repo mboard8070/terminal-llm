@@ -373,6 +373,9 @@ def chat(client, messages: list):
                                             console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tname}[/bold white]")
                                             if arg_hint:
                                                 console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+                                        elif ttype == "parallel_start":
+                                            pcount = trace.get("count", 0)
+                                            console.print(f"[dim cyan]  ⚡ {pcount} tools in parallel[/dim cyan]")
                                         elif ttype == "tool_result":
                                             tname = trace.get("name", "")
                                             preview = trace.get("preview", "")
@@ -623,6 +626,7 @@ def chat(client, messages: list):
 
                 # Run parallel-safe tools concurrently
                 if len(parallel_batch) > 1:
+                    console.print(f"[dim cyan]  ⚡ {len(parallel_batch)} tools in parallel[/dim cyan]")
                     parallel_results = {}  # tc_id -> (func_name, result, elapsed)
                     with ThreadPoolExecutor(max_workers=min(len(parallel_batch), 6)) as pool:
                         futures = {
