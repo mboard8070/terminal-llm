@@ -11,6 +11,7 @@ _CORE_TOOL_NAMES = {
     "search_file", "search_directory", "edit_file",
     "ask_frontier",
     "save_memory", "recall_memory",
+    "execute_plan",
     "sandbox_exec", "sandbox_write_file", "sandbox_read_file",
     "sandbox_list", "sandbox_status", "sandbox_copy_out", "sandbox_project",
 }

@@ -18,6 +18,7 @@ import time
 import json
 from pathlib import Path
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 
 # Textual TUI framework
@@ -33,6 +34,7 @@ import pyfiglet
 # MAUDE core - shared tools
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
+from maude_core.tools_plan import PARALLEL_SAFE
 import conversation_sync
 from collab import get_hub as get_collab_hub
 
@@ -554,7 +556,10 @@ def chat(client, messages: list):
                     ]
                 })
 
-                # Execute each tool call
+                # Parse all tool calls and check for duplicates
+                # Tools that only read state can run in parallel; tools that
+                # mutate state (write/edit/run/change) must run sequentially.
+                parsed_calls = []  # [(tc_id, func_name, func_args)]
                 for tc_id, tc_data in tool_calls_data.items():
                     func_name = tc_data["name"]
                     raw_args = tc_data.get("arguments", "{}")
@@ -574,46 +579,84 @@ def chat(client, messages: list):
                         consecutive_duplicates += 1
                         console.print(f"[cyan]  ╰─[/cyan] [dim yellow]skipped (duplicate call)[/dim yellow]")
                         result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user with the best answer you can based on information gathered so far.)"
-                        # Break out if too many duplicates in a row
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": result})
                         if consecutive_duplicates >= 3:
                             console.print("[dim yellow](escalating to frontier model...)[/dim yellow]")
-                            # Extract the user's original question from messages
                             user_question = next(
                                 (m["content"] for m in reversed(messages) if m.get("role") == "user"),
                                 "Help me with my request"
                             )
                             return _escalate_to_frontier(user_question)
                     else:
-                        consecutive_duplicates = 0  # Reset on successful new call
+                        consecutive_duplicates = 0
                         recent_tool_calls.append(call_signature)
-                        # Pretty arg summary — pick the most useful arg to show
-                        arg_hint = ""
-                        for key in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
-                            if key in func_args:
-                                val = str(func_args[key])
-                                if len(val) > 55:
-                                    val = val[:55] + "…"
-                                arg_hint = val
-                                break
-                        if arg_hint:
-                            console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+                        parsed_calls.append((tc_id, func_name, func_args))
 
-                        tool_start = time.time()
-                        result = execute_tool(func_name, func_args)
-                        tool_elapsed = time.time() - tool_start
+                # Split into parallel-safe and sequential calls
+                parallel_batch = [(tc_id, fn, args) for tc_id, fn, args in parsed_calls if fn in PARALLEL_SAFE]
+                sequential_batch = [(tc_id, fn, args) for tc_id, fn, args in parsed_calls if fn not in PARALLEL_SAFE]
 
-                        # Result preview
-                        result_str = result or ""
-                        preview = result_str[:80].replace("\n", " ").strip()
-                        if len(result_str) > 80:
-                            preview += "…"
-                        status_color = "green" if not result_str.startswith("Error") else "red"
-                        console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({tool_elapsed:.1f}s)[/dim]")
+                def _exec_one(tc_id, func_name, func_args):
+                    """Execute a single tool call, return (tc_id, func_name, result, elapsed)."""
+                    t0 = time.time()
+                    res = execute_tool(func_name, func_args)
+                    return tc_id, func_name, res, time.time() - t0
 
-                    # Add compacted tool result to messages (prevents context bloat)
+                def _print_tool_status(func_name, func_args, result, elapsed):
+                    """Print arg hint and result preview for a tool call."""
+                    arg_hint = ""
+                    for key in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
+                        if key in func_args:
+                            val = str(func_args[key])
+                            if len(val) > 55:
+                                val = val[:55] + "…"
+                            arg_hint = val
+                            break
+                    if arg_hint:
+                        console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+                    result_str = result or ""
+                    preview = result_str[:80].replace("\n", " ").strip()
+                    if len(result_str) > 80:
+                        preview += "…"
+                    status_color = "green" if not result_str.startswith("Error") else "red"
+                    console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]")
+
+                # Run parallel-safe tools concurrently
+                if len(parallel_batch) > 1:
+                    parallel_results = {}  # tc_id -> (func_name, result, elapsed)
+                    with ThreadPoolExecutor(max_workers=min(len(parallel_batch), 6)) as pool:
+                        futures = {
+                            pool.submit(_exec_one, tc_id, fn, args): (tc_id, fn, args)
+                            for tc_id, fn, args in parallel_batch
+                        }
+                        for future in as_completed(futures):
+                            tc_id, func_name, result, elapsed = future.result()
+                            _, _, func_args = futures[future]
+                            parallel_results[tc_id] = (func_name, func_args, result, elapsed)
+                    # Append results in original order
+                    for tc_id, fn, args in parallel_batch:
+                        func_name, func_args, result, elapsed = parallel_results[tc_id]
+                        _print_tool_status(func_name, func_args, result, elapsed)
+                        messages.append({
+                            "role": "tool", "tool_call_id": tc_id,
+                            "content": _compact_tool_result(func_name, result)
+                        })
+                elif len(parallel_batch) == 1:
+                    # Single parallel-safe tool — no pool overhead
+                    tc_id, func_name, func_args = parallel_batch[0]
+                    tc_id, func_name, result, elapsed = _exec_one(tc_id, func_name, func_args)
+                    _print_tool_status(func_name, func_args, result, elapsed)
                     messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
+                        "role": "tool", "tool_call_id": tc_id,
+                        "content": _compact_tool_result(func_name, result)
+                    })
+
+                # Run state-mutating tools sequentially (order matters)
+                for tc_id, func_name, func_args in sequential_batch:
+                    tc_id, func_name, result, elapsed = _exec_one(tc_id, func_name, func_args)
+                    _print_tool_status(func_name, func_args, result, elapsed)
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc_id,
                         "content": _compact_tool_result(func_name, result)
                     })
 
@@ -857,6 +900,8 @@ SYSTEM_PROMPT = f"""You are MAUDE, a local AI assistant running on Matt's DGX Sp
 
 STYLE: Be brief. Action over explanation. Use tools proactively.
 
+EFFICIENCY: When you need multiple pieces of information, call ALL the tools you need in a single response rather than one at a time. For example, if you need to read 3 files, call read_file 3 times in one response — don't read one, wait, then read the next. Similarly, batch web_search, gmail_read, drive_read, github calls, etc. This dramatically reduces round-trips. Only chain tools sequentially when a later call truly depends on an earlier result.
+
 CRITICAL RULES — FOLLOW THESE EXACTLY:
 1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it.
 2. VERIFY your work. After writing code: run the build/compile step and check for errors. After starting a server: curl it and confirm it responds. After creating files: check they exist.
@@ -888,6 +933,7 @@ IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or 
 - Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram). Uses saved browser_login sessions. ALWAYS prefer this over skill_post_social. When posting with an image, you MUST pass image_path to social_post — use the same file path from view_image.
 - Social media API (fallback): skill_post_social (requires API keys — only use if social_post fails), skill_social_status
 - Scheduling: schedule_task
+- Planning: execute_plan — run a multi-stage tool plan in one call. Define stages (each an array of tool calls); tools within a stage run in parallel, stages run sequentially. Use $N.M to reference results from stage N, tool M. Use this when you can foresee multiple steps ahead (e.g. read 3 files, then edit based on findings). This saves round-trips — prefer it over calling tools one at a time when the full plan is known upfront.
 
 CROSS-MACHINE (collab):
 - mesh_status: Show online devices with client_id and platform

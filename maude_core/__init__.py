@@ -78,6 +78,7 @@ try:
 except ImportError:
     pass
 from . import tools_command_center  # noqa: F401
+from . import tools_plan           # noqa: F401
 
 # ── Execution ──────────────────────────────────────────────────
 from .execute import execute_tool
