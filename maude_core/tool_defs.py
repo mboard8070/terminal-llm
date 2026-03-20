@@ -456,6 +456,45 @@ Example: research two topics simultaneously, or have one agent write code while 
             }
         }
     },
+    # ── Planned Execution ──────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_plan",
+            "description": """Execute a multi-stage tool plan. Each stage's tools run in parallel; stages run sequentially. Use this when you need multiple tools across dependent steps — it collapses several round-trips into one call.
+
+Reference earlier results in later stages with $N.M (stage N, tool index M). Example: $0.1 = result from stage 0, second tool.
+
+Example plan — search 3 files in parallel, then edit based on findings:
+stages: [
+  [{"name": "search_file", "args": {"path": "src/main.py", "pattern": "TODO"}},
+   {"name": "search_file", "args": {"path": "src/utils.py", "pattern": "TODO"}},
+   {"name": "read_file", "args": {"path": "README.md"}}],
+  [{"name": "run_command", "args": {"command": "grep -rn 'FIXME' src/"}}]
+]""",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "stages": {
+                        "type": "array",
+                        "description": "Ordered list of stages. Each stage is an array of tool calls that run in parallel.",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string", "description": "Tool name"},
+                                    "args": {"type": "object", "description": "Tool arguments"}
+                                },
+                                "required": ["name", "args"]
+                            }
+                        }
+                    }
+                },
+                "required": ["stages"]
+            }
+        }
+    },
     # ── Command Center tools ─────────────────────────────────
     {
         "type": "function",

@@ -22,6 +22,7 @@ from channels.telegram import create_telegram_channel
 # Use shared MAUDE core
 import maude_core
 from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
+from maude_core.tools_plan import PARALLEL_SAFE
 
 # Get config from maude_core
 LOCAL_URL = maude_core.LOCAL_URL
@@ -53,6 +54,9 @@ TOOLS AVAILABLE:
 - Browser: browser_open, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
 - Social media: skill_post_social (Twitter/X, LinkedIn, Bluesky), skill_social_status
 - Scheduling: schedule_task
+- Planning: execute_plan — run a multi-stage tool plan in one call. Stages run sequentially, tools within a stage run in parallel. Use $N.M to reference earlier results.
+
+EFFICIENCY: When you need multiple pieces of information, call ALL tools in one response. Batch reads, searches, etc. Only chain sequentially when a later call depends on an earlier result.
 
 STRATEGY:
 1. For current info: use web_search first
@@ -197,18 +201,41 @@ async def maude_callback(msg: IncomingMessage) -> str:
                 ]
             })
 
+            # Parse tool calls
+            parsed_tcs = []
             for tc in assistant_msg.tool_calls:
                 print(f">>> [{tc.function.name}]", flush=True)
                 try:
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {}
-                result = execute_tool(tc.function.name, args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result
-                })
+                parsed_tcs.append((tc.id, tc.function.name, args))
+
+            # Split into parallel-safe and sequential
+            par = [(tid, fn, a) for tid, fn, a in parsed_tcs if fn in PARALLEL_SAFE]
+            seq = [(tid, fn, a) for tid, fn, a in parsed_tcs if fn not in PARALLEL_SAFE]
+
+            # Run parallel-safe tools concurrently
+            if len(par) > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                par_results = {}
+                with ThreadPoolExecutor(max_workers=min(len(par), 6)) as pool:
+                    futures = {
+                        pool.submit(execute_tool, fn, a): tid
+                        for tid, fn, a in par
+                    }
+                    for future in as_completed(futures):
+                        par_results[futures[future]] = future.result()
+                for tid, fn, a in par:
+                    messages.append({"role": "tool", "tool_call_id": tid, "content": par_results[tid]})
+            elif len(par) == 1:
+                tid, fn, a = par[0]
+                messages.append({"role": "tool", "tool_call_id": tid, "content": execute_tool(fn, a)})
+
+            # Run mutating tools sequentially
+            for tid, fn, a in seq:
+                result = execute_tool(fn, a)
+                messages.append({"role": "tool", "tool_call_id": tid, "content": result})
 
         # Local model exhausted tool iterations — escalate to frontier
         return _escalate_to_frontier(msg.text)

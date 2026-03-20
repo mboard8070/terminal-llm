@@ -48,6 +48,7 @@ logger = logging.getLogger("maude.gateway")
 try:
     import maude_core
     from maude_core import TOOLS as ALL_TOOLS, execute_tool, get_tools_for_message, reset_rate_limits
+    from maude_core.tools_plan import PARALLEL_SAFE
     TOOL_SUPPORT = True
     logger.info("Tool support enabled via maude_core")
 except ImportError as e:
@@ -1244,6 +1245,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
+            "\n\nEFFICIENCY: When you need multiple pieces of information, call ALL the tools you "
+            "need in a single response rather than one at a time. For example, if you need to read "
+            "3 files, call read_file 3 times in one response. Similarly batch web_search, gmail_read, "
+            "drive_read, github calls, etc. Only chain sequentially when a later call depends on an "
+            "earlier result. "
             "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
             "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
             "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
@@ -1486,7 +1492,8 @@ class GatewayHandler(BaseHTTPRequestHandler):
                         clean_id = clean_id + "x" * (9 - len(clean_id))
                     tc["id"] = clean_id[:9]
 
-                # Execute each tool call
+                # Parse all tool calls
+                parsed_tc = []  # [(tc, func_name, func_args)]
                 for tc in tool_calls:
                     func_name = tc["function"]["name"]
                     raw_args = tc["function"].get("arguments", "{}")
@@ -1516,50 +1523,108 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     call_sig = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_sig in recent_tool_calls:
                         tool_result = "(Already called with same arguments. Respond with the best answer you have.)"
+                        messages.append({
+                            "role": "tool", "name": func_name,
+                            "content": tool_result, "tool_call_id": tc["id"],
+                        })
                     else:
                         recent_tool_calls.append(call_sig)
-                        logger.info("tool %s(%s)", func_name, func_args)
-                        tool_start = time.time()
+                        parsed_tc.append((tc, func_name, func_args))
 
-                        # Run tool in thread so we can send keepalive pings
-                        tool_result_box = [None]
-                        def _run_tool():
-                            tool_result_box[0] = execute_tool(func_name, func_args)
-                        t = threading.Thread(target=_run_tool)
-                        t.start()
-                        while t.is_alive():
-                            t.join(timeout=15)
-                            if t.is_alive() and sse_started:
-                                elapsed_so_far = time.time() - tool_start
-                                self._send_trace_sse("keepalive", {
-                                    "name": func_name,
-                                    "elapsed": round(elapsed_so_far, 1),
-                                })
-                        tool_result = tool_result_box[0]
-                        tool_elapsed = time.time() - tool_start
+                def _gw_exec_tool(tc, func_name, func_args):
+                    """Execute one tool, return (tc, func_name, result, elapsed)."""
+                    logger.info("tool %s(%s)", func_name, func_args)
+                    t0 = time.time()
+                    res = execute_tool(func_name, func_args)
+                    return tc, func_name, res, time.time() - t0
 
-                        # Emit tool_result trace
-                        preview = (tool_result or "")[:80].replace("\n", " ").strip()
-                        if len(tool_result or "") > 80:
-                            preview += "..."
-                        if sse_started:
-                            self._send_trace_sse("tool_result", {
-                                "name": func_name,
-                                "preview": preview,
-                                "elapsed": round(tool_elapsed, 2),
-                            })
-
-                    # Add compacted tool result to messages (full result already sent via SSE trace)
+                def _gw_emit_result(tc, func_name, tool_result, tool_elapsed):
+                    """Emit trace and append result to messages."""
+                    preview = (tool_result or "")[:80].replace("\n", " ").strip()
+                    if len(tool_result or "") > 80:
+                        preview += "..."
+                    if sse_started:
+                        self._send_trace_sse("tool_result", {
+                            "name": func_name,
+                            "preview": preview,
+                            "elapsed": round(tool_elapsed, 2),
+                        })
                     messages.append({
-                        "role": "tool",
-                        "name": func_name,
+                        "role": "tool", "name": func_name,
                         "content": self._compact_tool_result(func_name, tool_result or ""),
                         "tool_call_id": tc["id"],
                     })
-
-                    # Collect image URLs from tool results for auto-injection
                     for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
                         pending_images.append((_m.group(1), _m.group(2)))
+
+                # Split into parallel-safe and sequential
+                parallel_batch = [(tc, fn, args) for tc, fn, args in parsed_tc if fn in PARALLEL_SAFE]
+                sequential_batch = [(tc, fn, args) for tc, fn, args in parsed_tc if fn not in PARALLEL_SAFE]
+
+                # Run parallel-safe tools concurrently with keepalive pings
+                if len(parallel_batch) > 1:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    parallel_results = {}
+                    tool_start = time.time()
+                    with ThreadPoolExecutor(max_workers=min(len(parallel_batch), 6)) as pool:
+                        futures = {
+                            pool.submit(_gw_exec_tool, tc, fn, args): (tc, fn, args)
+                            for tc, fn, args in parallel_batch
+                        }
+                        # Wait with keepalive pings
+                        while futures:
+                            done_set = set()
+                            for future in list(futures):
+                                if future.done():
+                                    tc_out, fn_out, res_out, elapsed_out = future.result()
+                                    parallel_results[tc_out["id"]] = (tc_out, fn_out, res_out, elapsed_out)
+                                    done_set.add(future)
+                            for f in done_set:
+                                del futures[f]
+                            if futures and sse_started:
+                                elapsed_so_far = time.time() - tool_start
+                                self._send_trace_sse("keepalive", {
+                                    "name": "parallel_tools",
+                                    "elapsed": round(elapsed_so_far, 1),
+                                })
+                            if futures:
+                                time.sleep(2)
+                    # Append in original order
+                    for tc, fn, args in parallel_batch:
+                        tc_out, fn_out, res_out, elapsed_out = parallel_results[tc["id"]]
+                        _gw_emit_result(tc_out, fn_out, res_out, elapsed_out)
+                elif len(parallel_batch) == 1:
+                    tc, fn, args = parallel_batch[0]
+                    tool_start = time.time()
+                    tool_result_box = [None]
+                    def _run_tool(fn=fn, args=args):
+                        tool_result_box[0] = execute_tool(fn, args)
+                    t = threading.Thread(target=_run_tool)
+                    t.start()
+                    while t.is_alive():
+                        t.join(timeout=15)
+                        if t.is_alive() and sse_started:
+                            self._send_trace_sse("keepalive", {
+                                "name": fn, "elapsed": round(time.time() - tool_start, 1),
+                            })
+                    _gw_emit_result(tc, fn, tool_result_box[0], time.time() - tool_start)
+
+                # Run state-mutating tools sequentially with keepalive
+                for tc, func_name, func_args in sequential_batch:
+                    logger.info("tool %s(%s)", func_name, func_args)
+                    tool_start = time.time()
+                    tool_result_box = [None]
+                    def _run_tool(fn=func_name, a=func_args):
+                        tool_result_box[0] = execute_tool(fn, a)
+                    t = threading.Thread(target=_run_tool)
+                    t.start()
+                    while t.is_alive():
+                        t.join(timeout=15)
+                        if t.is_alive() and sse_started:
+                            self._send_trace_sse("keepalive", {
+                                "name": func_name, "elapsed": round(time.time() - tool_start, 1),
+                            })
+                    _gw_emit_result(tc, func_name, tool_result_box[0], time.time() - tool_start)
 
                 continue  # Loop back to get next response from model
 
@@ -1739,6 +1804,11 @@ class GatewayHandler(BaseHTTPRequestHandler):
             "information, USE THE TOOLS to get real data. Do NOT guess or make up file contents, "
             "directory listings, or system information. The working directory defaults to the user's "
             "home directory. Workbench projects are in ~/nvidia-workbench/. "
+            "\n\nEFFICIENCY: When you need multiple pieces of information, call ALL the tools you "
+            "need in a single response rather than one at a time. For example, if you need to read "
+            "3 files, call read_file 3 times in one response. Similarly batch web_search, gmail_read, "
+            "drive_read, github calls, etc. Only chain sequentially when a later call depends on an "
+            "earlier result. "
             "\n\nCRITICAL RULES — FOLLOW THESE EXACTLY: "
             "1. DO the work. NEVER tell the user to run commands themselves. You have run_command — use it. "
             "2. VERIFY your work. After writing code: run the build/compile step and check for errors. "
@@ -1999,8 +2069,9 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     "content": content_blocks,
                 })
 
-                # Execute each tool and collect results
+                # Parse all tool blocks, emit traces, detect duplicates
                 tool_results = []
+                parsed_tu = []  # [(tu_block, func_name, func_args, tool_use_id)]
                 for tu in tool_use_blocks:
                     func_name = tu.get("name", "")
                     func_args = tu.get("input", {})
@@ -2019,49 +2090,107 @@ class GatewayHandler(BaseHTTPRequestHandler):
                     # Duplicate detection
                     call_sig = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_sig in recent_tool_calls:
-                        tool_result = "(Already called with same arguments. Respond with the best answer you have.)"
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": "(Already called with same arguments. Respond with the best answer you have.)",
+                        })
                     else:
                         recent_tool_calls.append(call_sig)
-                        logger.info("claude tool %s(%s)", func_name, func_args)
-                        tool_start = time.time()
+                        parsed_tu.append((tu, func_name, func_args, tool_use_id))
 
-                        # Run tool in thread so we can send keepalive pings
-                        tool_result_box = [None]
-                        def _run_tool(fn=func_name, fa=func_args):
-                            tool_result_box[0] = execute_tool(fn, fa)
-                        t = threading.Thread(target=_run_tool)
-                        t.start()
-                        while t.is_alive():
-                            t.join(timeout=15)
-                            if t.is_alive() and sse_started:
-                                elapsed_so_far = time.time() - tool_start
-                                self._send_trace_sse("keepalive", {
-                                    "name": func_name,
-                                    "elapsed": round(elapsed_so_far, 1),
-                                })
-                        tool_result = tool_result_box[0]
-                        tool_elapsed = time.time() - tool_start
+                def _cl_exec_tool(tu, func_name, func_args, tool_use_id):
+                    """Execute one Claude tool call."""
+                    logger.info("claude tool %s(%s)", func_name, func_args)
+                    t0 = time.time()
+                    res = execute_tool(func_name, func_args)
+                    return tu, func_name, func_args, tool_use_id, res, time.time() - t0
 
-                        # Emit tool_result trace
-                        preview = (tool_result or "")[:80].replace("\n", " ").strip()
-                        if len(tool_result or "") > 80:
-                            preview += "..."
-                        if sse_started:
-                            self._send_trace_sse("tool_result", {
-                                "name": func_name,
-                                "preview": preview,
-                                "elapsed": round(tool_elapsed, 2),
-                            })
-
+                def _cl_emit_and_collect(func_name, func_args, tool_use_id, tool_result, tool_elapsed):
+                    """Emit trace, collect result, gather images."""
+                    preview = (tool_result or "")[:80].replace("\n", " ").strip()
+                    if len(tool_result or "") > 80:
+                        preview += "..."
+                    if sse_started:
+                        self._send_trace_sse("tool_result", {
+                            "name": func_name,
+                            "preview": preview,
+                            "elapsed": round(tool_elapsed, 2),
+                        })
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
                         "content": self._compact_tool_result(func_name, tool_result or ""),
                     })
-
-                    # Collect image URLs from tool results for auto-injection
                     for _m in re.finditer(r'!\[([^\]]*)\]\(([^)]+)\)', tool_result or ""):
                         pending_images.append((_m.group(1), _m.group(2)))
+
+                # Split into parallel-safe and sequential
+                par_batch = [(tu, fn, fa, tid) for tu, fn, fa, tid in parsed_tu if fn in PARALLEL_SAFE]
+                seq_batch = [(tu, fn, fa, tid) for tu, fn, fa, tid in parsed_tu if fn not in PARALLEL_SAFE]
+
+                # Run parallel-safe tools concurrently with keepalive
+                if len(par_batch) > 1:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    par_results = {}
+                    tool_start = time.time()
+                    with ThreadPoolExecutor(max_workers=min(len(par_batch), 6)) as pool:
+                        futures = {
+                            pool.submit(_cl_exec_tool, tu, fn, fa, tid): tid
+                            for tu, fn, fa, tid in par_batch
+                        }
+                        while futures:
+                            done_set = set()
+                            for future in list(futures):
+                                if future.done():
+                                    tu_o, fn_o, fa_o, tid_o, res_o, el_o = future.result()
+                                    par_results[tid_o] = (fn_o, fa_o, tid_o, res_o, el_o)
+                                    done_set.add(future)
+                            for f in done_set:
+                                del futures[f]
+                            if futures and sse_started:
+                                self._send_trace_sse("keepalive", {
+                                    "name": "parallel_tools",
+                                    "elapsed": round(time.time() - tool_start, 1),
+                                })
+                            if futures:
+                                time.sleep(2)
+                    # Emit in original order
+                    for tu, fn, fa, tid in par_batch:
+                        fn_o, fa_o, tid_o, res_o, el_o = par_results[tid]
+                        _cl_emit_and_collect(fn_o, fa_o, tid_o, res_o, el_o)
+                elif len(par_batch) == 1:
+                    tu, fn, fa, tid = par_batch[0]
+                    tool_start = time.time()
+                    tool_result_box = [None]
+                    def _run_tool(fn=fn, fa=fa):
+                        tool_result_box[0] = execute_tool(fn, fa)
+                    t = threading.Thread(target=_run_tool)
+                    t.start()
+                    while t.is_alive():
+                        t.join(timeout=15)
+                        if t.is_alive() and sse_started:
+                            self._send_trace_sse("keepalive", {
+                                "name": fn, "elapsed": round(time.time() - tool_start, 1),
+                            })
+                    _cl_emit_and_collect(fn, fa, tid, tool_result_box[0], time.time() - tool_start)
+
+                # Run state-mutating tools sequentially with keepalive
+                for tu, func_name, func_args, tool_use_id in seq_batch:
+                    logger.info("claude tool %s(%s)", func_name, func_args)
+                    tool_start = time.time()
+                    tool_result_box = [None]
+                    def _run_tool(fn=func_name, fa=func_args):
+                        tool_result_box[0] = execute_tool(fn, fa)
+                    t = threading.Thread(target=_run_tool)
+                    t.start()
+                    while t.is_alive():
+                        t.join(timeout=15)
+                        if t.is_alive() and sse_started:
+                            self._send_trace_sse("keepalive", {
+                                "name": func_name, "elapsed": round(time.time() - tool_start, 1),
+                            })
+                    _cl_emit_and_collect(func_name, func_args, tool_use_id, tool_result_box[0], time.time() - tool_start)
 
                 # Add tool results as a user message (Claude API format)
                 claude_messages.append({
