@@ -1286,7 +1286,10 @@ class MaudeApp(App):
         status.update("")
 
     def _inject_memory_context(self, user_input: str):
-        """Inject relevant memories into the system prompt for this turn."""
+        """Inject relevant memories and best-practice guides into the system prompt for this turn."""
+        extra_sections = []
+
+        # Memory context
         try:
             from maude_core.memory_utils import get_memory
 
@@ -1294,14 +1297,85 @@ class MaudeApp(App):
             if mem:
                 context = mem.get_context_for_prompt(user_input, max_memories=5)
                 if context:
-                    # Update system message with memory context appended
-                    base_prompt = SYSTEM_PROMPT
-                    self.messages[0] = {"role": "system", "content": base_prompt + "\n\n" + context}
-                else:
-                    # Reset to base prompt (no stale context from prior turns)
-                    self.messages[0] = {"role": "system", "content": SYSTEM_PROMPT}
+                    extra_sections.append(context)
         except Exception:
             pass  # Memory unavailable — proceed without context
+
+        # Best-practice guides — inject relevant guide based on user input keywords
+        guide = self._match_guide(user_input)
+        if guide:
+            extra_sections.append(guide)
+
+        if extra_sections:
+            self.messages[0] = {"role": "system", "content": SYSTEM_PROMPT + "\n\n" + "\n\n".join(extra_sections)}
+        else:
+            # Reset to base prompt (no stale context from prior turns)
+            self.messages[0] = {"role": "system", "content": SYSTEM_PROMPT}
+
+    @staticmethod
+    def _match_guide(user_input: str) -> str | None:
+        """Match user input to a best-practice guide and return its content."""
+        import re
+
+        query = user_input.lower()
+        guides_dir = Path(__file__).parent / "guides"
+        if not guides_dir.exists():
+            return None
+
+        # Keyword patterns mapped to guide filenames
+        guide_triggers = {
+            "coding-best-practices.md": re.compile(
+                r"\b(code|coding|program|refactor|debug|function|class|test|lint|security|api|backend|endpoint|script|module|package|bug|error handling)\b"
+            ),
+            "website-design-best-practices.md": re.compile(
+                r"\b(website|web\s*site|web\s*page|web\s*app|landing\s*page|responsive|layout|navigation|navbar|footer|homepage|frontend|html|css|tailwind|seo|accessibility|a11y|mobile\s*first)\b"
+            ),
+            "graphic-design-best-practices.md": re.compile(
+                r"\b(graphic\s*design|logo|brand|icon|illustration|composition|typography|font|visual\s*design|poster|banner|flyer|mockup|design\s*system|ui\s*design)\b"
+            ),
+            "color-theory.md": re.compile(
+                r"\b(color|colour|palette|complementary|analogous|triadic|monochromatic|hex|rgb|hsl|saturation|hue|contrast\s*ratio|dark\s*mode|theme|warm\s*color|cool\s*color)\b"
+            ),
+            "writing-best-practices.md": re.compile(
+                r"\b(writ(e|ing|ten)|copy|blog\s*post|article|essay|documentation|readme|tone|voice|editing|proofread|grammar|headline|content\s*strategy|technical\s*writing|copywriting)\b"
+            ),
+            "api-design-best-practices.md": re.compile(
+                r"\b(api|rest|endpoint|route|status\s*code|pagination|jwt|bearer|oauth|openapi|swagger|crud|http\s*method|json\s*response|rate\s*limit)\b"
+            ),
+            "prompt-engineering-best-practices.md": re.compile(
+                r"\b(prompt|system\s*prompt|few.?shot|chain.?of.?thought|tool\s*description|function\s*calling|sub.?agent|delegat|instruct\s*the\s*model|ask\s*(claude|frontier|gemini))\b"
+            ),
+            "image-generation-best-practices.md": re.compile(
+                r"\b(generate\s*(an?\s*)?image|image\s*gen|flux|stable\s*diffusion|dall.?e|midjourney|art\s*style|photo\s*prompt|negative\s*prompt|aspect\s*ratio|composition|portrait\s*photo|landscape\s*photo|product\s*photo|render|illustration)\b"
+            ),
+            "cybersecurity-best-practices.md": re.compile(
+                r"\b(security|secure|vulnerab|exploit|injection|xss|csrf|auth(entication|orization)|encrypt|hash|password|firewall|tls|ssl|certificate|hardening|pentest|malware|phishing|incident\s*response|secrets?\s*manag|container\s*security|audit)\b"
+            ),
+            "web-design-patterns.md": re.compile(
+                r"\b(modal|dialog|toast|notification|skeleton|loading\s*state|spinner|empty\s*state|infinite\s*scroll|pagination|drag.?and.?drop|sidebar|tab(s|bed)|breadcrumb|command\s*palette|dashboard|card\s*layout|dark\s*mode|design\s*token|form\s*design|wizard|stepper|table\s*design|data\s*table|micro.?interaction|component|ui\s*pattern|ux\s*pattern)\b"
+            ),
+        }
+
+        matched_guides = []
+        for filename, pattern in guide_triggers.items():
+            if pattern.search(query):
+                guide_path = guides_dir / filename
+                if guide_path.exists():
+                    matched_guides.append(guide_path)
+
+        if not matched_guides:
+            return None
+
+        # Load matched guides (limit to 2 to avoid bloating the prompt)
+        sections = []
+        for guide_path in matched_guides[:2]:
+            try:
+                content = guide_path.read_text()
+                sections.append(f"## Reference Guide\n{content}")
+            except Exception:
+                continue
+
+        return "\n\n".join(sections) if sections else None
 
     @work(thread=True)
     def process_message(self, user_input: str):
