@@ -83,8 +83,9 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Frontier delegation**: Escalates to cloud AI (Mistral, Codestral) for complex tasks
 - **Scheduled tasks**: Cron-based automation with natural language scheduling
 - **Google integration**: Gmail, Drive, Sheets, Calendar, Slides, Contacts, YouTube
-- **Voice mode**: Speech input/output via Whisper transcription
+- **Voice mode**: Speech input/output via Nemotron ASR + Magpie TTS
 - **Conversation memory**: Persistent context across sessions
+- **Best-practice guides**: 10 markdown guides (coding, web design, graphic design, color theory, writing, API design, prompt engineering, image generation, cybersecurity, UI/UX patterns) auto-injected into system prompt based on task context
 
 ## Models
 
@@ -290,6 +291,20 @@ terminal-llm/
 ├── maude-phone/           # Phone PWA (Capacitor + Vite)
 │   ├── src/               # TypeScript/HTML frontend
 │   └── capacitor.config.ts
+├── guides/                # Best-practice guides (auto-injected into system prompt)
+│   ├── coding-best-practices.md
+│   ├── website-design-best-practices.md
+│   ├── graphic-design-best-practices.md
+│   ├── color-theory.md
+│   ├── writing-best-practices.md
+│   ├── api-design-best-practices.md
+│   ├── prompt-engineering-best-practices.md
+│   ├── image-generation-best-practices.md
+│   ├── cybersecurity-best-practices.md
+│   └── web-design-patterns.md
+├── skills/                # Plugin system (Python-based tools)
+│   ├── builtin/           # Built-in skills (weather, calculator, stocks, etc.)
+│   └── utils.py
 ├── shared/                # Shared folder (synced to clients)
 ├── transfers/             # Client uploads
 └── certs/                 # HTTPS certificates for gateway
