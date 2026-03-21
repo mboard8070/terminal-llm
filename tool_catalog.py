@@ -6,26 +6,35 @@ can fetch the full catalog from the gateway instead of maintaining
 duplicate definitions.
 """
 
+from health import check_tool_ready
 from maude_core import (
-    TOOLS,
     _CORE_TOOL_NAMES,
     _TOOL_GROUPS,
+    TOOLS,
     get_tools_for_message,
 )
-from health import check_tool_ready
 
 # ── Execution targets: where each tool should run ─────────────────
 
 _LOCAL_TOOLS = {
-    "read_file", "write_file", "edit_file", "list_directory",
-    "search_file", "search_directory", "run_command",
-    "get_working_directory", "change_directory",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_file",
+    "search_directory",
+    "run_command",
+    "get_working_directory",
+    "change_directory",
 }
 
 # Client-only tools that only exist on the Mac client (not in server TOOLS)
 _CLIENT_ONLY_TOOLS = {
-    "upload_to_server", "download_from_server", "list_server_files",
-    "run_server_command", "send_to_server_maude",
+    "upload_to_server",
+    "download_from_server",
+    "list_server_files",
+    "run_server_command",
+    "send_to_server_maude",
     "search_files",  # client variant of search_file/search_directory
 }
 
@@ -78,6 +87,7 @@ def execute_server_tool(name: str, arguments: dict) -> dict:
         dict with keys: result (str), elapsed (float), error (str|None)
     """
     import time
+
     from maude_core import execute_tool
 
     # Reject tools that should run on the client

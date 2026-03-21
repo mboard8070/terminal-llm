@@ -17,40 +17,27 @@ from skills import skill
     parameters={
         "type": "object",
         "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "Text description of the image to generate"
-            },
-            "width": {
-                "type": "integer",
-                "description": "Image width in pixels (default: 1024)",
-                "default": 1024
-            },
-            "height": {
-                "type": "integer",
-                "description": "Image height in pixels (default: 1024)",
-                "default": 1024
-            },
+            "prompt": {"type": "string", "description": "Text description of the image to generate"},
+            "width": {"type": "integer", "description": "Image width in pixels (default: 1024)", "default": 1024},
+            "height": {"type": "integer", "description": "Image height in pixels (default: 1024)", "default": 1024},
             "seed": {
                 "type": "integer",
                 "description": "Random seed for reproducibility (-1 for random)",
-                "default": -1
+                "default": -1,
             },
-            "steps": {
-                "type": "integer",
-                "description": "Number of sampling steps (default: 28)",
-                "default": 28
-            },
+            "steps": {"type": "integer", "description": "Number of sampling steps (default: 28)", "default": 28},
             "lora": {
                 "type": "string",
-                "description": "Optional LoRA name (e.g. 'stillion-style', 'marker-mech-style')"
-            }
+                "description": "Optional LoRA name (e.g. 'stillion-style', 'marker-mech-style')",
+            },
         },
-        "required": ["prompt"]
-    }
+        "required": ["prompt"],
+    },
 )
-def generate_image(prompt: str, width: int = 1024, height: int = 1024,
-                   seed: int = -1, steps: int = 28, lora: str = None) -> str:
+def generate_image(
+    prompt: str, width: int = 1024, height: int = 1024, seed: int = -1, steps: int = 28, lora: str = None
+) -> str:
     """Generate image using Flux via ComfyUI."""
     from maude_core.tools_media import tool_generate_image
+
     return tool_generate_image(prompt, width, height, seed, steps, lora)

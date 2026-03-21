@@ -4,14 +4,14 @@ MAUDE Capability Router.
 Routes tasks to the best available node based on capability type, load, and health.
 """
 
-import time
-from typing import Optional, Tuple, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING
+
 from rich.console import Console
 
 from capabilities import Capability, CapabilityType, EndpointType
 
 if TYPE_CHECKING:
-    from mesh import MaudeNode, MaudeMesh
+    from mesh import MaudeMesh, MaudeNode
 
 console = Console()
 
@@ -20,9 +20,9 @@ class CapabilityRouter:
     """Routes capability requests to the best available mesh node."""
 
     # Routing score weights
-    WEIGHT_LOAD = 100        # Higher load = higher score (worse)
-    WEIGHT_REMOTE = 50       # Penalty for remote nodes when prefer_local
-    WEIGHT_ERROR = 10        # Penalty per recent error
+    WEIGHT_LOAD = 100  # Higher load = higher score (worse)
+    WEIGHT_REMOTE = 50  # Penalty for remote nodes when prefer_local
+    WEIGHT_ERROR = 10  # Penalty per recent error
     WEIGHT_UNHEALTHY = 1000  # Large penalty for unhealthy nodes
 
     def __init__(self, mesh: "MaudeMesh" = None):
@@ -39,15 +39,11 @@ class CapabilityRouter:
         """Get the mesh instance, lazily loading if needed."""
         if self._mesh is None:
             from mesh import get_mesh
+
             self._mesh = get_mesh()
         return self._mesh
 
-    def _calculate_score(
-        self,
-        node: "MaudeNode",
-        cap: Capability,
-        prefer_local: bool = True
-    ) -> float:
+    def _calculate_score(self, node: "MaudeNode", cap: Capability, prefer_local: bool = True) -> float:
         """
         Calculate a routing score for a node/capability pair.
 
@@ -72,11 +68,8 @@ class CapabilityRouter:
         return score
 
     def find_capability(
-        self,
-        cap_type: CapabilityType,
-        name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
+        self, cap_type: CapabilityType, name: str = None, prefer_local: bool = True
+    ) -> tuple["MaudeNode", Capability] | None:
         """
         Find the best node with a specific capability.
 
@@ -108,56 +101,7 @@ class CapabilityRouter:
 
         return (best_node, best_cap)
 
-    def find_llm(
-        self,
-        model_name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
-        """
-        Find a node with LLM capability.
-
-        Args:
-            model_name: Optional specific model name to find
-            prefer_local: Prefer local models over remote
-
-        Returns:
-            Tuple of (MaudeNode, Capability) or None if not found
-        """
-        # Try to find specific model first
-        if model_name:
-            result = self.find_capability(CapabilityType.LLM, model_name, prefer_local)
-            if result:
-                return result
-
-            # Check if the model is in any capability's models list
-            for node in self.mesh.list_nodes():
-                if not node.healthy:
-                    continue
-                for cap in node.node_capabilities:
-                    if cap.type == CapabilityType.LLM and model_name in cap.models:
-                        return (node, cap)
-
-        # Fall back to any LLM
-        return self.find_capability(CapabilityType.LLM, prefer_local=prefer_local)
-
-    def find_vision(
-        self,
-        model_name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
-        """Find a node with vision capability."""
-        if model_name:
-            result = self.find_capability(CapabilityType.VISION, model_name, prefer_local)
-            if result:
-                return result
-
-        return self.find_capability(CapabilityType.VISION, prefer_local=prefer_local)
-
-    def find_video_gen(
-        self,
-        name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
+    def find_video_gen(self, name: str = None, prefer_local: bool = True) -> tuple["MaudeNode", Capability] | None:
         """
         Find a node with video generation capability.
 
@@ -179,17 +123,14 @@ class CapabilityRouter:
                 if not node.healthy:
                     continue
                 for cap in node.node_capabilities:
-                    if cap.type == CapabilityType.COMFYUI:
-                        if name in cap.models or name in cap.metadata.get("workflows", []):
-                            return (node, cap)
+                    if cap.type == CapabilityType.COMFYUI and (
+                        name in cap.models or name in cap.metadata.get("workflows", [])
+                    ):
+                        return (node, cap)
 
         return self.find_capability(CapabilityType.COMFYUI, prefer_local=prefer_local)
 
-    def find_3d_gen(
-        self,
-        name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
+    def find_3d_gen(self, name: str = None, prefer_local: bool = True) -> tuple["MaudeNode", Capability] | None:
         """
         Find a node with 3D model generation capability.
 
@@ -202,34 +143,7 @@ class CapabilityRouter:
         """
         return self.find_capability(CapabilityType.MODEL_3D, name, prefer_local)
 
-    def find_image_gen(
-        self,
-        name: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
-        """
-        Find a node with image generation capability.
-
-        Args:
-            name: Optional specific generator name (e.g., "sd-xl")
-            prefer_local: Prefer local over remote
-
-        Returns:
-            Tuple of (MaudeNode, Capability) or None
-        """
-        # First try IMAGE_GEN type
-        result = self.find_capability(CapabilityType.IMAGE_GEN, name, prefer_local)
-        if result:
-            return result
-
-        # Fall back to ComfyUI that supports image workflows
-        return self.find_capability(CapabilityType.COMFYUI, prefer_local=prefer_local)
-
-    def find_comfyui(
-        self,
-        workflow: str = None,
-        prefer_local: bool = True
-    ) -> Optional[Tuple["MaudeNode", Capability]]:
+    def find_comfyui(self, workflow: str = None, prefer_local: bool = True) -> tuple["MaudeNode", Capability] | None:
         """
         Find a ComfyUI node, optionally with specific workflow support.
 
@@ -252,10 +166,7 @@ class CapabilityRouter:
 
         return self.find_capability(CapabilityType.COMFYUI, prefer_local=prefer_local)
 
-    def list_capabilities(
-        self,
-        cap_type: CapabilityType = None
-    ) -> Dict[str, List[str]]:
+    def list_capabilities(self, cap_type: CapabilityType = None) -> dict[str, list[str]]:
         """
         List all capabilities across the mesh, grouped by type.
 
@@ -265,7 +176,7 @@ class CapabilityRouter:
         Returns:
             Dict mapping capability type names to list of "name @ hostname"
         """
-        result: Dict[str, List[str]] = {}
+        result: dict[str, list[str]] = {}
 
         for node in self.mesh.list_nodes():
             for cap in node.node_capabilities:
@@ -286,7 +197,7 @@ class CapabilityRouter:
 
         return result
 
-    def get_ollama_url_for_model(self, model_name: str) -> Optional[str]:
+    def get_ollama_url_for_model(self, model_name: str) -> str | None:
         """
         Get Ollama URL for a specific model (backward compatible with mesh.get_remote_ollama_url).
 
@@ -323,7 +234,7 @@ class CapabilityRouter:
 
 
 # Global router instance
-_router: Optional[CapabilityRouter] = None
+_router: CapabilityRouter | None = None
 
 
 def get_router(mesh: "MaudeMesh" = None) -> CapabilityRouter:

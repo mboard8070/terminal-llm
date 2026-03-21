@@ -1,6 +1,7 @@
 """Stock price skill using free Yahoo Finance API."""
 
 import requests
+
 from skills import skill
 
 
@@ -13,23 +14,20 @@ from skills import skill
     parameters={
         "type": "object",
         "properties": {
-            "symbol": {
-                "type": "string",
-                "description": "Stock ticker symbol (e.g., 'AAPL', 'NVDA', 'GOOGL')"
-            },
+            "symbol": {"type": "string", "description": "Stock ticker symbol (e.g., 'AAPL', 'NVDA', 'GOOGL')"},
             "action": {
                 "type": "string",
                 "enum": ["quote", "info", "compare"],
                 "description": "Action to perform (default: quote)",
-                "default": "quote"
+                "default": "quote",
             },
             "symbols": {
                 "type": "string",
-                "description": "Comma-separated symbols for compare action (e.g., 'AAPL,NVDA,MSFT')"
-            }
+                "description": "Comma-separated symbols for compare action (e.g., 'AAPL,NVDA,MSFT')",
+            },
         },
-        "required": ["symbol"]
-    }
+        "required": ["symbol"],
+    },
 )
 def stock(symbol: str, action: str = "quote", symbols: str = None) -> str:
     """Get stock information."""
@@ -69,11 +67,11 @@ def _get_stock_quote(symbol: str) -> str:
         direction = "🟢 +" if change >= 0 else "🔴 "
 
         # Get additional data from indicators
-        quote = result.get("indicators", {}).get("quote", [{}])[0]
+        _quote = result.get("indicators", {}).get("quote", [{}])[0]
 
         output = [
             f"{meta.get('shortName', symbol)} ({symbol})",
-            f"─" * 30,
+            "─" * 30,
             f"Price: ${price:.2f}",
             f"Change: {direction}{change:.2f} ({change_pct:+.2f}%)",
             f"Previous Close: ${prev_close:.2f}",
@@ -135,7 +133,7 @@ def _get_stock_info(symbol: str) -> str:
 
         output = [
             f"{price_data.get('shortName', symbol)} ({symbol})",
-            f"─" * 40,
+            "─" * 40,
         ]
 
         # Price info
@@ -160,11 +158,11 @@ def _get_stock_info(symbol: str) -> str:
         market_cap = price_data.get("marketCap", {}).get("raw", 0)
         if market_cap:
             if market_cap >= 1e12:
-                output.append(f"  Market Cap: ${market_cap/1e12:.2f}T")
+                output.append(f"  Market Cap: ${market_cap / 1e12:.2f}T")
             elif market_cap >= 1e9:
-                output.append(f"  Market Cap: ${market_cap/1e9:.2f}B")
+                output.append(f"  Market Cap: ${market_cap / 1e9:.2f}B")
             else:
-                output.append(f"  Market Cap: ${market_cap/1e6:.2f}M")
+                output.append(f"  Market Cap: ${market_cap / 1e6:.2f}M")
 
         # P/E ratio
         pe = summary.get("trailingPE", {}).get("raw")
@@ -174,7 +172,7 @@ def _get_stock_info(symbol: str) -> str:
         # Dividend
         div_yield = summary.get("dividendYield", {}).get("raw")
         if div_yield:
-            output.append(f"  Dividend Yield: {div_yield*100:.2f}%")
+            output.append(f"  Dividend Yield: {div_yield * 100:.2f}%")
 
         # Volume
         volume = summary.get("volume", {}).get("raw", 0)
@@ -218,12 +216,9 @@ def _compare_stocks(symbols_str: str) -> str:
                 prev_close = meta.get("previousClose", 0)
                 change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0
 
-                results.append({
-                    "symbol": symbol,
-                    "name": meta.get("shortName", symbol),
-                    "price": price,
-                    "change_pct": change_pct
-                })
+                results.append(
+                    {"symbol": symbol, "name": meta.get("shortName", symbol), "price": price, "change_pct": change_pct}
+                )
 
         if not results:
             return "Could not fetch data for any of the symbols."
@@ -234,9 +229,7 @@ def _compare_stocks(symbols_str: str) -> str:
         output = ["Stock Comparison:", "─" * 50]
         for r in results:
             direction = "🟢" if r["change_pct"] >= 0 else "🔴"
-            output.append(
-                f"  {direction} {r['symbol']:6} ${r['price']:>10.2f}  {r['change_pct']:>+7.2f}%"
-            )
+            output.append(f"  {direction} {r['symbol']:6} ${r['price']:>10.2f}  {r['change_pct']:>+7.2f}%")
 
         return "\n".join(output)
 
@@ -253,13 +246,9 @@ def _compare_stocks(symbols_str: str) -> str:
     parameters={
         "type": "object",
         "properties": {
-            "symbol": {
-                "type": "string",
-                "description": "Crypto symbol (e.g., 'BTC', 'ETH', 'SOL')",
-                "default": "BTC"
-            }
-        }
-    }
+            "symbol": {"type": "string", "description": "Crypto symbol (e.g., 'BTC', 'ETH', 'SOL')", "default": "BTC"}
+        },
+    },
 )
 def crypto(symbol: str = "BTC") -> str:
     """Get cryptocurrency price."""
@@ -302,7 +291,7 @@ def crypto(symbol: str = "BTC") -> str:
 
         output = [
             f"{meta.get('shortName', symbol)} ({symbol})",
-            f"─" * 30,
+            "─" * 30,
             f"Price: ${price:,.2f}",
             f"24h Change: {direction}{change:,.2f} ({change_pct:+.2f}%)",
         ]

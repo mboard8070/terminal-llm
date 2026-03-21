@@ -1,10 +1,10 @@
 """Quick notes skill - simple key-value note storage."""
 
 import json
-from pathlib import Path
 from datetime import datetime
-from skills import skill
+from pathlib import Path
 
+from skills import skill
 
 NOTES_FILE = Path.home() / ".config" / "maude" / "notes.json"
 
@@ -38,29 +38,15 @@ def _save_notes(notes: dict):
                 "type": "string",
                 "enum": ["save", "get", "list", "delete", "search"],
                 "description": "Action to perform",
-                "default": "list"
+                "default": "list",
             },
-            "key": {
-                "type": "string",
-                "description": "Note key/title"
-            },
-            "content": {
-                "type": "string",
-                "description": "Note content (for save action)"
-            },
-            "query": {
-                "type": "string",
-                "description": "Search query (for search action)"
-            }
-        }
-    }
+            "key": {"type": "string", "description": "Note key/title"},
+            "content": {"type": "string", "description": "Note content (for save action)"},
+            "query": {"type": "string", "description": "Search query (for search action)"},
+        },
+    },
 )
-def note(
-    action: str = "list",
-    key: str = None,
-    content: str = None,
-    query: str = None
-) -> str:
+def note(action: str = "list", key: str = None, content: str = None, query: str = None) -> str:
     """Manage quick notes."""
 
     notes = _load_notes()
@@ -69,11 +55,7 @@ def note(
         if not key or not content:
             return "Error: Please provide both 'key' and 'content' parameters"
 
-        notes[key] = {
-            "content": content,
-            "created": datetime.now().isoformat(),
-            "updated": datetime.now().isoformat()
-        }
+        notes[key] = {"content": content, "created": datetime.now().isoformat(), "updated": datetime.now().isoformat()}
         _save_notes(notes)
         return f"Note '{key}' saved."
 
@@ -99,8 +81,8 @@ def note(
 
         lines = [f"Notes ({len(notes)} total):\n"]
         for k, v in sorted(notes.items()):
-            preview = v['content'][:50] + "..." if len(v['content']) > 50 else v['content']
-            preview = preview.replace('\n', ' ')
+            preview = v["content"][:50] + "..." if len(v["content"]) > 50 else v["content"]
+            preview = preview.replace("\n", " ")
             lines.append(f"  • {k}: {preview}")
         return "\n".join(lines)
 
@@ -122,8 +104,8 @@ def note(
         query_lower = query.lower()
         matches = []
         for k, v in notes.items():
-            if query_lower in k.lower() or query_lower in v['content'].lower():
-                preview = v['content'][:50] + "..." if len(v['content']) > 50 else v['content']
+            if query_lower in k.lower() or query_lower in v["content"].lower():
+                preview = v["content"][:50] + "..." if len(v["content"]) > 50 else v["content"]
                 matches.append(f"  • {k}: {preview}")
 
         if not matches:
@@ -147,14 +129,11 @@ def note(
                 "type": "string",
                 "enum": ["add", "list", "done", "remove", "clear"],
                 "description": "Action to perform",
-                "default": "list"
+                "default": "list",
             },
-            "task": {
-                "type": "string",
-                "description": "Task description or number"
-            }
-        }
-    }
+            "task": {"type": "string", "description": "Task description or number"},
+        },
+    },
 )
 def todo(action: str = "list", task: str = None) -> str:
     """Manage a simple todo list."""
@@ -179,11 +158,7 @@ def todo(action: str = "list", task: str = None) -> str:
         if not task:
             return "Error: Please provide 'task' parameter"
 
-        todos.append({
-            "task": task,
-            "done": False,
-            "created": datetime.now().isoformat()
-        })
+        todos.append({"task": task, "done": False, "created": datetime.now().isoformat()})
         save_todos(todos)
         return f"Added: {task}"
 

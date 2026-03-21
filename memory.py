@@ -8,23 +8,25 @@ conversation history storage, and context injection for prompts.
 import json
 import math
 import sqlite3
-from pathlib import Path
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any
+
 from openai import OpenAI
 
 
 @dataclass
 class Memory:
     """A single memory item."""
+
     key: str
     value: str
     category: str  # "fact", "preference", "conversation", "task", "person"
     created_at: str
     updated_at: str
     access_count: int
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 
 
 class MaudeMemory:
@@ -40,12 +42,11 @@ class MaudeMemory:
             embed_url: URL for embedding model (default: local Ollama)
         """
         import os
+
         self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
         # Use environment variable or default to local Ollama
-        self.embed_url = embed_url or os.environ.get(
-            "EMBED_AGENT_URL", "http://localhost:11434/v1"
-        )
+        self.embed_url = embed_url or os.environ.get("EMBED_AGENT_URL", "http://localhost:11434/v1")
         self.embed_client = OpenAI(base_url=self.embed_url, api_key="not-needed")
         self.embed_model = "nomic-embed-text:latest"
 
@@ -99,23 +100,23 @@ class MaudeMemory:
 
         self.conn.commit()
 
-    def _get_embedding(self, text: str) -> List[float]:
+    def _get_embedding(self, text: str) -> list[float]:
         """Get embedding vector for text using nomic-embed-text."""
         try:
             response = self.embed_client.embeddings.create(
                 model=self.embed_model,
-                input=text[:8000]  # Truncate to avoid token limits
+                input=text[:8000],  # Truncate to avoid token limits
             )
             return response.data[0].embedding
-        except Exception as e:
+        except Exception:
             # Silently fail - semantic search will fall back to text search
             return []
 
-    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Calculate cosine similarity between two vectors."""
         if not a or not b or len(a) != len(b):
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         norm_a = math.sqrt(sum(x * x for x in a))
         norm_b = math.sqrt(sum(x * x for x in b))
         return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
@@ -124,13 +125,7 @@ class MaudeMemory:
     # Core Memory Operations
     # ─────────────────────────────────────────────────────────────────
 
-    def remember(
-        self,
-        key: str,
-        value: str,
-        category: str = "fact",
-        metadata: dict = None
-    ) -> bool:
+    def remember(self, key: str, value: str, category: str = "fact", metadata: dict = None) -> bool:
         """
         Store or update a memory.
 
@@ -145,7 +140,8 @@ class MaudeMemory:
         # Generate embedding for semantic search
         embedding = self._get_embedding(f"{key}: {value}")
 
-        self.conn.execute("""
+        self.conn.execute(
+            """
             INSERT INTO memories (key, value, category, created_at, updated_at,
                                   access_count, embedding, metadata)
             VALUES (?, ?, ?, ?, ?, 0, ?, ?)
@@ -156,15 +152,21 @@ class MaudeMemory:
                 embedding = excluded.embedding,
                 metadata = excluded.metadata,
                 access_count = access_count + 1
-        """, (
-            key, value, category, now, now,
-            json.dumps(embedding) if embedding else None,
-            json.dumps(metadata) if metadata else None
-        ))
+        """,
+            (
+                key,
+                value,
+                category,
+                now,
+                now,
+                json.dumps(embedding) if embedding else None,
+                json.dumps(metadata) if metadata else None,
+            ),
+        )
         self.conn.commit()
         return True
 
-    def recall(self, key: str) -> Optional[str]:
+    def recall(self, key: str) -> str | None:
         """
         Retrieve a memory by exact key.
 
@@ -174,18 +176,19 @@ class MaudeMemory:
         Returns:
             The memory value, or None if not found
         """
-        cursor = self.conn.execute(
-            "SELECT value FROM memories WHERE key = ?", (key,)
-        )
+        cursor = self.conn.execute("SELECT value FROM memories WHERE key = ?", (key,))
         row = cursor.fetchone()
 
         if row:
             # Update access count
-            self.conn.execute("""
+            self.conn.execute(
+                """
                 UPDATE memories
                 SET access_count = access_count + 1, updated_at = ?
                 WHERE key = ?
-            """, (datetime.now().isoformat(), key))
+            """,
+                (datetime.now().isoformat(), key),
+            )
             self.conn.commit()
             return row[0]
         return None
@@ -200,19 +203,11 @@ class MaudeMemory:
         Returns:
             True if memory was removed, False if not found
         """
-        cursor = self.conn.execute(
-            "DELETE FROM memories WHERE key = ?", (key,)
-        )
+        cursor = self.conn.execute("DELETE FROM memories WHERE key = ?", (key,))
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def search(
-        self,
-        query: str,
-        limit: int = 5,
-        category: str = None,
-        threshold: float = 0.3
-    ) -> List[Memory]:
+    def search(self, query: str, limit: int = 5, category: str = None, threshold: float = 0.3) -> list[Memory]:
         """
         Semantic search across memories.
 
@@ -247,26 +242,26 @@ class MaudeMemory:
             if mem_embedding:
                 similarity = self._cosine_similarity(query_embedding, mem_embedding)
                 if similarity >= threshold:
-                    results.append((similarity, Memory(
-                        key=row["key"],
-                        value=row["value"],
-                        category=row["category"],
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                        access_count=row["access_count"],
-                        metadata=json.loads(row["metadata"]) if row["metadata"] else None
-                    )))
+                    results.append(
+                        (
+                            similarity,
+                            Memory(
+                                key=row["key"],
+                                value=row["value"],
+                                category=row["category"],
+                                created_at=row["created_at"],
+                                updated_at=row["updated_at"],
+                                access_count=row["access_count"],
+                                metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+                            ),
+                        )
+                    )
 
         # Sort by similarity (descending) and return top results
         results.sort(key=lambda x: x[0], reverse=True)
         return [m for _, m in results[:limit]]
 
-    def _text_search(
-        self,
-        query: str,
-        limit: int,
-        category: str = None
-    ) -> List[Memory]:
+    def _text_search(self, query: str, limit: int, category: str = None) -> list[Memory]:
         """Fallback text search when embeddings unavailable."""
         sql = "SELECT * FROM memories WHERE (key LIKE ? OR value LIKE ?)"
         params = [f"%{query}%", f"%{query}%"]
@@ -279,21 +274,20 @@ class MaudeMemory:
         sql += f" LIMIT {limit}"
 
         cursor = self.conn.execute(sql, params)
-        return [Memory(
-            key=r["key"],
-            value=r["value"],
-            category=r["category"],
-            created_at=r["created_at"],
-            updated_at=r["updated_at"],
-            access_count=r["access_count"],
-            metadata=json.loads(r["metadata"]) if r["metadata"] else None
-        ) for r in cursor.fetchall()]
+        return [
+            Memory(
+                key=r["key"],
+                value=r["value"],
+                category=r["category"],
+                created_at=r["created_at"],
+                updated_at=r["updated_at"],
+                access_count=r["access_count"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+            )
+            for r in cursor.fetchall()
+        ]
 
-    def list_memories(
-        self,
-        category: str = None,
-        limit: int = 20
-    ) -> List[Memory]:
+    def list_memories(self, category: str = None, limit: int = 20) -> list[Memory]:
         """List memories, optionally filtered by category."""
         sql = "SELECT * FROM memories"
         params = []
@@ -306,98 +300,58 @@ class MaudeMemory:
         params.append(limit)
 
         cursor = self.conn.execute(sql, params)
-        return [Memory(
-            key=r["key"],
-            value=r["value"],
-            category=r["category"],
-            created_at=r["created_at"],
-            updated_at=r["updated_at"],
-            access_count=r["access_count"],
-            metadata=json.loads(r["metadata"]) if r["metadata"] else None
-        ) for r in cursor.fetchall()]
+        return [
+            Memory(
+                key=r["key"],
+                value=r["value"],
+                category=r["category"],
+                created_at=r["created_at"],
+                updated_at=r["updated_at"],
+                access_count=r["access_count"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+            )
+            for r in cursor.fetchall()
+        ]
 
     # ─────────────────────────────────────────────────────────────────
     # Conversation History
     # ─────────────────────────────────────────────────────────────────
 
-    def save_message(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-        channel: str = "cli",
-        tokens: int = 0
-    ):
+    def save_message(self, session_id: str, role: str, content: str, channel: str = "cli", tokens: int = 0):
         """Save a conversation message."""
-        self.conn.execute("""
+        self.conn.execute(
+            """
             INSERT INTO conversations (session_id, role, content, timestamp, channel, tokens)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (session_id, role, content, datetime.now().isoformat(), channel, tokens))
+        """,
+            (session_id, role, content, datetime.now().isoformat(), channel, tokens),
+        )
         self.conn.commit()
 
-    def get_conversation(
-        self,
-        session_id: str,
-        limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    def get_conversation(self, session_id: str, limit: int = 50) -> list[dict[str, Any]]:
         """Retrieve conversation history for a session."""
-        cursor = self.conn.execute("""
+        cursor = self.conn.execute(
+            """
             SELECT role, content, timestamp, channel
             FROM conversations
             WHERE session_id = ?
             ORDER BY timestamp DESC
             LIMIT ?
-        """, (session_id, limit))
+        """,
+            (session_id, limit),
+        )
 
         messages = [
-            {"role": r["role"], "content": r["content"],
-             "timestamp": r["timestamp"], "channel": r["channel"]}
+            {"role": r["role"], "content": r["content"], "timestamp": r["timestamp"], "channel": r["channel"]}
             for r in cursor.fetchall()
         ]
         return list(reversed(messages))
-
-    def get_recent_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get recent conversation sessions."""
-        cursor = self.conn.execute("""
-            SELECT session_id,
-                   MIN(timestamp) as started,
-                   MAX(timestamp) as last_message,
-                   COUNT(*) as message_count,
-                   channel
-            FROM conversations
-            GROUP BY session_id
-            ORDER BY last_message DESC
-            LIMIT ?
-        """, (limit,))
-
-        return [dict(r) for r in cursor.fetchall()]
-
-    def summarize_and_archive(
-        self,
-        session_id: str,
-        summary: str
-    ):
-        """Archive a conversation with its summary as a memory."""
-        self.remember(
-            key=f"conversation:{session_id}",
-            value=summary,
-            category="conversation",
-            metadata={
-                "session_id": session_id,
-                "archived_at": datetime.now().isoformat()
-            }
-        )
 
     # ─────────────────────────────────────────────────────────────────
     # Context Building for Prompts
     # ─────────────────────────────────────────────────────────────────
 
-    def get_context_for_prompt(
-        self,
-        query: str,
-        max_memories: int = 5,
-        include_preferences: bool = True
-    ) -> str:
+    def get_context_for_prompt(self, query: str, max_memories: int = 5, include_preferences: bool = True) -> str:
         """
         Get relevant memories to inject into prompt context.
 
@@ -436,7 +390,7 @@ class MaudeMemory:
     # Statistics and Management
     # ─────────────────────────────────────────────────────────────────
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get memory statistics."""
         # Count by category
         cursor = self.conn.execute("""
@@ -476,28 +430,16 @@ class MaudeMemory:
             "conversation_sessions": conv_stats["sessions"],
             "total_messages": conv_stats["messages"],
             "top_accessed": top_accessed,
-            "database_size_kb": db_size // 1024
+            "database_size_kb": db_size // 1024,
         }
 
     def clear_category(self, category: str) -> int:
         """Clear all memories in a category. Returns count deleted."""
-        cursor = self.conn.execute(
-            "DELETE FROM memories WHERE category = ?", (category,)
-        )
+        cursor = self.conn.execute("DELETE FROM memories WHERE category = ?", (category,))
         self.conn.commit()
         return cursor.rowcount
 
-    def clear_old_conversations(self, days: int = 30) -> int:
-        """Clear conversations older than specified days."""
-        from datetime import timedelta
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        cursor = self.conn.execute(
-            "DELETE FROM conversations WHERE timestamp < ?", (cutoff,)
-        )
-        self.conn.commit()
-        return cursor.rowcount
-
-    def export_memories(self) -> List[Dict[str, Any]]:
+    def export_memories(self) -> list[dict[str, Any]]:
         """Export all memories as JSON-serializable list."""
         cursor = self.conn.execute("SELECT * FROM memories")
         return [
@@ -508,139 +450,7 @@ class MaudeMemory:
                 "created_at": r["created_at"],
                 "updated_at": r["updated_at"],
                 "access_count": r["access_count"],
-                "metadata": json.loads(r["metadata"]) if r["metadata"] else None
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else None,
             }
             for r in cursor.fetchall()
         ]
-
-    def import_memories(self, memories: List[Dict[str, Any]]) -> int:
-        """Import memories from export. Returns count imported."""
-        count = 0
-        for mem in memories:
-            self.remember(
-                key=mem["key"],
-                value=mem["value"],
-                category=mem.get("category", "fact"),
-                metadata=mem.get("metadata")
-            )
-            count += 1
-        return count
-
-
-# ─────────────────────────────────────────────────────────────────
-# Command Handlers
-# ─────────────────────────────────────────────────────────────────
-
-def handle_memory_command(args: list, memory: MaudeMemory) -> str:
-    """Handle /memory command."""
-    if not args:
-        # Show stats
-        stats = memory.get_stats()
-        lines = [
-            "Memory Statistics:",
-            f"  Total memories: {stats['total_memories']}",
-            f"  Categories: {stats['by_category']}",
-            f"  Conversation sessions: {stats['conversation_sessions']}",
-            f"  Total messages: {stats['total_messages']}",
-            f"  Database size: {stats['database_size_kb']} KB",
-        ]
-        if stats['top_accessed']:
-            lines.append("  Most accessed:")
-            for key, count in stats['top_accessed']:
-                lines.append(f"    - {key} ({count}x)")
-        return "\n".join(lines)
-
-    action = args[0].lower()
-
-    if action == "list":
-        category = args[1] if len(args) > 1 else None
-        memories = memory.list_memories(category=category)
-        if not memories:
-            return "No memories found."
-        lines = ["Memories:"]
-        for m in memories:
-            lines.append(f"  [{m.category}] {m.key}: {m.value[:50]}...")
-        return "\n".join(lines)
-
-    elif action == "search" and len(args) > 1:
-        query = " ".join(args[1:])
-        results = memory.search(query)
-        if not results:
-            return f"No memories matching '{query}'"
-        lines = [f"Search results for '{query}':"]
-        for m in results:
-            lines.append(f"  [{m.category}] {m.key}: {m.value[:60]}...")
-        return "\n".join(lines)
-
-    elif action == "clear" and len(args) > 1:
-        category = args[1]
-        count = memory.clear_category(category)
-        return f"Cleared {count} memories from category '{category}'"
-
-    elif action == "export":
-        data = memory.export_memories()
-        export_path = Path.home() / ".config" / "maude" / "memory_export.json"
-        export_path.write_text(json.dumps(data, indent=2))
-        return f"Exported {len(data)} memories to {export_path}"
-
-    return """Usage: /memory [command]
-
-Commands:
-  /memory              Show statistics
-  /memory list [cat]   List memories (optional category filter)
-  /memory search <q>   Search memories
-  /memory clear <cat>  Clear category
-  /memory export       Export to JSON"""
-
-
-def handle_remember_command(args: list, memory: MaudeMemory) -> str:
-    """Handle /remember command."""
-    if len(args) < 2:
-        return "Usage: /remember <key> <value> [category]\n\nCategories: fact, preference, person, task"
-
-    key = args[0]
-
-    # Check if last arg is a category
-    categories = {"fact", "preference", "person", "task", "conversation"}
-    if args[-1].lower() in categories:
-        value = " ".join(args[1:-1])
-        category = args[-1].lower()
-    else:
-        value = " ".join(args[1:])
-        category = "fact"
-
-    memory.remember(key, value, category)
-    return f"Remembered [{category}] {key}: {value}"
-
-
-def handle_recall_command(args: list, memory: MaudeMemory) -> str:
-    """Handle /recall command."""
-    if not args:
-        return "Usage: /recall <key>"
-
-    key = args[0]
-    value = memory.recall(key)
-
-    if value:
-        return f"{key}: {value}"
-
-    # Try semantic search as fallback
-    results = memory.search(key, limit=3)
-    if results:
-        lines = [f"No exact match for '{key}', but found similar:"]
-        for m in results:
-            lines.append(f"  {m.key}: {m.value[:60]}...")
-        return "\n".join(lines)
-
-    return f"No memory found for '{key}'"
-
-
-def handle_forget_command(args: list, memory: MaudeMemory) -> str:
-    """Handle /forget command."""
-    if not args:
-        return "Usage: /forget <key>"
-
-    key = args[0]
-    if memory.forget(key):
-        return f"Forgot: {key}"
-    return f"No memory found for '{key}'"

@@ -6,13 +6,10 @@ Tests for parallel tool execution across all execution paths:
 - PARALLEL_SAFE classification correctness
 """
 
-import json
-import time
 import threading
-from unittest.mock import patch, MagicMock
-from concurrent.futures import ThreadPoolExecutor
-
-import pytest
+import time
+from typing import ClassVar
+from unittest.mock import MagicMock, patch
 
 from maude_core.tools_plan import PARALLEL_SAFE
 
@@ -20,23 +17,44 @@ from maude_core.tools_plan import PARALLEL_SAFE
 class TestParallelSafeClassification:
     """Verify tools are correctly classified as parallel-safe or mutating."""
 
-    MUST_BE_PARALLEL = {
-        "read_file", "list_directory", "search_file", "search_directory",
-        "get_working_directory", "web_browse", "web_search",
-        "gmail_list", "gmail_read",
-        "drive_list", "drive_search", "drive_read",
-        "github_list_prs", "github_view_pr",
-        "recall_memory", "list_memories",
-        "system_stats", "gpu_processes",
+    MUST_BE_PARALLEL: ClassVar[set[str]] = {
+        "read_file",
+        "list_directory",
+        "search_file",
+        "search_directory",
+        "get_working_directory",
+        "web_browse",
+        "web_search",
+        "gmail_list",
+        "gmail_read",
+        "drive_list",
+        "drive_search",
+        "drive_read",
+        "github_list_prs",
+        "github_view_pr",
+        "recall_memory",
+        "list_memories",
+        "system_stats",
+        "gpu_processes",
     }
 
-    MUST_BE_SEQUENTIAL = {
-        "write_file", "edit_file", "run_command", "change_directory",
-        "gmail_send", "save_memory", "forget_memory",
-        "drive_upload", "drive_delete", "drive_update_doc",
-        "calendar_create_event", "calendar_delete_event",
-        "generate_image", "social_post",
-        "sandbox_exec", "sandbox_write_file",
+    MUST_BE_SEQUENTIAL: ClassVar[set[str]] = {
+        "write_file",
+        "edit_file",
+        "run_command",
+        "change_directory",
+        "gmail_send",
+        "save_memory",
+        "forget_memory",
+        "drive_upload",
+        "drive_delete",
+        "drive_update_doc",
+        "calendar_create_event",
+        "calendar_delete_event",
+        "generate_image",
+        "social_post",
+        "sandbox_exec",
+        "sandbox_write_file",
     }
 
     def test_parallel_tools_classified_correctly(self):
@@ -70,13 +88,15 @@ class TestParallelExecution:
             return f"result:{name}"
 
         with patch("maude_core.execute.execute_tool", side_effect=mock_execute):
-            execute_plan([
+            execute_plan(
                 [
-                    {"name": "read_file", "args": {"path": "a.py"}},
-                    {"name": "search_file", "args": {"path": "b.py", "pattern": "x"}},
-                    {"name": "list_directory", "args": {"path": "/tmp"}},
+                    [
+                        {"name": "read_file", "args": {"path": "a.py"}},
+                        {"name": "search_file", "args": {"path": "b.py", "pattern": "x"}},
+                        {"name": "list_directory", "args": {"path": "/tmp"}},
+                    ]
                 ]
-            ])
+            )
 
         # Extract start/end times per call index
         starts = {idx: t for ev, idx, t in timestamps if ev == "start"}
@@ -107,12 +127,14 @@ class TestParallelExecution:
             return f"result:{name}"
 
         with patch("maude_core.execute.execute_tool", side_effect=mock_execute):
-            execute_plan([
+            execute_plan(
                 [
-                    {"name": "write_file", "args": {"path": "a", "content": "x"}},
-                    {"name": "run_command", "args": {"command": "echo hi"}},
+                    [
+                        {"name": "write_file", "args": {"path": "a", "content": "x"}},
+                        {"name": "run_command", "args": {"command": "echo hi"}},
+                    ]
                 ]
-            ])
+            )
 
         starts = {name: t for ev, name, t in timestamps if ev == "start"}
         ends = {name: t for ev, name, t in timestamps if ev == "end"}
@@ -134,13 +156,15 @@ class TestParallelExecution:
             return "ok"
 
         with patch("maude_core.execute.execute_tool", side_effect=mock_execute):
-            execute_plan([
+            execute_plan(
                 [
-                    {"name": "read_file", "args": {"path": "a"}},
-                    {"name": "list_directory", "args": {"path": "/tmp"}},
-                    {"name": "run_command", "args": {"command": "echo"}},
+                    [
+                        {"name": "read_file", "args": {"path": "a"}},
+                        {"name": "list_directory", "args": {"path": "/tmp"}},
+                        {"name": "run_command", "args": {"command": "echo"}},
+                    ]
                 ]
-            ])
+            )
 
         # run_command (sequential) should be last
         assert call_order[-1] == "run_command"
@@ -164,9 +188,7 @@ class TestAgentParallelTools:
                 timestamps.append(("end", time.time()))
             resp = MagicMock()
             resp.status_code = 200
-            resp.json.return_value = {
-                "choices": [{"message": {"content": "done"}}]
-            }
+            resp.json.return_value = {"choices": [{"message": {"content": "done"}}]}
             resp.raise_for_status = MagicMock()
             return resp
 
@@ -198,9 +220,7 @@ class TestAgentParallelTools:
             captured_body.update(kwargs.get("json", {}))
             resp = MagicMock()
             resp.status_code = 200
-            resp.json.return_value = {
-                "choices": [{"message": {"content": "result"}}]
-            }
+            resp.json.return_value = {"choices": [{"message": {"content": "result"}}]}
             resp.raise_for_status = MagicMock()
             return resp
 
@@ -229,10 +249,7 @@ class TestAgentParallelTools:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=writer, args=(f"agent_{i}", f"val_{i}"))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=writer, args=(f"agent_{i}", f"val_{i}")) for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:
@@ -256,21 +273,24 @@ class TestExecutePlanInAgentContext:
             if name == "web_browse":
                 return f"Page content from: {args.get('url', '')}"
             return "ok"
+
         mock_exec.side_effect = side_effect
 
-        result = execute_plan([
-            # Stage 0: parallel web searches
+        result = execute_plan(
             [
-                {"name": "web_search", "args": {"query": "python async"}},
-                {"name": "web_search", "args": {"query": "python threading"}},
-                {"name": "web_search", "args": {"query": "python multiprocessing"}},
-            ],
-            # Stage 1: read top results (could use $refs in real usage)
-            [
-                {"name": "web_browse", "args": {"url": "https://docs.python.org/async"}},
-                {"name": "web_browse", "args": {"url": "https://docs.python.org/threading"}},
-            ],
-        ])
+                # Stage 0: parallel web searches
+                [
+                    {"name": "web_search", "args": {"query": "python async"}},
+                    {"name": "web_search", "args": {"query": "python threading"}},
+                    {"name": "web_search", "args": {"query": "python multiprocessing"}},
+                ],
+                # Stage 1: read top results (could use $refs in real usage)
+                [
+                    {"name": "web_browse", "args": {"url": "https://docs.python.org/async"}},
+                    {"name": "web_browse", "args": {"url": "https://docs.python.org/threading"}},
+                ],
+            ]
+        )
 
         assert mock_exec.call_count == 5
         assert "2 stages" in result

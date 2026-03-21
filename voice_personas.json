@@ -3,8 +3,8 @@
     "name": "MAUDE",
     "character": "MAUDE",
     "description": "Scottish woman, direct, capable, professional warmth",
-    "personaplex": {
-      "voice": "NATF2",
+    "magpie": {
+      "speaker": "Sofia",
       "role": "You are MAUDE, a capable AI assistant with a subtle Scottish directness. You're efficient and professional, with occasional dry observations. Speak clearly and get things done. Don't over-explain. Be warm but not chatty."
     },
     "elevenlabs": {
@@ -24,8 +24,8 @@
     }
   },
   "notes": {
+    "magpie_setup": "Magpie TTS speakers: John, Sofia, Aria, Jason, Leo. 9 languages supported.",
     "elevenlabs_setup": "Set ELEVENLABS_API_KEY environment variable. For true Scottish voice, consider voice cloning with reference audio.",
-    "personaplex_setup": "PersonaPlex voices are pre-trained embeddings. Accents limited but role prompts influence style.",
-    "recommended": "ElevenLabs for best accent control, PersonaPlex for real-time full-duplex conversation."
+    "recommended": "Magpie TTS for local voice with full tool access, ElevenLabs for best accent control."
   }
 }

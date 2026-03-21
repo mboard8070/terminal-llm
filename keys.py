@@ -5,10 +5,10 @@ Stores API keys encrypted in ~/.config/maude/keys.json.enc
 Uses system keychain for the encryption key.
 """
 
-import os
 import json
+import os
 from pathlib import Path
-from typing import Optional, List
+
 from providers import PROVIDERS
 
 
@@ -34,24 +34,6 @@ class KeyManager:
         os.environ[PROVIDERS[provider].api_key_env] = api_key
         return True
 
-    def get_key(self, provider: str) -> Optional[str]:
-        """Retrieve an API key."""
-        # Check environment first (allows override)
-        if provider in PROVIDERS:
-            env_key = os.environ.get(PROVIDERS[provider].api_key_env)
-            if env_key:
-                return env_key
-
-        # Fall back to stored keys
-        keys = self._load_keys()
-        key = keys.get(provider)
-
-        # If found in storage, also set in environment
-        if key and provider in PROVIDERS:
-            os.environ[PROVIDERS[provider].api_key_env] = key
-
-        return key
-
     def remove_key(self, provider: str) -> bool:
         """Remove an API key."""
         keys = self._load_keys()
@@ -67,15 +49,14 @@ class KeyManager:
             return True
         return False
 
-    def list_configured(self) -> List[str]:
+    def list_configured(self) -> list[str]:
         """List providers with configured keys."""
         configured = []
 
         # Check environment variables
         for name, config in PROVIDERS.items():
-            if os.environ.get(config.api_key_env):
-                if name not in configured:
-                    configured.append(name)
+            if os.environ.get(config.api_key_env) and name not in configured:
+                configured.append(name)
 
         # Check stored keys
         keys = self._load_keys()
@@ -98,7 +79,7 @@ class KeyManager:
             return {}
         try:
             return json.loads(self.KEYS_FILE.read_text())
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             return {}
 
     def _save_keys(self, keys: dict):
@@ -116,7 +97,9 @@ def handle_keys_command(args: list) -> str:
         # List configured providers
         configured = km.list_configured()
         if not configured:
-            return "No API keys configured.\n\nUsage: /keys set <provider> <key>\n\nProviders: " + ", ".join(PROVIDERS.keys())
+            return "No API keys configured.\n\nUsage: /keys set <provider> <key>\n\nProviders: " + ", ".join(
+                PROVIDERS.keys()
+            )
 
         lines = ["Configured API keys:"]
         for p in configured:
@@ -166,7 +149,7 @@ Providers: """ + ", ".join(sorted(PROVIDERS.keys()))
 
 def test_provider(provider_name: str) -> str:
     """Test connection to a provider."""
-    from providers import get_api_key, PROVIDERS, Provider
+    from providers import PROVIDERS, Provider, get_api_key
 
     if provider_name not in PROVIDERS:
         return f"Unknown provider: {provider_name}"
@@ -180,49 +163,30 @@ def test_provider(provider_name: str) -> str:
     try:
         if config.provider == Provider.ANTHROPIC:
             import anthropic
+
             client = anthropic.Anthropic(api_key=api_key)
-            response = client.messages.create(
-                model=config.default_model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Say 'ok'"}]
+            _response = client.messages.create(
+                model=config.default_model, max_tokens=10, messages=[{"role": "user", "content": "Say 'ok'"}]
             )
             return f"✓ {provider_name} ({config.name}) connected successfully"
 
-        elif config.provider == Provider.OPENAI:
+        elif (
+            config.provider == Provider.OPENAI or config.provider == Provider.XAI or config.provider == Provider.MISTRAL
+        ):
             from openai import OpenAI
-            client = OpenAI(api_key=api_key, base_url=config.base_url)
-            response = client.chat.completions.create(
-                model=config.default_model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Say 'ok'"}]
-            )
-            return f"✓ {provider_name} ({config.name}) connected successfully"
 
-        elif config.provider == Provider.XAI:
-            from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=config.base_url)
-            response = client.chat.completions.create(
-                model=config.default_model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Say 'ok'"}]
-            )
-            return f"✓ {provider_name} ({config.name}) connected successfully"
-
-        elif config.provider == Provider.MISTRAL:
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key, base_url=config.base_url)
-            response = client.chat.completions.create(
-                model=config.default_model,
-                max_tokens=10,
-                messages=[{"role": "user", "content": "Say 'ok'"}]
+            _response = client.chat.completions.create(
+                model=config.default_model, max_tokens=10, messages=[{"role": "user", "content": "Say 'ok'"}]
             )
             return f"✓ {provider_name} ({config.name}) connected successfully"
 
         elif config.provider == Provider.GOOGLE:
             import google.generativeai as genai
+
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel(config.default_model)
-            response = model.generate_content("Say 'ok'")
+            _response = model.generate_content("Say 'ok'")
             return f"✓ {provider_name} ({config.name}) connected successfully"
 
         else:

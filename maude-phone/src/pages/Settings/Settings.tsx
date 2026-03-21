@@ -5,7 +5,7 @@ interface HealthStatus {
   status: string;
   services?: {
     llama_server?: ServiceStatus;
-    personaplex?: ServiceStatus;
+    voice_server?: ServiceStatus;
   };
   gateway_port?: number;
 }
@@ -37,7 +37,7 @@ export const Settings: FC = () => {
   const sparkConnected = health !== null;
   const gatewayPort = health?.gateway_port ?? 30000;
   const llmService = health?.services?.llama_server;
-  const personaplexService = health?.services?.personaplex;
+  const voiceService = health?.services?.voice_server;
 
   useEffect(() => {
     fetch(`${getGatewayUrl()}/health`).then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
@@ -54,7 +54,7 @@ export const Settings: FC = () => {
   };
 
   const llm = svcLabel(llmService);
-  const ppx = svcLabel(personaplexService);
+  const ppx = svcLabel(voiceService);
 
   return (
     <div className="no-scrollbar h-full overflow-y-auto bg-maude-bg">
@@ -75,7 +75,7 @@ export const Settings: FC = () => {
             </div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className={`font-mono text-sm ${sparkConnected ? "text-green-400" : "text-maude-muted"}`}>{sparkConnected ? `${gatewayPort} (up)` : "\u2014"}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className={`font-mono text-sm ${llm.color}`}>{llm.text}</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">PersonaPlex</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice Server</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{window.location.host}</span></div>
           </div>
@@ -111,7 +111,7 @@ export const Settings: FC = () => {
 
         {/* Voice */}
         <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">PersonaPlex Voice</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Voice</h2>
           <div className="rounded-xl bg-maude-surface p-4">
             <select value={defaultVoice} onChange={(e) => saveVoice(e.target.value)}
               className="w-full rounded-lg bg-maude-bg px-3 py-2.5 text-sm text-maude-text outline-none focus:ring-1 focus:ring-maude-accent">
@@ -134,7 +134,7 @@ export const Settings: FC = () => {
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">1.8.3</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Claude</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">PersonaPlex ({(localStorage.getItem("maude-default-voice") || "NATF2.pt").replace(".pt", "")})</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">MAUDE Voice ({(localStorage.getItem("maude-default-voice") || "NATF2.pt").replace(".pt", "")})</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Hub</span><span className="text-sm font-mono">DGX Spark</span></div>
             <div className="pt-2 text-center text-xs text-maude-muted"><span className="fire-gradient font-bold">MAUDE</span> — Multi-Agent Unified Dispatch Engine</div>
           </div>

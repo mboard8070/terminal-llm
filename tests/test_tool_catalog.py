@@ -2,8 +2,7 @@
 Tests for tool_catalog.py — catalog structure, filtering, execution targets.
 """
 
-import pytest
-from tool_catalog import get_catalog, get_filtered_tools, execute_server_tool, _LOCAL_TOOLS, _CLIENT_ONLY_TOOLS
+from tool_catalog import _LOCAL_TOOLS, execute_server_tool, get_catalog, get_filtered_tools
 
 
 class TestCatalogStructure:

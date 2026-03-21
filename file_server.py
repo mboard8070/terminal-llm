@@ -6,10 +6,9 @@ Runs on port 30002. Clients tunnel to it the same way they tunnel to the LLM.
 Supports: list files, download files, upload files.
 """
 
-import os
 import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import unquote
 
 SHARED_DIR = Path.home() / "nvidia-workbench" / "terminal-llm" / "shared"
@@ -37,12 +36,12 @@ class FileHandler(BaseHTTPRequestHandler):
 
         # GET /download/<filename> — download from shared
         elif path.startswith("/download/"):
-            filename = path[len("/download/"):]
+            filename = path[len("/download/") :]
             self._send_file(SHARED_DIR / filename)
 
         # GET /download-transfer/<filename> — download from transfers
         elif path.startswith("/download-transfer/"):
-            filename = path[len("/download-transfer/"):]
+            filename = path[len("/download-transfer/") :]
             self._send_file(TRANSFERS_DIR / filename)
 
         # GET /health — health check
@@ -57,12 +56,12 @@ class FileHandler(BaseHTTPRequestHandler):
 
         # POST /upload — upload to transfers (client -> server)
         if path.startswith("/upload/"):
-            filename = path[len("/upload/"):]
+            filename = path[len("/upload/") :]
             self._receive_file(TRANSFERS_DIR / filename)
 
         # POST /share — upload to shared folder
         elif path.startswith("/share/"):
-            filename = path[len("/share/"):]
+            filename = path[len("/share/") :]
             self._receive_file(SHARED_DIR / filename)
 
         else:
@@ -72,12 +71,14 @@ class FileHandler(BaseHTTPRequestHandler):
         entries = []
         for entry in sorted(directory.iterdir()):
             stat = entry.stat()
-            entries.append({
-                "name": entry.name,
-                "size": stat.st_size,
-                "is_dir": entry.is_dir(),
-                "modified": stat.st_mtime,
-            })
+            entries.append(
+                {
+                    "name": entry.name,
+                    "size": stat.st_size,
+                    "is_dir": entry.is_dir(),
+                    "modified": stat.st_mtime,
+                }
+            )
         self._json_response({"path": str(directory), "files": entries})
 
     def _send_file(self, filepath):

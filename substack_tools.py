@@ -6,12 +6,11 @@ Uses the unofficial Substack API with session-based authentication.
 Requires SUBSTACK_PUBLICATION_URL, SUBSTACK_EMAIL, and SUBSTACK_PASSWORD in .env
 """
 
+import json
 import os
 import re
-import json
-import requests
-from typing import Optional
 
+import requests
 
 # Configuration from environment
 SUBSTACK_URL = os.environ.get("SUBSTACK_PUBLICATION_URL", "").rstrip("/")
@@ -19,12 +18,13 @@ SUBSTACK_EMAIL = os.environ.get("SUBSTACK_EMAIL", "")
 SUBSTACK_PASSWORD = os.environ.get("SUBSTACK_PASSWORD", "")
 
 # Cached authenticated session
-_session: Optional[requests.Session] = None
+_session: requests.Session | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _check_setup() -> str:
     """Check if Substack credentials are configured. Returns 'OK' or an error message."""
@@ -51,11 +51,13 @@ def _get_session() -> requests.Session:
         return _session
 
     session = requests.Session()
-    session.headers.update({
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "User-Agent": "MAUDE/1.0 (Substack Integration)",
-    })
+    session.headers.update(
+        {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "MAUDE/1.0 (Substack Integration)",
+        }
+    )
 
     login_url = "https://substack.com/api/v1/login"
     login_payload = {
@@ -67,7 +69,7 @@ def _get_session() -> requests.Session:
     try:
         resp = session.post(login_url, json=login_payload, timeout=30)
     except requests.RequestException as e:
-        raise ConnectionError(f"Failed to connect to Substack login endpoint: {e}")
+        raise ConnectionError(f"Failed to connect to Substack login endpoint: {e}") from e
 
     if resp.status_code != 200:
         # Try to extract a useful error message from the response
@@ -76,9 +78,7 @@ def _get_session() -> requests.Session:
             error_msg = error_data.get("error", error_data.get("errors", resp.text))
         except (ValueError, KeyError):
             error_msg = resp.text[:500]
-        raise RuntimeError(
-            f"Substack login failed (HTTP {resp.status_code}): {error_msg}"
-        )
+        raise RuntimeError(f"Substack login failed (HTTP {resp.status_code}): {error_msg}")
 
     # Check for error in the JSON response body
     try:
@@ -114,10 +114,12 @@ def _body_to_prosemirror(body: str) -> dict:
                     inline_content.append({"type": "text", "text": line})
                 if i < len(lines) - 1:
                     inline_content.append({"type": "hardBreak"})
-            content.append({
-                "type": "paragraph",
-                "content": inline_content if inline_content else [{"type": "text", "text": ""}],
-            })
+            content.append(
+                {
+                    "type": "paragraph",
+                    "content": inline_content if inline_content else [{"type": "text", "text": ""}],
+                }
+            )
         else:
             # Empty paragraph for spacing
             content.append({"type": "paragraph"})
@@ -160,6 +162,7 @@ def _format_date(date_str: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API Functions
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def substack_create_draft(title: str, body: str, subtitle: str = "", audience: str = "everyone") -> str:
     """
@@ -212,11 +215,13 @@ def substack_create_draft(title: str, body: str, subtitle: str = "", audience: s
         ]
         if subtitle:
             output.append(f"  Subtitle: {subtitle}")
-        output.extend([
-            f"  Audience: {audience}",
-            f"  Draft ID: {draft_id}",
-            f"  Edit URL: {edit_url}",
-        ])
+        output.extend(
+            [
+                f"  Audience: {audience}",
+                f"  Draft ID: {draft_id}",
+                f"  Edit URL: {edit_url}",
+            ]
+        )
 
         return "\n".join(output)
 
@@ -384,9 +389,7 @@ def substack_get_post(post_id: str) -> str:
         title = post.get("title", post.get("draft_title", "(untitled)"))
         subtitle = post.get("subtitle", post.get("draft_subtitle", ""))
         audience = post.get("audience", "everyone")
-        post_date = _format_date(
-            post.get("post_date", post.get("published_at", post.get("draft_created_at", "")))
-        )
+        post_date = _format_date(post.get("post_date", post.get("published_at", post.get("draft_created_at", ""))))
         slug = post.get("slug", "")
         canonical_url = post.get("canonical_url", "")
         if not canonical_url and slug:
@@ -403,11 +406,13 @@ def substack_get_post(post_id: str) -> str:
         ]
         if subtitle:
             output.append(f"Subtitle: {subtitle}")
-        output.extend([
-            f"Post ID: {post_id}",
-            f"Date: {post_date}",
-            f"Audience: {audience}",
-        ])
+        output.extend(
+            [
+                f"Post ID: {post_id}",
+                f"Date: {post_date}",
+                f"Audience: {audience}",
+            ]
+        )
         if slug:
             output.append(f"Slug: {slug}")
         if canonical_url:
@@ -594,8 +599,14 @@ def substack_get_stats() -> str:
         output.append(f"URL: {base_url}")
 
         # Subscriber / follower counts (field names may vary)
-        for key in ("subscriber_count", "active_subscriber_count", "free_subscriber_count",
-                     "paid_subscriber_count", "follower_count", "email_subscriber_count"):
+        for key in (
+            "subscriber_count",
+            "active_subscriber_count",
+            "free_subscriber_count",
+            "paid_subscriber_count",
+            "follower_count",
+            "email_subscriber_count",
+        ):
             val = pub.get(key)
             if val is not None:
                 label = key.replace("_", " ").title()
@@ -607,8 +618,7 @@ def substack_get_stats() -> str:
             output.append(f"Post Count: {post_count}")
 
         # Other interesting stats
-        for key in ("has_posts", "has_podcast", "paid_enabled", "stripe_connected",
-                     "default_coupon_pct_off"):
+        for key in ("has_posts", "has_podcast", "paid_enabled", "stripe_connected", "default_coupon_pct_off"):
             val = pub.get(key)
             if val is not None:
                 label = key.replace("_", " ").title()
@@ -626,6 +636,7 @@ def substack_get_stats() -> str:
 
 if __name__ == "__main__":
     import sys
+
     from dotenv import load_dotenv
 
     # Reload env vars from .env in case they weren't loaded

@@ -4,9 +4,10 @@ rate limiting, and caching.
 """
 
 from tool_registry import get_handler, is_cacheable
+
+from . import rate_limits
 from .cache import ToolCache, _tool_cache
 from .log import log
-from . import rate_limits
 
 
 def execute_tool(name: str, arguments: dict) -> str:
@@ -15,6 +16,7 @@ def execute_tool(name: str, arguments: dict) -> str:
     # Pre-flight readiness check
     try:
         from health import check_tool_ready
+
         ready, reason = check_tool_ready(name)
         if not ready:
             return f"Tool '{name}' unavailable: {reason}. Tell the user this tool isn't currently available and suggest alternatives."

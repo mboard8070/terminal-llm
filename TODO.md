@@ -8,7 +8,7 @@
 - [x] Local model inference (Nemotron on llama-server)
 - [x] Streaming responses with typewriter effect
 - [x] Google Workspace integration (43 tools: Gmail, Drive, Sheets, Slides, Calendar, Contacts, YouTube)
-- [x] Voice interaction (PersonaPlex speech-to-speech)
+- [x] Voice interaction (Nemotron ASR + Magpie TTS, full tool access)
 - [x] Mobile app (iOS, Capacitor, EventSource streaming)
 - [x] Tool system (fast dispatch, keyword-based tool groups, scoped tool access)
 - [x] Image analysis (LLaVA)

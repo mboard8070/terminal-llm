@@ -4,28 +4,28 @@ Tool result cache — TTL-based cache for expensive tool results.
 
 import json
 import time
-from typing import Dict, Optional
+from typing import ClassVar
 
 
 class ToolCache:
     """TTL-based cache for expensive tool results (web, vision)."""
 
     # Per-tool TTLs in seconds
-    TTLS = {
-        "web_browse": 1800,   # 30 min
-        "web_search": 1800,   # 30 min
-        "web_view":   1800,   # 30 min
-        "view_image": 300,    # 5 min
+    TTLS: ClassVar[dict[str, int]] = {
+        "web_browse": 1800,  # 30 min
+        "web_search": 1800,  # 30 min
+        "web_view": 1800,  # 30 min
+        "view_image": 300,  # 5 min
     }
 
     def __init__(self):
-        self._store: Dict[tuple, tuple] = {}  # (tool, args_key) -> (result, expiry)
+        self._store: dict[tuple, tuple] = {}  # (tool, args_key) -> (result, expiry)
 
     @staticmethod
     def _make_key(tool_name: str, arguments: dict) -> tuple:
         return (tool_name, json.dumps(arguments, sort_keys=True))
 
-    def get(self, tool_name: str, arguments: dict) -> Optional[str]:
+    def get(self, tool_name: str, arguments: dict) -> str | None:
         """Return cached result or None."""
         key = self._make_key(tool_name, arguments)
         entry = self._store.get(key)

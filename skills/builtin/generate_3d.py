@@ -5,10 +5,9 @@ Routes 3D generation requests to the best available endpoint via CapabilityRoute
 Supports various 3D generation backends (Meshy API, local services, etc.).
 """
 
-import json
 import os
+
 import requests
-from typing import Optional
 
 from skills import skill
 
@@ -17,12 +16,13 @@ def _get_router():
     """Lazy import router to avoid circular dependencies."""
     try:
         from routing import get_router
+
         return get_router()
     except ImportError:
         return None
 
 
-def _get_3d_endpoint_from_router(provider: str = None) -> Optional[tuple]:
+def _get_3d_endpoint_from_router(provider: str = None) -> tuple | None:
     """Get 3D generation endpoint info from the capability router.
 
     Returns:
@@ -32,12 +32,10 @@ def _get_3d_endpoint_from_router(provider: str = None) -> Optional[tuple]:
     if not router:
         return None
 
-    from capabilities import CapabilityType
-
     # Try to find 3D generation capability
     result = router.find_3d_gen(provider if provider != "auto" else None)
     if result:
-        node, cap = result
+        _node, cap = result
         return (cap.endpoint_url, cap.endpoint_type.value, cap.name)
 
     return None
@@ -68,41 +66,31 @@ def _check_endpoint_health(url: str) -> bool:
     parameters={
         "type": "object",
         "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "Text description of the 3D model to generate"
-            },
-            "image_path": {
-                "type": "string",
-                "description": "Optional path to an image to use as reference"
-            },
+            "prompt": {"type": "string", "description": "Text description of the 3D model to generate"},
+            "image_path": {"type": "string", "description": "Optional path to an image to use as reference"},
             "output_format": {
                 "type": "string",
                 "enum": ["glb", "obj", "fbx", "stl"],
                 "description": "Output format for the 3D model",
-                "default": "glb"
+                "default": "glb",
             },
             "provider": {
                 "type": "string",
                 "description": "Specific provider to use (auto, meshy, local, etc.)",
-                "default": "auto"
+                "default": "auto",
             },
             "action": {
                 "type": "string",
                 "enum": ["generate", "status", "list"],
                 "description": "Action to perform",
-                "default": "generate"
-            }
+                "default": "generate",
+            },
         },
-        "required": ["prompt"]
-    }
+        "required": ["prompt"],
+    },
 )
 def generate_3d(
-    prompt: str,
-    image_path: str = None,
-    output_format: str = "glb",
-    provider: str = "auto",
-    action: str = "generate"
+    prompt: str, image_path: str = None, output_format: str = "glb", provider: str = "auto", action: str = "generate"
 ) -> str:
     """Generate 3D model using the mesh capability router."""
 
@@ -145,11 +133,7 @@ def generate_3d(
             # Check for Meshy API key as fallback
             meshy_key = os.environ.get("MESHY_API_KEY")
             if meshy_key:
-                return (
-                    "3D Generation Status: Meshy API (Cloud)\n"
-                    "Endpoint: https://api.meshy.ai\n"
-                    "API Key: Configured"
-                )
+                return "3D Generation Status: Meshy API (Cloud)\nEndpoint: https://api.meshy.ai\nAPI Key: Configured"
             return "No 3D generation endpoint found on mesh and no MESHY_API_KEY configured."
 
         url, endpoint_type, name = endpoint_info
@@ -177,10 +161,7 @@ def generate_3d(
 
         # Check endpoint health
         if not _check_endpoint_health(url) and not meshy_key:
-            return (
-                f"3D generation endpoint at {url} is not responding.\n"
-                "Please check that the service is running."
-            )
+            return f"3D generation endpoint at {url} is not responding.\nPlease check that the service is running."
 
         # For custom endpoints, we'd need to know their API format
         # For now, return info about the endpoint
@@ -213,10 +194,7 @@ def _generate_with_meshy(prompt: str, image_path: str, output_format: str, api_k
     """Generate 3D model using Meshy API."""
     import base64
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     # Determine if this is text-to-3D or image-to-3D
     if image_path and os.path.exists(image_path):
@@ -226,10 +204,7 @@ def _generate_with_meshy(prompt: str, image_path: str, output_format: str, api_k
 
         # Meshy image-to-3D endpoint
         url = "https://api.meshy.ai/v2/image-to-3d"
-        payload = {
-            "image_url": f"data:image/png;base64,{image_data}",
-            "enable_pbr": True
-        }
+        payload = {"image_url": f"data:image/png;base64,{image_data}", "enable_pbr": True}
     else:
         # Text-to-3D
         url = "https://api.meshy.ai/v2/text-to-3d"
@@ -237,7 +212,7 @@ def _generate_with_meshy(prompt: str, image_path: str, output_format: str, api_k
             "mode": "preview",
             "prompt": prompt,
             "art_style": "realistic",
-            "negative_prompt": "low quality, blurry, distorted"
+            "negative_prompt": "low quality, blurry, distorted",
         }
 
     try:

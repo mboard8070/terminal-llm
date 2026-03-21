@@ -5,14 +5,14 @@ Supports: Anthropic (Claude), OpenAI, Google (Gemini), xAI (Grok), Mistral
 """
 
 import os
-from enum import Enum
 from dataclasses import dataclass
-from typing import Dict, Optional
+from enum import Enum
 
 
 class Provider(Enum):
     """Supported provider types."""
-    LOCAL = "local"        # Ollama / llama.cpp
+
+    LOCAL = "local"  # Ollama / llama.cpp
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
@@ -23,19 +23,20 @@ class Provider(Enum):
 @dataclass
 class ProviderConfig:
     """Configuration for a model provider."""
+
     name: str
     provider: Provider
-    api_key_env: str          # Environment variable name for API key
+    api_key_env: str  # Environment variable name for API key
     base_url: str
     default_model: str
     supports_vision: bool
     supports_tools: bool
     cost_per_1k_input: float  # USD per 1K input tokens
-    cost_per_1k_output: float # USD per 1K output tokens
+    cost_per_1k_output: float  # USD per 1K output tokens
 
 
 # Provider configurations
-PROVIDERS: Dict[str, ProviderConfig] = {
+PROVIDERS: dict[str, ProviderConfig] = {
     # ─────────────────────────────────────────────────────────────────
     # ANTHROPIC (Claude)
     # ─────────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.003,
-        cost_per_1k_output=0.015
+        cost_per_1k_output=0.015,
     ),
     "claude-opus": ProviderConfig(
         name="Claude Opus 4.5",
@@ -59,9 +60,8 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.015,
-        cost_per_1k_output=0.075
+        cost_per_1k_output=0.075,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # OPENAI
     # ─────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.0025,
-        cost_per_1k_output=0.01
+        cost_per_1k_output=0.01,
     ),
     "openai-o1": ProviderConfig(
         name="OpenAI o1",
@@ -85,9 +85,8 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=False,  # o1 has limited tool support
         cost_per_1k_input=0.015,
-        cost_per_1k_output=0.06
+        cost_per_1k_output=0.06,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # GOOGLE (Gemini)
     # ─────────────────────────────────────────────────────────────────
@@ -100,7 +99,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.0,  # Free tier
-        cost_per_1k_output=0.0
+        cost_per_1k_output=0.0,
     ),
     "gemini-pro": ProviderConfig(
         name="Google Gemini 2.0 Pro",
@@ -111,9 +110,8 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.00125,
-        cost_per_1k_output=0.005
+        cost_per_1k_output=0.005,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # XAI (Grok)
     # ─────────────────────────────────────────────────────────────────
@@ -126,9 +124,8 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.002,
-        cost_per_1k_output=0.01
+        cost_per_1k_output=0.01,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # MISTRAL
     # ─────────────────────────────────────────────────────────────────
@@ -141,7 +138,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=False,
         supports_tools=True,
         cost_per_1k_input=0.002,
-        cost_per_1k_output=0.006
+        cost_per_1k_output=0.006,
     ),
     "codestral-cloud": ProviderConfig(
         name="Codestral (Cloud)",
@@ -152,7 +149,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=False,
         supports_tools=True,
         cost_per_1k_input=0.0003,
-        cost_per_1k_output=0.0009
+        cost_per_1k_output=0.0009,
     ),
     "devstral": ProviderConfig(
         name="Devstral 2 (123B)",
@@ -163,7 +160,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=False,
         supports_tools=True,
         cost_per_1k_input=0.0004,
-        cost_per_1k_output=0.002
+        cost_per_1k_output=0.002,
     ),
     "devstral-small": ProviderConfig(
         name="Devstral Small",
@@ -174,7 +171,7 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=False,
         supports_tools=True,
         cost_per_1k_input=0.0001,
-        cost_per_1k_output=0.0003
+        cost_per_1k_output=0.0003,
     ),
     "devstral-medium": ProviderConfig(
         name="Devstral Medium",
@@ -185,36 +182,13 @@ PROVIDERS: Dict[str, ProviderConfig] = {
         supports_vision=False,
         supports_tools=True,
         cost_per_1k_input=0.0002,
-        cost_per_1k_output=0.001
+        cost_per_1k_output=0.001,
     ),
 }
 
 
-def get_available_providers() -> Dict[str, ProviderConfig]:
-    """Return providers that have API keys configured."""
-    available = {}
-    for name, config in PROVIDERS.items():
-        if os.environ.get(config.api_key_env):
-            available[name] = config
-    return available
-
-
-def get_api_key(provider_name: str) -> Optional[str]:
+def get_api_key(provider_name: str) -> str | None:
     """Get API key for a provider, returns None if not set."""
     if provider_name not in PROVIDERS:
         return None
     return os.environ.get(PROVIDERS[provider_name].api_key_env)
-
-
-def list_providers() -> str:
-    """Format provider list for display."""
-    lines = ["Available Providers:\n"]
-    for name, config in PROVIDERS.items():
-        has_key = "✓" if get_api_key(name) else "✗"
-        lines.append(f"  [{has_key}] {name:15} - {config.name}")
-        lines.append(f"      Model: {config.default_model}")
-        if config.cost_per_1k_input > 0:
-            lines.append(f"      Cost: ${config.cost_per_1k_input:.4f}/1K in, ${config.cost_per_1k_output:.4f}/1K out")
-        else:
-            lines.append(f"      Cost: Free tier")
-    return "\n".join(lines)

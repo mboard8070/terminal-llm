@@ -58,6 +58,7 @@ data/scratch/*
 
 # Local LLM setup
 venv/
+.venv/
 llama.cpp/
 models/
 *.gguf

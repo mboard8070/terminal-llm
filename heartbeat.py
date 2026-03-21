@@ -21,27 +21,27 @@ MAUDE_HEARTBEAT_INTERVAL   seconds between ticks  (default 900 = 15 min)
 MAUDE_HEARTBEAT_ENABLED    "true" / "false"        (default "true")
 """
 
-import os
-import json
 import asyncio
+import json
 import logging
+import os
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional, Dict, List, Any
-from dataclasses import dataclass, field, asdict
+from typing import Any
 
 from openai import OpenAI
 
+from frontier import ask_frontier, list_available_providers
 from maude_core import (
-    append_chat_log,
-    read_chat_log_since,
     LOCAL_URL,
     MODEL,
-    get_memory,
+    append_chat_log,
     get_conversation_history,
+    get_memory,
+    read_chat_log_since,
 )
-from memory import MaudeMemory
-from frontier import ask_frontier, list_available_providers
 from scheduler import get_scheduler
 
 log = logging.getLogger("maude.heartbeat")
@@ -119,14 +119,16 @@ You may return multiple actions as a JSON array.
 # Pattern Tracker
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ObservedPattern:
     """A single behavioural pattern observed over time."""
+
     description: str
     frequency: int = 1
     first_seen: str = ""
     last_seen: str = ""
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 class PatternTracker:
@@ -138,7 +140,7 @@ class PatternTracker:
     """
 
     def __init__(self):
-        self.patterns: Dict[str, ObservedPattern] = {}
+        self.patterns: dict[str, ObservedPattern] = {}
         self._load()
 
     # -- Persistence --------------------------------------------------------
@@ -161,7 +163,7 @@ class PatternTracker:
 
     # -- Observation API ----------------------------------------------------
 
-    def observe(self, key: str, description: str, tags: Optional[List[str]] = None):
+    def observe(self, key: str, description: str, tags: list[str] | None = None):
         """
         Record an observation.  If the key already exists, bump its
         frequency and update last_seen.
@@ -184,22 +186,16 @@ class PatternTracker:
             )
         self._save()
 
-    def get_notable(self, min_frequency: int = 3, limit: int = 10) -> List[ObservedPattern]:
+    def get_notable(self, min_frequency: int = 3, limit: int = 10) -> list[ObservedPattern]:
         """Return patterns that have been seen at least *min_frequency* times."""
-        notable = [
-            p for p in self.patterns.values()
-            if p.frequency >= min_frequency
-        ]
+        notable = [p for p in self.patterns.values() if p.frequency >= min_frequency]
         notable.sort(key=lambda p: p.frequency, reverse=True)
         return notable[:limit]
 
-    def get_recent(self, hours: int = 24, limit: int = 10) -> List[ObservedPattern]:
+    def get_recent(self, hours: int = 24, limit: int = 10) -> list[ObservedPattern]:
         """Return patterns observed within the last *hours*."""
         cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
-        recent = [
-            p for p in self.patterns.values()
-            if p.last_seen >= cutoff
-        ]
+        recent = [p for p in self.patterns.values() if p.last_seen >= cutoff]
         recent.sort(key=lambda p: p.last_seen, reverse=True)
         return recent[:limit]
 
@@ -208,7 +204,7 @@ class PatternTracker:
         notable = self.get_notable(min_frequency=2, limit=5)
         recent = self.get_recent(hours=24, limit=5)
 
-        lines: List[str] = []
+        lines: list[str] = []
 
         if notable:
             lines.append("Recurring patterns:")
@@ -227,6 +223,7 @@ class PatternTracker:
 # Daily Activity Logger
 # ---------------------------------------------------------------------------
 
+
 class HeartbeatLogger:
     """
     Append structured entries to a daily markdown log at
@@ -237,7 +234,7 @@ class HeartbeatLogger:
         HEARTBEAT_DIR.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _log_path(dt: Optional[datetime] = None) -> Path:
+    def _log_path(dt: datetime | None = None) -> Path:
         dt = dt or datetime.now()
         return HEARTBEAT_DIR / f"{dt.strftime('%Y-%m-%d')}.md"
 
@@ -275,6 +272,7 @@ class HeartbeatLogger:
 # Heartbeat Engine
 # ---------------------------------------------------------------------------
 
+
 class HeartbeatEngine:
     """
     Core heartbeat loop.
@@ -295,13 +293,13 @@ class HeartbeatEngine:
         self.enabled: bool = _cfg_enabled()
 
         # Callbacks -- set externally before start()
-        self._maude_callback: Optional[Callable] = None
-        self._tool_executor: Optional[Callable] = None
+        self._maude_callback: Callable | None = None
+        self._tool_executor: Callable | None = None
         self._gateway = None  # Channel gateway for proactive messages
 
         # Internal state
         self._running: bool = False
-        self._loop_task: Optional[asyncio.Task] = None
+        self._loop_task: asyncio.Task | None = None
         self._tick_count: int = 0
         self._chat_log_position: int = 0  # file-seek position for chat sync
 
@@ -310,7 +308,7 @@ class HeartbeatEngine:
         self.logger = HeartbeatLogger()
 
         # Local LLM client (lazy)
-        self._local_client: Optional[OpenAI] = None
+        self._local_client: OpenAI | None = None
 
     # -- Dependency injection -----------------------------------------------
 
@@ -410,17 +408,16 @@ class HeartbeatEngine:
         self._observe_patterns(context)
 
         self.logger.write(
-            f"Tick #{self._tick_count} complete "
-            f"(action={'yes' if decision else 'no'})",
+            f"Tick #{self._tick_count} complete (action={'yes' if decision else 'no'})",
         )
 
     # -- Context gathering --------------------------------------------------
 
-    async def _gather_context(self) -> Dict[str, Any]:
+    async def _gather_context(self) -> dict[str, Any]:
         """
         Collect everything the heartbeat LLM needs to make a decision.
         """
-        ctx: Dict[str, Any] = {}
+        ctx: dict[str, Any] = {}
 
         # Recent conversation history (last 20 messages from shared memory)
         ctx["recent_messages"] = self._get_recent_messages()
@@ -501,9 +498,7 @@ class HeartbeatEngine:
             for task in tasks.values():
                 status = "enabled" if task.enabled else "disabled"
                 next_run = task.next_run or "unknown"
-                lines.append(
-                    f"- {task.name} [{status}] next: {next_run} | {task.prompt[:80]}"
-                )
+                lines.append(f"- {task.name} [{status}] next: {next_run} | {task.prompt[:80]}")
 
             return "\n".join(lines)
         except Exception as exc:
@@ -519,10 +514,7 @@ class HeartbeatEngine:
             mem = get_memory()
             if mem:
                 stats = mem.get_stats()
-                status_lines.append(
-                    f"Memory: {stats['total_memories']} items, "
-                    f"{stats['total_messages']} messages"
-                )
+                status_lines.append(f"Memory: {stats['total_memories']} items, {stats['total_messages']} messages")
         except Exception:
             status_lines.append("Memory: unavailable")
 
@@ -559,7 +551,7 @@ class HeartbeatEngine:
                     if now >= next_run:
                         log.info("Running due scheduled task: %s", task.name)
                         self.logger.write(f"Running scheduled task: {task.name}")
-                        asyncio.create_task(scheduler.run_task(task))
+                        _task = asyncio.create_task(scheduler.run_task(task))  # noqa: RUF006
                 except (ValueError, TypeError):
                     pass
         except Exception as exc:
@@ -567,7 +559,7 @@ class HeartbeatEngine:
 
     # -- LLM evaluation -----------------------------------------------------
 
-    async def _evaluate(self, context: Dict[str, Any]) -> Optional[Any]:
+    async def _evaluate(self, context: dict[str, Any]) -> Any | None:
         """
         Send context to the LLM and ask whether proactive action is needed.
 
@@ -599,7 +591,7 @@ class HeartbeatEngine:
         # Try to parse structured action(s) from the response
         return self._parse_actions(response_text)
 
-    async def _query_llm(self, prompt: str) -> Optional[str]:
+    async def _query_llm(self, prompt: str) -> str | None:
         """
         Send the heartbeat prompt to an LLM and return the raw text.
 
@@ -651,10 +643,7 @@ class HeartbeatEngine:
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "You are MAUDE's proactive heartbeat system. "
-                            "Respond concisely."
-                        ),
+                        "content": ("You are MAUDE's proactive heartbeat system. Respond concisely."),
                     },
                     {"role": "user", "content": prompt},
                 ],
@@ -673,15 +662,14 @@ class HeartbeatEngine:
         resp = ask_frontier(
             query=prompt,
             system_prompt=(
-                "You are MAUDE's proactive heartbeat system. "
-                "Respond concisely in the requested JSON format."
+                "You are MAUDE's proactive heartbeat system. Respond concisely in the requested JSON format."
             ),
         )
         return resp.content
 
     # -- Action parsing & execution -----------------------------------------
 
-    def _parse_actions(self, text: str) -> Optional[List[Dict[str, Any]]]:
+    def _parse_actions(self, text: str) -> list[dict[str, Any]] | None:
         """
         Attempt to extract structured action(s) from the LLM response.
 
@@ -693,7 +681,7 @@ class HeartbeatEngine:
         if cleaned.startswith("```"):
             # Remove opening fence (possibly ```json)
             first_newline = cleaned.index("\n") if "\n" in cleaned else len(cleaned)
-            cleaned = cleaned[first_newline + 1:]
+            cleaned = cleaned[first_newline + 1 :]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
@@ -715,7 +703,7 @@ class HeartbeatEngine:
 
         return None
 
-    async def _act(self, actions: List[Dict[str, Any]]):
+    async def _act(self, actions: list[dict[str, Any]]):
         """
         Execute the action(s) decided by the heartbeat LLM.
         """
@@ -745,16 +733,12 @@ class HeartbeatEngine:
 
                 else:
                     log.warning("Unknown heartbeat action type: %s", action_type)
-                    self.logger.write(
-                        f"Unknown action type: {action_type}", level="WARN"
-                    )
+                    self.logger.write(f"Unknown action type: {action_type}", level="WARN")
             except Exception as exc:
                 log.exception("Failed to execute heartbeat action %s: %s", action_type, exc)
-                self.logger.write(
-                    f"Action {action_type} failed: {exc}", level="ERROR"
-                )
+                self.logger.write(f"Action {action_type} failed: {exc}", level="ERROR")
 
-    async def _action_send_message(self, details: Dict[str, Any]):
+    async def _action_send_message(self, details: dict[str, Any]):
         """Send a proactive message to the user."""
         content = details.get("content") or details.get("message", "")
         channel = details.get("channel", "cli")
@@ -779,14 +763,12 @@ class HeartbeatEngine:
                 self.logger.write(f"Sent proactive message to {channel}/{channel_id}")
             except Exception as exc:
                 log.error("Gateway send failed: %s", exc)
-                self.logger.write(
-                    f"Failed to send via gateway: {exc}", level="ERROR"
-                )
+                self.logger.write(f"Failed to send via gateway: {exc}", level="ERROR")
         else:
             # Fallback: log to daily file and chat sync so CLI can pick it up
             self.logger.write(f"Proactive message (no gateway): {content}")
 
-    async def _action_run_tool(self, details: Dict[str, Any]):
+    async def _action_run_tool(self, details: dict[str, Any]):
         """Execute a MAUDE tool autonomously."""
         tool_name = details.get("tool") or details.get("name", "")
         arguments = details.get("arguments") or details.get("args", {})
@@ -803,14 +785,11 @@ class HeartbeatEngine:
                     result = await result
                 self.logger.write_section(
                     f"Tool: {tool_name}",
-                    f"**Arguments:** `{json.dumps(arguments)}`\n\n"
-                    f"**Result:**\n```\n{str(result)[:2000]}\n```",
+                    f"**Arguments:** `{json.dumps(arguments)}`\n\n**Result:**\n```\n{str(result)[:2000]}\n```",
                 )
             except Exception as exc:
                 log.error("Tool execution failed: %s %s -- %s", tool_name, arguments, exc)
-                self.logger.write(
-                    f"Tool {tool_name} failed: {exc}", level="ERROR"
-                )
+                self.logger.write(f"Tool {tool_name} failed: {exc}", level="ERROR")
         else:
             # No tool executor registered -- fall back to maude_core
             try:
@@ -819,13 +798,12 @@ class HeartbeatEngine:
                 result = execute_tool(tool_name, arguments)
                 self.logger.write_section(
                     f"Tool (direct): {tool_name}",
-                    f"**Arguments:** `{json.dumps(arguments)}`\n\n"
-                    f"**Result:**\n```\n{str(result)[:2000]}\n```",
+                    f"**Arguments:** `{json.dumps(arguments)}`\n\n**Result:**\n```\n{str(result)[:2000]}\n```",
                 )
             except Exception as exc:
                 log.error("Direct tool execution failed: %s -- %s", tool_name, exc)
 
-    def _action_update_memory(self, details: Dict[str, Any]):
+    def _action_update_memory(self, details: dict[str, Any]):
         """Update a persistent memory entry."""
         key = details.get("key", "")
         value = details.get("value", "")
@@ -845,7 +823,7 @@ class HeartbeatEngine:
         except Exception as exc:
             log.error("Memory update failed: %s", exc)
 
-    async def _action_check(self, details: Dict[str, Any]):
+    async def _action_check(self, details: dict[str, Any]):
         """
         Perform a follow-up check.  This sends the check description back
         to the LLM for a deeper investigation, then logs the findings.
@@ -867,7 +845,7 @@ class HeartbeatEngine:
 
     # -- Pattern observation ------------------------------------------------
 
-    def _observe_patterns(self, context: Dict[str, Any]):
+    def _observe_patterns(self, context: dict[str, Any]):
         """
         Analyse recent activity for recurring patterns and record them.
         """
@@ -877,8 +855,8 @@ class HeartbeatEngine:
 
         # Simple heuristic observations -- count message types/channels
         lines = recent.strip().split("\n")
-        channels_seen: Dict[str, int] = {}
-        hour_counts: Dict[int, int] = {}
+        channels_seen: dict[str, int] = {}
+        hour_counts: dict[int, int] = {}
 
         for line in lines:
             # Extract channel from "(channel)" pattern
@@ -890,7 +868,7 @@ class HeartbeatEngine:
 
             # Extract hour from timestamp "[YYYY-MM-DDTHH:MM]" or "[HH:MM]"
             if "[" in line and "]" in line:
-                ts_part = line[line.index("[") + 1:line.index("]")]
+                ts_part = line[line.index("[") + 1 : line.index("]")]
                 try:
                     # Handle both "2024-01-15T14:30" and "14:30" formats
                     if "T" in ts_part:
@@ -926,7 +904,7 @@ class HeartbeatEngine:
 # Module-level singleton and convenience accessor
 # ---------------------------------------------------------------------------
 
-_engine: Optional[HeartbeatEngine] = None
+_engine: HeartbeatEngine | None = None
 
 
 def get_heartbeat() -> HeartbeatEngine:

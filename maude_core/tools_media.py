@@ -2,18 +2,20 @@
 Image generation tool — Flux via ComfyUI.
 """
 
-import os
-import json
 import http.client
+import json
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
 from tool_registry import register_tool
+
 from .log import log
 
 
-def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
-                        seed: int = -1, steps: int = 28, lora: str = None) -> str:
+def tool_generate_image(
+    prompt: str, width: int = 1024, height: int = 1024, seed: int = -1, steps: int = 28, lora: str = None
+) -> str:
     """Generate an image using Flux via ComfyUI API."""
     import random
     import shutil
@@ -26,6 +28,7 @@ def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
     # Try mesh router first
     try:
         from routing import get_router
+
         router = get_router()
         result = router.find_comfyui()
         if result:
@@ -53,28 +56,40 @@ def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
     # Build Flux workflow
     filename_prefix = f"maude/gen_{seed}"
     workflow = {
-        "3": {"class_type": "KSampler", "inputs": {
-            "model": ["10", 0], "positive": ["55", 0], "negative": ["19", 0],
-            "latent_image": ["6", 0], "seed": seed, "control_after_generate": "fixed",
-            "steps": steps, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0
-        }},
-        "5": {"class_type": "CLIPTextEncodeFlux", "inputs": {
-            "clip": ["4", 0], "clip_l": prompt, "t5xxl": prompt, "guidance": 4
-        }},
-        "19": {"class_type": "CLIPTextEncodeFlux", "inputs": {
-            "clip": ["4", 0], "clip_l": "", "t5xxl": "", "guidance": 4
-        }},
-        "55": {"class_type": "FluxGuidance", "inputs": {
-            "conditioning": ["5", 0], "guidance": 3.5
-        }},
-        "4": {"class_type": "DualCLIPLoader", "inputs": {
-            "clip_name1": "t5xxl_fp16.safetensors", "clip_name2": "clip_l.safetensors", "type": "flux"
-        }},
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["10", 0],
+                "positive": ["55", 0],
+                "negative": ["19", 0],
+                "latent_image": ["6", 0],
+                "seed": seed,
+                "control_after_generate": "fixed",
+                "steps": steps,
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "denoise": 1.0,
+            },
+        },
+        "5": {
+            "class_type": "CLIPTextEncodeFlux",
+            "inputs": {"clip": ["4", 0], "clip_l": prompt, "t5xxl": prompt, "guidance": 4},
+        },
+        "19": {
+            "class_type": "CLIPTextEncodeFlux",
+            "inputs": {"clip": ["4", 0], "clip_l": "", "t5xxl": "", "guidance": 4},
+        },
+        "55": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["5", 0], "guidance": 3.5}},
+        "4": {
+            "class_type": "DualCLIPLoader",
+            "inputs": {"clip_name1": "t5xxl_fp16.safetensors", "clip_name2": "clip_l.safetensors", "type": "flux"},
+        },
         "6": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
         "7": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["8", 0]}},
         "8": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
         "10": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux1-dev.safetensors", "weight_dtype": "default"}},
-        "38": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix}}
+        "38": {"class_type": "SaveImage", "inputs": {"images": ["7", 0], "filename_prefix": filename_prefix}},
     }
 
     # Add LoRA if requested
@@ -84,10 +99,16 @@ def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
             "marker-mech-style": "marker-mech-style.safetensors",
         }
         lora_file = lora_map.get(lora, f"{lora}.safetensors")
-        workflow["50"] = {"class_type": "LoraLoader", "inputs": {
-            "model": ["10", 0], "clip": ["4", 0],
-            "lora_name": lora_file, "strength_model": 1.0, "strength_clip": 1.0
-        }}
+        workflow["50"] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "model": ["10", 0],
+                "clip": ["4", 0],
+                "lora_name": lora_file,
+                "strength_model": 1.0,
+                "strength_clip": 1.0,
+            },
+        }
         # Rewire: KSampler uses LoRA output instead of raw model
         workflow["3"]["inputs"]["model"] = ["50", 0]
         # CLIP encoder uses LoRA clip output
@@ -156,6 +177,7 @@ def tool_generate_image(prompt: str, width: int = 1024, height: int = 1024,
 
 
 # ── Registry wrapper ──────────────────────────────────────────
+
 
 @register_tool("generate_image")
 def _dispatch_generate_image(args):

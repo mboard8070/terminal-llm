@@ -2,23 +2,20 @@
 Voice Mode for MAUDE.
 
 Supports multiple backends:
-1. PersonaPlex - Full-duplex speech-to-speech (primary, requires GB10/A100)
+1. Nemotron - Speech-to-speech via voice_server (local)
 2. Whisper + TTS - Traditional STT/TTS pipeline (fallback)
 3. Cloud APIs - OpenAI Whisper/TTS, ElevenLabs (optional)
 """
 
-import os
-import sys
 import asyncio
+import json
+import os
 import subprocess
 import tempfile
-import base64
-import json
-import wave
-from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Dict, Any
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
+
 from rich.console import Console
 
 console = Console()
@@ -26,7 +23,8 @@ console = Console()
 
 class VoiceBackend(Enum):
     """Available voice backends."""
-    PERSONAPLEX = "personaplex"  # Full-duplex speech-to-speech
+
+    NEMOTRON = "nemotron"  # Speech-to-speech via voice_server
     WHISPER_LOCAL = "whisper_local"  # Local Whisper + TTS
     WHISPER_CLOUD = "whisper_cloud"  # OpenAI Whisper + TTS
     ELEVENLABS = "elevenlabs"  # ElevenLabs TTS
@@ -35,13 +33,12 @@ class VoiceBackend(Enum):
 @dataclass
 class VoiceConfig:
     """Voice mode configuration."""
+
     # Backend selection
     backend: VoiceBackend = VoiceBackend.WHISPER_LOCAL
 
-    # PersonaPlex settings
-    personaplex_url: str = "wss://localhost:8998/ws"
-    personaplex_voice: str = "NATF2"  # Natural female voice 2 (MAUDE-style)
-    personaplex_role: str = "You are MAUDE, a capable AI assistant with a subtle Scottish directness. You're efficient and professional, with occasional dry observations. Speak clearly and get things done. Don't over-explain. Be warm but not chatty. Think FRIDAY from Iron Man."
+    # Voice server settings
+    voice_server_url: str = "wss://localhost:8998/ws"
 
     # Whisper settings (local)
     whisper_model: str = "base"  # tiny, base, small, medium, large
@@ -66,89 +63,9 @@ class VoiceConfig:
 
     # Behavior
     auto_listen: bool = False  # Continuous listening mode
-    wake_word: Optional[str] = None  # e.g., "Hey MAUDE"
+    wake_word: str | None = None  # e.g., "Hey MAUDE"
     silence_threshold: float = 0.03  # For voice activity detection
     silence_duration: float = 1.5  # Seconds of silence to end utterance
-
-
-class PersonaPlexClient:
-    """Client for PersonaPlex speech-to-speech server."""
-
-    def __init__(self, config: VoiceConfig):
-        self.config = config
-        self.ws = None
-        self._connected = False
-
-    async def connect(self):
-        """Connect to PersonaPlex WebSocket server."""
-        try:
-            import websockets
-            import ssl
-
-            # PersonaPlex uses self-signed SSL
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-
-            self.ws = await websockets.connect(
-                self.config.personaplex_url,
-                ssl=ssl_context
-            )
-            self._connected = True
-            console.print("[dim green]Connected to PersonaPlex[/dim green]")
-
-            # Send initial configuration
-            await self._configure()
-
-        except Exception as e:
-            console.print(f"[red]Failed to connect to PersonaPlex: {e}[/red]")
-            self._connected = False
-            raise
-
-    async def _configure(self):
-        """Send voice and role configuration to PersonaPlex."""
-        config_msg = {
-            "type": "config",
-            "voice": self.config.personaplex_voice,
-            "role": self.config.personaplex_role
-        }
-        await self.ws.send(json.dumps(config_msg))
-
-    async def disconnect(self):
-        """Disconnect from PersonaPlex."""
-        if self.ws:
-            await self.ws.close()
-            self._connected = False
-
-    async def send_audio(self, audio_data: bytes):
-        """Send audio data to PersonaPlex."""
-        if not self._connected:
-            raise RuntimeError("Not connected to PersonaPlex")
-
-        # Send as binary frame
-        await self.ws.send(audio_data)
-
-    async def receive_audio(self) -> Optional[bytes]:
-        """Receive audio response from PersonaPlex."""
-        if not self._connected:
-            return None
-
-        try:
-            response = await asyncio.wait_for(self.ws.recv(), timeout=0.1)
-            if isinstance(response, bytes):
-                return response
-            else:
-                # JSON message (status, etc.)
-                data = json.loads(response)
-                if data.get("type") == "transcript":
-                    console.print(f"[dim cyan]Transcript: {data.get('text')}[/dim cyan]")
-                return None
-        except asyncio.TimeoutError:
-            return None
-
-    @property
-    def is_connected(self) -> bool:
-        return self._connected
 
 
 class WhisperSTT:
@@ -162,20 +79,22 @@ class WhisperSTT:
         """Load Whisper model."""
         try:
             from faster_whisper import WhisperModel
+
             console.print(f"[dim]Loading Whisper {self.config.whisper_model}...[/dim]")
             self.model = WhisperModel(
                 self.config.whisper_model,
                 device=self.config.whisper_device,
-                compute_type="float16" if self.config.whisper_device == "cuda" else "int8"
+                compute_type="float16" if self.config.whisper_device == "cuda" else "int8",
             )
             console.print("[dim green]Whisper loaded[/dim green]")
         except ImportError:
             console.print("[yellow]faster-whisper not installed, trying whisper...[/yellow]")
             try:
                 import whisper
+
                 self.model = whisper.load_model(self.config.whisper_model)
-            except ImportError:
-                raise RuntimeError("Neither faster-whisper nor whisper is installed")
+            except ImportError as exc:
+                raise RuntimeError("Neither faster-whisper nor whisper is installed") from exc
 
     def transcribe(self, audio_path: str) -> str:
         """Transcribe audio file to text."""
@@ -184,7 +103,6 @@ class WhisperSTT:
 
         try:
             # faster-whisper
-            from faster_whisper import WhisperModel
             segments, _ = self.model.transcribe(audio_path)
             return " ".join(segment.text for segment in segments).strip()
         except:
@@ -210,7 +128,7 @@ class TextToSpeech:
     def __init__(self, config: VoiceConfig):
         self.config = config
 
-    async def speak(self, text: str) -> Optional[bytes]:
+    async def speak(self, text: str) -> bytes | None:
         """Convert text to speech audio."""
         provider = self.config.tts_provider.lower()
 
@@ -228,7 +146,7 @@ class TextToSpeech:
             console.print(f"[red]Unknown TTS provider: {provider}[/red]")
             return None
 
-    async def _speak_piper(self, text: str) -> Optional[bytes]:
+    async def _speak_piper(self, text: str) -> bytes | None:
         """Use Piper TTS (local, fast, good quality)."""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -237,11 +155,13 @@ class TextToSpeech:
             # Piper command
             process = await asyncio.create_subprocess_exec(
                 "piper",
-                "--model", self.config.tts_voice,
-                "--output_file", temp_path,
+                "--model",
+                self.config.tts_voice,
+                "--output_file",
+                temp_path,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await process.communicate(input=text.encode())
 
@@ -258,16 +178,14 @@ class TextToSpeech:
             console.print("[yellow]Piper not found, falling back to espeak[/yellow]")
             return await self._speak_espeak(text)
 
-    async def _speak_espeak(self, text: str) -> Optional[bytes]:
+    async def _speak_espeak(self, text: str) -> bytes | None:
         """Use espeak TTS (basic but universal)."""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 temp_path = f.name
 
             process = await asyncio.create_subprocess_exec(
-                "espeak-ng", "-w", temp_path, text,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                "espeak-ng", "-w", temp_path, text, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             await process.communicate()
 
@@ -280,9 +198,7 @@ class TextToSpeech:
             # Try espeak without -ng
             try:
                 process = await asyncio.create_subprocess_exec(
-                    "espeak", "-w", temp_path, text,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    "espeak", "-w", temp_path, text, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 await process.communicate()
 
@@ -294,16 +210,14 @@ class TextToSpeech:
                 console.print("[red]espeak not found[/red]")
                 return None
 
-    async def _speak_say(self, text: str) -> Optional[bytes]:
+    async def _speak_say(self, text: str) -> bytes | None:
         """Use macOS 'say' command."""
         try:
             with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as f:
                 temp_path = f.name
 
             process = await asyncio.create_subprocess_exec(
-                "say", "-o", temp_path, text,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                "say", "-o", temp_path, text, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             await process.communicate()
 
@@ -316,7 +230,7 @@ class TextToSpeech:
             console.print("[red]'say' command not found (macOS only)[/red]")
             return None
 
-    async def _speak_openai(self, text: str) -> Optional[bytes]:
+    async def _speak_openai(self, text: str) -> bytes | None:
         """Use OpenAI TTS API."""
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
@@ -325,12 +239,11 @@ class TextToSpeech:
 
         try:
             from openai import OpenAI
+
             client = OpenAI(api_key=api_key)
 
             response = client.audio.speech.create(
-                model=self.config.openai_tts_model,
-                voice=self.config.openai_tts_voice,
-                input=text
+                model=self.config.openai_tts_model, voice=self.config.openai_tts_voice, input=text
             )
             return response.content
 
@@ -338,7 +251,7 @@ class TextToSpeech:
             console.print(f"[red]OpenAI TTS error: {e}[/red]")
             return None
 
-    async def _speak_elevenlabs(self, text: str) -> Optional[bytes]:
+    async def _speak_elevenlabs(self, text: str) -> bytes | None:
         """Use ElevenLabs TTS API."""
         api_key = os.environ.get("ELEVENLABS_API_KEY")
         if not api_key:
@@ -355,11 +268,8 @@ class TextToSpeech:
                     json={
                         "text": text,
                         "model_id": "eleven_monolingual_v1",
-                        "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.75
-                        }
-                    }
+                        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                    },
                 )
 
                 if response.status_code == 200:
@@ -395,9 +305,7 @@ class AudioPlayer:
                         cmd = [player, temp_path]
 
                     process = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL
+                        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
                     )
                     await process.wait()
                     return
@@ -417,17 +325,16 @@ class AudioRecorder:
         self.config = config
         self._recording = False
 
-    async def record(self, duration: float = None, until_silence: bool = True) -> bytes:
+    async def record(self, duration: float = None) -> bytes:
         """
         Record audio from microphone.
 
         Args:
-            duration: Fixed duration in seconds (if set)
-            until_silence: Stop recording after silence detected
+            duration: Fixed duration in seconds (if set, otherwise records until silence)
         """
         try:
-            import sounddevice as sd
             import numpy as np
+            import sounddevice as sd
         except ImportError:
             console.print("[red]sounddevice not installed. Run: pip install sounddevice[/red]")
             return b""
@@ -438,12 +345,7 @@ class AudioRecorder:
         if duration:
             # Fixed duration recording
             console.print(f"[dim cyan]Recording for {duration}s...[/dim cyan]")
-            recording = sd.rec(
-                int(duration * sample_rate),
-                samplerate=sample_rate,
-                channels=channels,
-                dtype=np.int16
-            )
+            recording = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=channels, dtype=np.int16)
             sd.wait()
         else:
             # Record until silence
@@ -484,6 +386,7 @@ class AudioRecorder:
 
         try:
             import scipy.io.wavfile as wavfile
+
             wavfile.write(temp_path, sample_rate, recording)
 
             with open(temp_path, "rb") as f:
@@ -501,7 +404,7 @@ class VoiceMode:
     Main voice mode controller for MAUDE.
 
     Supports multiple backends:
-    - PersonaPlex: Full-duplex speech-to-speech
+    - Nemotron: Speech-to-speech via voice_server
     - Whisper + TTS: Traditional pipeline
     """
 
@@ -509,24 +412,23 @@ class VoiceMode:
         self.config = config or VoiceConfig()
 
         # Initialize components based on backend
-        self.personaplex: Optional[PersonaPlexClient] = None
-        self.whisper: Optional[WhisperSTT] = None
-        self.tts: Optional[TextToSpeech] = None
-        self.recorder: Optional[AudioRecorder] = None
+        self.whisper: WhisperSTT | None = None
+        self.tts: TextToSpeech | None = None
+        self.recorder: AudioRecorder | None = None
 
         self._active = False
         self._talk_mode = False
 
         # UI callbacks for TUI integration
-        self._on_status: Optional[Callable[[str], None]] = None
-        self._on_transcription: Optional[Callable[[str], None]] = None
-        self._on_response: Optional[Callable[[str], None]] = None
+        self._on_status: Callable[[str], None] | None = None
+        self._on_transcription: Callable[[str], None] | None = None
+        self._on_response: Callable[[str], None] | None = None
 
     def set_ui_callbacks(
         self,
         on_status: Callable[[str], None] = None,
         on_transcription: Callable[[str], None] = None,
-        on_response: Callable[[str], None] = None
+        on_response: Callable[[str], None] = None,
     ):
         """Set callbacks for TUI integration."""
         self._on_status = on_status
@@ -558,16 +460,7 @@ class VoiceMode:
         """Initialize voice components based on configured backend."""
         console.print(f"[dim]Initializing voice mode ({self.config.backend.value})...[/dim]")
 
-        if self.config.backend == VoiceBackend.PERSONAPLEX:
-            self.personaplex = PersonaPlexClient(self.config)
-            try:
-                await self.personaplex.connect()
-            except Exception as e:
-                console.print(f"[yellow]PersonaPlex unavailable, falling back to Whisper[/yellow]")
-                self.config.backend = VoiceBackend.WHISPER_LOCAL
-                await self._init_whisper_pipeline()
-        else:
-            await self._init_whisper_pipeline()
+        await self._init_whisper_pipeline()
 
         self._active = True
         console.print("[green]Voice mode initialized[/green]")
@@ -583,19 +476,10 @@ class VoiceMode:
         self._active = False
         self._talk_mode = False
 
-        if self.personaplex:
-            await self.personaplex.disconnect()
-
-    async def listen(self) -> Optional[str]:
+    async def listen(self) -> str | None:
         """
         Listen for voice input and return transcribed text.
         """
-        if self.config.backend == VoiceBackend.PERSONAPLEX:
-            # PersonaPlex handles this internally
-            self._notify_status("Use talk_mode() for PersonaPlex")
-            return None
-
-        # Whisper pipeline
         if not self.recorder:
             await self._init_whisper_pipeline()
 
@@ -611,11 +495,6 @@ class VoiceMode:
         """
         Speak text using TTS.
         """
-        if self.config.backend == VoiceBackend.PERSONAPLEX:
-            # PersonaPlex generates speech directly
-            console.print("[yellow]PersonaPlex handles speech generation[/yellow]")
-            return
-
         if not self.tts:
             await self._init_whisper_pipeline()
 
@@ -627,62 +506,17 @@ class VoiceMode:
         """
         Continuous conversation mode.
 
-        For PersonaPlex: Full-duplex streaming
-        For Whisper: Listen -> Process -> Speak loop
+        Listen -> Process -> Speak loop.
         """
         console.print("[bold green]Talk mode enabled[/bold green]")
         console.print("[dim]Say 'stop', 'exit', or 'quit' to end. Press Ctrl+C to interrupt.[/dim]")
 
         self._talk_mode = True
 
-        if self.config.backend == VoiceBackend.PERSONAPLEX:
-            await self._personaplex_talk_mode(maude_callback)
-        else:
-            await self._whisper_talk_mode(maude_callback)
+        await self._whisper_talk_mode(maude_callback)
 
         self._talk_mode = False
         console.print("[dim]Talk mode ended[/dim]")
-
-    async def _personaplex_talk_mode(self, maude_callback: Callable):
-        """Full-duplex conversation with PersonaPlex."""
-        if not self.personaplex or not self.personaplex.is_connected:
-            console.print("[red]PersonaPlex not connected[/red]")
-            return
-
-        try:
-            import sounddevice as sd
-            import numpy as np
-        except ImportError:
-            console.print("[red]sounddevice required for PersonaPlex[/red]")
-            return
-
-        sample_rate = self.config.sample_rate
-        chunk_samples = int(self.config.chunk_duration * sample_rate)
-
-        async def audio_sender():
-            """Send microphone audio to PersonaPlex."""
-            while self._talk_mode:
-                chunk = sd.rec(chunk_samples, samplerate=sample_rate, channels=1, dtype=np.int16)
-                sd.wait()
-                await self.personaplex.send_audio(chunk.tobytes())
-
-        async def audio_receiver():
-            """Receive and play audio from PersonaPlex."""
-            while self._talk_mode:
-                audio = await self.personaplex.receive_audio()
-                if audio:
-                    # Play received audio
-                    audio_array = np.frombuffer(audio, dtype=np.int16)
-                    sd.play(audio_array, sample_rate)
-
-        # Run sender and receiver concurrently
-        try:
-            await asyncio.gather(
-                audio_sender(),
-                audio_receiver()
-            )
-        except KeyboardInterrupt:
-            self._talk_mode = False
 
     async def _whisper_talk_mode(self, maude_callback: Callable):
         """Traditional listen-process-speak loop."""
@@ -727,7 +561,7 @@ class VoiceMode:
 # Command Handlers
 # ─────────────────────────────────────────────────────────────────
 
-_voice_mode: Optional[VoiceMode] = None
+_voice_mode: VoiceMode | None = None
 
 
 async def get_voice_mode() -> VoiceMode:
@@ -748,11 +582,11 @@ def handle_voice_command(args: list) -> str:
 /voice talk          - Start continuous talk mode
 /voice stop          - Stop voice mode
 /voice config        - Show current configuration
-/voice backend <b>   - Set backend (personaplex, whisper_local, whisper_cloud)
+/voice backend <b>   - Set backend (nemotron, whisper_local, whisper_cloud)
 /voice tts <provider> - Set TTS (piper, espeak, openai, elevenlabs)
 
 Backends:
-  personaplex    - Full-duplex speech-to-speech (requires PersonaPlex server)
+  nemotron       - Speech-to-speech via voice_server
   whisper_local  - Local Whisper STT + TTS
   whisper_cloud  - OpenAI Whisper API + TTS
 
@@ -772,8 +606,7 @@ TTS Providers:
   Backend: {cfg.backend.value}
   TTS Provider: {cfg.tts_provider}
   Whisper Model: {cfg.whisper_model}
-  PersonaPlex URL: {cfg.personaplex_url}
-  PersonaPlex Voice: {cfg.personaplex_voice}"""
+  Voice Server URL: {cfg.voice_server_url}"""
         return "Voice mode not initialized. Run /voice start first."
 
     elif action == "backend" and len(args) > 1:
@@ -784,7 +617,7 @@ TTS Providers:
                 _voice_mode.config.backend = new_backend
             return f"Voice backend set to: {backend}"
         except ValueError:
-            return f"Unknown backend: {backend}. Options: personaplex, whisper_local, whisper_cloud"
+            return f"Unknown backend: {backend}. Options: nemotron, whisper_local, whisper_cloud"
 
     elif action == "tts" and len(args) > 1:
         provider = args[1].lower()
@@ -800,13 +633,14 @@ TTS Providers:
     return f"Unknown voice command: {action}"
 
 
-def check_voice_dependencies() -> Dict[str, bool]:
+def check_voice_dependencies() -> dict[str, bool]:
     """Check which voice dependencies are available."""
     deps = {}
 
     # Check sounddevice
     try:
         import sounddevice
+
         deps["sounddevice"] = True
     except ImportError:
         deps["sounddevice"] = False
@@ -814,32 +648,21 @@ def check_voice_dependencies() -> Dict[str, bool]:
     # Check faster-whisper
     try:
         from faster_whisper import WhisperModel
+
         deps["faster_whisper"] = True
     except ImportError:
         deps["faster_whisper"] = False
 
-    # Check websockets (for PersonaPlex)
-    try:
-        import websockets
-        deps["websockets"] = True
-    except ImportError:
-        deps["websockets"] = False
-
     # Check piper
-    deps["piper"] = subprocess.run(
-        ["which", "piper"], capture_output=True
-    ).returncode == 0
+    deps["piper"] = subprocess.run(["which", "piper"], capture_output=True).returncode == 0
 
     # Check espeak
-    deps["espeak"] = subprocess.run(
-        ["which", "espeak-ng"], capture_output=True
-    ).returncode == 0 or subprocess.run(
-        ["which", "espeak"], capture_output=True
-    ).returncode == 0
+    deps["espeak"] = (
+        subprocess.run(["which", "espeak-ng"], capture_output=True).returncode == 0
+        or subprocess.run(["which", "espeak"], capture_output=True).returncode == 0
+    )
 
     # Check ffplay
-    deps["ffplay"] = subprocess.run(
-        ["which", "ffplay"], capture_output=True
-    ).returncode == 0
+    deps["ffplay"] = subprocess.run(["which", "ffplay"], capture_output=True).returncode == 0
 
     return deps

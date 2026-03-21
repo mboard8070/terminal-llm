@@ -4,13 +4,15 @@ MAUDE Skills/Plugins Framework.
 Extensible tools that can be shared, installed, and managed.
 """
 
-import os
-import json
 import importlib.util
-from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import Callable, Dict, List, Any, Optional
+import json
+import os
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from functools import wraps
+from pathlib import Path
+from typing import Any
+
 from rich.console import Console
 
 console = Console()
@@ -19,13 +21,14 @@ console = Console()
 @dataclass
 class SkillMetadata:
     """Metadata for a skill."""
+
     name: str
     description: str
     version: str = "1.0.0"
     author: str = "MAUDE"
-    triggers: List[str] = None  # Keywords that activate this skill
-    parameters: Dict[str, Any] = None  # JSON schema for parameters
-    requires: List[str] = None  # Dependencies (pip packages)
+    triggers: list[str] = None  # Keywords that activate this skill
+    parameters: dict[str, Any] = None  # JSON schema for parameters
+    requires: list[str] = None  # Dependencies (pip packages)
 
     def __post_init__(self):
         self.triggers = self.triggers or [self.name]
@@ -43,23 +46,19 @@ class Skill:
 
     def to_tool_definition(self) -> dict:
         """Convert skill to OpenAI-compatible tool definition."""
-        params = self.metadata.parameters or {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
+        params = self.metadata.parameters or {"type": "object", "properties": {}, "required": []}
         return {
             "type": "function",
             "function": {
                 "name": f"skill_{self.metadata.name}",
                 "description": self.metadata.description,
-                "parameters": params
-            }
+                "parameters": params,
+            },
         }
 
 
 # Global skill registry
-_skills: Dict[str, Skill] = {}
+_skills: dict[str, Skill] = {}
 
 
 def skill(
@@ -67,11 +66,12 @@ def skill(
     description: str = "",
     version: str = "1.0.0",
     author: str = "MAUDE",
-    triggers: List[str] = None,
-    parameters: Dict[str, Any] = None,
-    requires: List[str] = None
+    triggers: list[str] = None,
+    parameters: dict[str, Any] = None,
+    requires: list[str] = None,
 ):
     """Decorator to register a function as a skill."""
+
     def decorator(fn: Callable):
         metadata = SkillMetadata(
             name=name,
@@ -80,14 +80,16 @@ def skill(
             author=author,
             triggers=triggers,
             parameters=parameters,
-            requires=requires
+            requires=requires,
         )
         _skills[name] = Skill(metadata, fn)
 
         @wraps(fn)
         def wrapper(*args, **kwargs):
             return fn(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -153,11 +155,11 @@ class SkillManager:
             if name in _skills:
                 _skills[name].enabled = enabled
 
-    def list_skills(self) -> List[Skill]:
+    def list_skills(self) -> list[Skill]:
         """List all registered skills."""
         return list(_skills.values())
 
-    def get_skill(self, name: str) -> Optional[Skill]:
+    def get_skill(self, name: str) -> Skill | None:
         """Get a skill by name."""
         return _skills.get(name)
 
@@ -201,13 +203,9 @@ class SkillManager:
         self._save_config()
         return f"Skill '{name}' disabled"
 
-    def get_tool_definitions(self) -> List[dict]:
+    def get_tool_definitions(self) -> list[dict]:
         """Get OpenAI-compatible tool definitions for all enabled skills."""
-        return [
-            skill.to_tool_definition()
-            for skill in _skills.values()
-            if skill.enabled
-        ]
+        return [skill.to_tool_definition() for skill in _skills.values() if skill.enabled]
 
     def get_skills_summary(self) -> str:
         """Get a formatted summary of skills for the LLM system prompt."""
@@ -293,7 +291,7 @@ def handle_skills_command(args: list, manager: SkillManager) -> str:
                 # Positional - use as first parameter
                 skill = manager.get_skill(skill_name)
                 if skill and skill.metadata.parameters.get("properties"):
-                    first_param = list(skill.metadata.parameters["properties"].keys())[0]
+                    first_param = next(iter(skill.metadata.parameters["properties"]))
                     kwargs[first_param] = arg
 
         return manager.execute_skill(skill_name, **kwargs)
@@ -302,7 +300,8 @@ def handle_skills_command(args: list, manager: SkillManager) -> str:
 
 
 # Convenience function to get global manager
-_manager: Optional[SkillManager] = None
+_manager: SkillManager | None = None
+
 
 def get_skill_manager() -> SkillManager:
     """Get or create the global skill manager."""

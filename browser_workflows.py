@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Paths
@@ -40,13 +39,21 @@ RUNS_DIR = DATA_DIR / "workflow_runs"
 # Step Execution
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _import_browser():
     """Lazy-import browser tools to avoid circular imports."""
     from browser import (
-        browser_open, browser_click, browser_type, browser_navigate,
-        browser_extract, browser_screenshot, browser_fill_form,
-        browser_select, browser_close,
+        browser_click,
+        browser_close,
+        browser_extract,
+        browser_fill_form,
+        browser_navigate,
+        browser_open,
+        browser_screenshot,
+        browser_select,
+        browser_type,
     )
+
     return {
         "open": browser_open,
         "click": browser_click,
@@ -103,6 +110,7 @@ def _execute_step(step: dict, browser_fns: dict) -> str:
 # Workflow Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class WorkflowEngine:
     """Manages and executes browser workflows."""
 
@@ -112,20 +120,29 @@ class WorkflowEngine:
 
     # ── CRUD ──────────────────────────────────────────────────────────────
 
-    def create(self, name: str, steps: list, description: str = "",
-               notify_email: str = None) -> str:
+    def create(self, name: str, steps: list, description: str = "", notify_email: str = None) -> str:
         """Create or update a workflow definition."""
         wf_id = name.lower().replace(" ", "-").replace("_", "-")
 
         # Validate steps
-        valid_actions = {"open", "navigate", "click", "type", "extract",
-                         "screenshot", "fill_form", "select", "wait", "close"}
+        valid_actions = {
+            "open",
+            "navigate",
+            "click",
+            "type",
+            "extract",
+            "screenshot",
+            "fill_form",
+            "select",
+            "wait",
+            "close",
+        }
         for i, step in enumerate(steps):
             action = step.get("action")
             if action not in valid_actions:
                 return f"Error: Step {i} has invalid action '{action}'. Valid: {', '.join(sorted(valid_actions))}"
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         path = WORKFLOWS_DIR / f"{wf_id}.json"
         existing = json.loads(path.read_text()) if path.exists() else None
 
@@ -163,9 +180,7 @@ class WorkflowEngine:
             label = step.get("label", f"step_{i}")
             action = step.get("action", "?")
             detail = ""
-            if action == "open":
-                detail = step.get("url", "")
-            elif action == "navigate":
+            if action == "open" or action == "navigate":
                 detail = step.get("url", "")
             elif action in ("click", "extract"):
                 detail = step.get("selector", "(full page)")
@@ -228,10 +243,14 @@ class WorkflowEngine:
 
             try:
                 result = _execute_step(step, browser_fns)
-                results.append({
-                    "step": i, "label": label, "action": action,
-                    "result": result[:2000] if result else "",
-                })
+                results.append(
+                    {
+                        "step": i,
+                        "label": label,
+                        "action": action,
+                        "result": result[:2000] if result else "",
+                    }
+                )
 
                 # Track extractions for change detection
                 if action == "extract":
@@ -240,18 +259,24 @@ class WorkflowEngine:
 
                     prev = prev_extractions.get(label)
                     if prev is not None and prev != clean:
-                        changes.append({
-                            "label": label,
-                            "previous": prev[:500],
-                            "current": clean[:500],
-                        })
+                        changes.append(
+                            {
+                                "label": label,
+                                "previous": prev[:500],
+                                "current": clean[:500],
+                            }
+                        )
 
             except Exception as e:
                 errors += 1
-                results.append({
-                    "step": i, "label": label, "action": action,
-                    "error": str(e),
-                })
+                results.append(
+                    {
+                        "step": i,
+                        "label": label,
+                        "action": action,
+                        "error": str(e),
+                    }
+                )
 
         # Close browser when done
         try:
@@ -263,7 +288,7 @@ class WorkflowEngine:
         run_record = {
             "workflow_id": wf_id,
             "workflow_name": workflow["name"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "extractions": extractions,
             "changes": changes,
             "results": results,
@@ -335,12 +360,13 @@ class WorkflowEngine:
 
         # Save cron expression to workflow definition
         workflow["schedule"] = cron
-        workflow["updated"] = datetime.now(timezone.utc).isoformat()
+        workflow["updated"] = datetime.now(UTC).isoformat()
         path.write_text(json.dumps(workflow, indent=2))
 
         # Register with MAUDE's scheduler
         try:
             from scheduler import get_scheduler
+
             sched = get_scheduler()
 
             # Remove any existing schedule for this workflow
@@ -353,11 +379,7 @@ class WorkflowEngine:
                 cron=cron,
                 prompt=f"Run the browser workflow '{wf_id}' using workflow_run. Report any changes detected.",
             )
-            return (
-                f"Workflow '{workflow['name']}' scheduled.\n"
-                f"Cron: {cron}\n"
-                f"Scheduler task: {task_id}"
-            )
+            return f"Workflow '{workflow['name']}' scheduled.\nCron: {cron}\nScheduler task: {task_id}"
         except Exception as e:
             return (
                 f"Workflow cron saved but scheduler registration failed: {e}\n"
@@ -372,12 +394,13 @@ class WorkflowEngine:
 
         workflow = json.loads(path.read_text())
         workflow["schedule"] = None
-        workflow["updated"] = datetime.now(timezone.utc).isoformat()
+        workflow["updated"] = datetime.now(UTC).isoformat()
         path.write_text(json.dumps(workflow, indent=2))
 
         # Remove from scheduler
         try:
             from scheduler import get_scheduler
+
             sched = get_scheduler()
             for task in sched.list_tasks():
                 if hasattr(task, "name") and task.name == f"workflow:{wf_id}":
@@ -389,7 +412,7 @@ class WorkflowEngine:
 
     # ── Internal ──────────────────────────────────────────────────────────
 
-    def _last_run(self, wf_id: str) -> Optional[dict]:
+    def _last_run(self, wf_id: str) -> dict | None:
         """Get the most recent run record for a workflow."""
         runs = sorted(RUNS_DIR.glob(f"{wf_id}_*.json"), reverse=True)
         if not runs:
@@ -400,6 +423,7 @@ class WorkflowEngine:
         """Send email notification about detected changes."""
         try:
             from tool_registry import get_handler
+
             gmail_send = get_handler("gmail_send")
             if not gmail_send:
                 self._log("gmail_send handler not available for notification")
@@ -414,13 +438,15 @@ class WorkflowEngine:
                 body_lines.append(f"Previous:\n{c['previous'][:500]}\n")
                 body_lines.append(f"Current:\n{c['current'][:500]}\n")
 
-            body_lines.append(f"Run at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+            body_lines.append(f"Run at: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
 
-            gmail_send({
-                "to": workflow["notify_email"],
-                "subject": subject,
-                "body": "\n".join(body_lines),
-            })
+            gmail_send(
+                {
+                    "to": workflow["notify_email"],
+                    "subject": subject,
+                    "body": "\n".join(body_lines),
+                }
+            )
             self._log(f"Change notification sent to {workflow['notify_email']}")
         except Exception as e:
             self._log(f"Notification failed: {e}")
@@ -428,6 +454,7 @@ class WorkflowEngine:
     def _log(self, msg: str):
         try:
             from maude_core import log
+
             log(f"[workflows] {msg}")
         except Exception:
             pass
@@ -437,7 +464,7 @@ class WorkflowEngine:
 # Module Singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
-_engine: Optional[WorkflowEngine] = None
+_engine: WorkflowEngine | None = None
 
 
 def get_engine() -> WorkflowEngine:
@@ -451,8 +478,8 @@ def get_engine() -> WorkflowEngine:
 # Public Tool Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def workflow_create(name: str, steps: list, description: str = "",
-                    notify_email: str = None) -> str:
+
+def workflow_create(name: str, steps: list, description: str = "", notify_email: str = None) -> str:
     """Create a repeatable browser workflow."""
     return get_engine().create(name, steps, description, notify_email)
 
@@ -496,6 +523,7 @@ def workflow_unschedule(workflow_id: str) -> str:
 # Tool Dispatcher (for prefix registration)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def execute_workflow_tool(name: str, args: dict) -> str:
     """Dispatch a workflow_* tool call by name."""
     dispatch = {
@@ -510,10 +538,12 @@ def execute_workflow_tool(name: str, args: dict) -> str:
         "workflow_get": lambda a: workflow_get(a.get("workflow_id", "")),
         "workflow_delete": lambda a: workflow_delete(a.get("workflow_id", "")),
         "workflow_history": lambda a: workflow_history(
-            a.get("workflow_id", ""), a.get("limit", 5),
+            a.get("workflow_id", ""),
+            a.get("limit", 5),
         ),
         "workflow_schedule": lambda a: workflow_schedule(
-            a.get("workflow_id", ""), a.get("cron", ""),
+            a.get("workflow_id", ""),
+            a.get("cron", ""),
         ),
         "workflow_unschedule": lambda a: workflow_unschedule(a.get("workflow_id", "")),
     }
@@ -548,7 +578,7 @@ WORKFLOW_TOOLS = [
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Human-readable workflow name (e.g. 'Competitor Price Monitor')"
+                        "description": "Human-readable workflow name (e.g. 'Competitor Price Monitor')",
                     },
                     "steps": {
                         "type": "array",
@@ -563,8 +593,18 @@ WORKFLOW_TOOLS = [
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "enum": ["open", "navigate", "click", "type", "extract",
-                                             "screenshot", "fill_form", "select", "wait", "close"]
+                                    "enum": [
+                                        "open",
+                                        "navigate",
+                                        "click",
+                                        "type",
+                                        "extract",
+                                        "screenshot",
+                                        "fill_form",
+                                        "select",
+                                        "wait",
+                                        "close",
+                                    ],
                                 },
                                 "label": {"type": "string"},
                                 "url": {"type": "string"},
@@ -574,21 +614,18 @@ WORKFLOW_TOOLS = [
                                 "value": {"type": "string"},
                                 "fields": {"type": "object", "additionalProperties": {"type": "string"}},
                             },
-                            "required": ["action", "label"]
-                        }
+                            "required": ["action", "label"],
+                        },
                     },
-                    "description": {
-                        "type": "string",
-                        "description": "What this workflow does and why"
-                    },
+                    "description": {"type": "string", "description": "What this workflow does and why"},
                     "notify_email": {
                         "type": "string",
-                        "description": "Email address to notify when changes are detected (optional)"
+                        "description": "Email address to notify when changes are detected (optional)",
                     },
                 },
-                "required": ["name", "steps"]
-            }
-        }
+                "required": ["name", "steps"],
+            },
+        },
     },
     {
         "type": "function",
@@ -602,26 +639,19 @@ WORKFLOW_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID (lowercase-hyphenated name)"
-                    }
+                    "workflow_id": {"type": "string", "description": "The workflow ID (lowercase-hyphenated name)"}
                 },
-                "required": ["workflow_id"]
-            }
-        }
+                "required": ["workflow_id"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "workflow_list",
             "description": "List all saved browser workflows with their step counts and schedules.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
     },
     {
         "type": "function",
@@ -630,15 +660,10 @@ WORKFLOW_TOOLS = [
             "description": "View the full definition of a saved workflow including all steps.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID"
-                    }
-                },
-                "required": ["workflow_id"]
-            }
-        }
+                "properties": {"workflow_id": {"type": "string", "description": "The workflow ID"}},
+                "required": ["workflow_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -647,15 +672,10 @@ WORKFLOW_TOOLS = [
             "description": "Delete a saved workflow and its run history.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID to delete"
-                    }
-                },
-                "required": ["workflow_id"]
-            }
-        }
+                "properties": {"workflow_id": {"type": "string", "description": "The workflow ID to delete"}},
+                "required": ["workflow_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -665,18 +685,12 @@ WORKFLOW_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Number of recent runs to show (default 5)"
-                    }
+                    "workflow_id": {"type": "string", "description": "The workflow ID"},
+                    "limit": {"type": "integer", "description": "Number of recent runs to show (default 5)"},
                 },
-                "required": ["workflow_id"]
-            }
-        }
+                "required": ["workflow_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -690,18 +704,12 @@ WORKFLOW_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID to schedule"
-                    },
-                    "cron": {
-                        "type": "string",
-                        "description": "Cron expression (e.g. '0 8 * * *' for daily at 8am)"
-                    }
+                    "workflow_id": {"type": "string", "description": "The workflow ID to schedule"},
+                    "cron": {"type": "string", "description": "Cron expression (e.g. '0 8 * * *' for daily at 8am)"},
                 },
-                "required": ["workflow_id", "cron"]
-            }
-        }
+                "required": ["workflow_id", "cron"],
+            },
+        },
     },
     {
         "type": "function",
@@ -710,14 +718,9 @@ WORKFLOW_TOOLS = [
             "description": "Remove the cron schedule from a workflow. The workflow can still be run manually.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "workflow_id": {
-                        "type": "string",
-                        "description": "The workflow ID to unschedule"
-                    }
-                },
-                "required": ["workflow_id"]
-            }
-        }
+                "properties": {"workflow_id": {"type": "string", "description": "The workflow ID to unschedule"}},
+                "required": ["workflow_id"],
+            },
+        },
     },
 ]

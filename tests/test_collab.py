@@ -2,12 +2,9 @@
 Tests for collab.py — CollabHub: presence, activity, projects, tasks, gossip.
 """
 
-import json
-import os
 import time
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch
 
 # Patch COLLAB_DIR before importing collab to use temp dirs
 import collab as collab_module

@@ -20,11 +20,11 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
 
 try:
     from maude_core import log
 except ImportError:
+
     def log(msg: str):
         pass
 
@@ -33,17 +33,18 @@ except ImportError:
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
-VNC_DISPLAY = ":42"           # Virtual display number (high to avoid conflicts)
-VNC_PORT = 5942               # x11vnc port (5900 + display number)
-NOVNC_PORT = 6080             # noVNC web port
+VNC_DISPLAY = ":42"  # Virtual display number (high to avoid conflicts)
+VNC_PORT = 5942  # x11vnc port (5900 + display number)
+NOVNC_PORT = 6080  # noVNC web port
 NOVNC_WEB_DIR = "/usr/share/novnc"  # Ubuntu default noVNC install path
-SCREEN_SIZE = "1280x900x24"   # Virtual screen resolution
+SCREEN_SIZE = "1280x900x24"  # Virtual screen resolution
 PID_DIR = Path.home() / ".config" / "maude" / "vnc"  # PID file storage
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VNC Session
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class VncSession:
     """Manages Xvfb + x11vnc + noVNC lifecycle with PID file tracking."""
@@ -96,11 +97,13 @@ class VncSession:
             x11vnc = subprocess.Popen(
                 [
                     "x11vnc",
-                    "-display", self._display,
-                    "-rfbport", str(VNC_PORT),
-                    "-nopw",              # No password (local network only)
-                    "-forever",           # Don't exit after first client disconnects
-                    "-shared",            # Allow multiple viewers
+                    "-display",
+                    self._display,
+                    "-rfbport",
+                    str(VNC_PORT),
+                    "-nopw",  # No password (local network only)
+                    "-forever",  # Don't exit after first client disconnects
+                    "-shared",  # Allow multiple viewers
                     "-noxdamage",
                     "-quiet",
                 ],
@@ -119,7 +122,8 @@ class VncSession:
             novnc = subprocess.Popen(
                 [
                     "websockify",
-                    "--web", NOVNC_WEB_DIR,
+                    "--web",
+                    NOVNC_WEB_DIR,
                     str(NOVNC_PORT),
                     f"localhost:{VNC_PORT}",
                 ],
@@ -186,7 +190,7 @@ class VncSession:
         """Write a PID file for a VNC process."""
         (PID_DIR / f"{name}.pid").write_text(str(pid))
 
-    def _read_pid(self, name: str) -> Optional[int]:
+    def _read_pid(self, name: str) -> int | None:
         """Read a PID from file, return None if missing or stale."""
         path = PID_DIR / f"{name}.pid"
         if not path.exists():
@@ -242,6 +246,7 @@ class VncSession:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _which(cmd: str) -> bool:
     """Check if a command is available."""
     try:
@@ -251,12 +256,14 @@ def _which(cmd: str) -> bool:
         return False
 
 
-def _get_tailscale_ip() -> Optional[str]:
+def _get_tailscale_ip() -> str | None:
     """Get Tailscale IPv4 address if available."""
     try:
         result = subprocess.run(
             ["tailscale", "ip", "-4"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -265,15 +272,18 @@ def _get_tailscale_ip() -> Optional[str]:
     return None
 
 
-def _get_tailscale_hostname() -> Optional[str]:
+def _get_tailscale_hostname() -> str | None:
     """Get the Tailscale MagicDNS hostname (e.g. 'spark-e26c')."""
     try:
         result = subprocess.run(
             ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             import json
+
             data = json.loads(result.stdout)
             # Self node's DNSName, strip trailing dot
             dns = data.get("Self", {}).get("DNSName", "")
@@ -284,12 +294,14 @@ def _get_tailscale_hostname() -> Optional[str]:
     return None
 
 
-def _get_lan_ip() -> Optional[str]:
+def _get_lan_ip() -> str | None:
     """Get the primary LAN IP address."""
     try:
         result = subprocess.run(
             ["hostname", "-I"],
-            capture_output=True, text=True, timeout=3,
+            capture_output=True,
+            text=True,
+            timeout=3,
         )
         if result.returncode == 0:
             ips = result.stdout.strip().split()
@@ -308,7 +320,7 @@ def _get_lan_ip() -> Optional[str]:
 # Module Singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
-_vnc: Optional[VncSession] = None
+_vnc: VncSession | None = None
 
 
 def get_vnc_session() -> VncSession:

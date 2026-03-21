@@ -3,11 +3,11 @@ Logging — callback-based log() for TUI/Telegram + Python logging bridge.
 """
 
 import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 _module_logger = logging.getLogger("maude.core")
 
-_log_callback: Optional[Callable[[str], None]] = None
+_log_callback: Callable[[str], None] | None = None
 
 
 def set_log_callback(callback: Callable[[str], None]):

@@ -1,9 +1,10 @@
 """Mochi video generation skill via ComfyUI on remote desktop."""
 
-import os
 import json
-import time
+import os
+
 import requests
+
 from skills import skill
 
 # Default ComfyUI host - can be overridden by COMFYUI_HOST env var or mesh routing
@@ -18,6 +19,7 @@ def _get_router():
     """Lazy import router to avoid circular dependencies."""
     try:
         from routing import get_router
+
         return get_router()
     except ImportError:
         return None
@@ -36,19 +38,17 @@ def _get_comfyui_url_from_router():
         return None
 
     try:
-        from capabilities import CapabilityType
-
         # Try to find ComfyUI capability
         result = router.find_comfyui()
         if result:
-            node, cap = result
+            _node, cap = result
             _cached_comfyui_url = cap.endpoint_url
             return _cached_comfyui_url
 
         # Try video generation capability
         result = router.find_video_gen("mochi")
         if result:
-            node, cap = result
+            _node, cap = result
             _cached_comfyui_url = cap.endpoint_url
             return _cached_comfyui_url
     except Exception:
@@ -83,10 +83,7 @@ def check_comfyui_status() -> dict:
 def queue_prompt(workflow: dict, client_id: str = "maude") -> dict:
     """Queue a prompt/workflow for execution."""
     url = f"{get_comfyui_url()}/prompt"
-    payload = {
-        "prompt": workflow,
-        "client_id": client_id
-    }
+    payload = {"prompt": workflow, "client_id": client_id}
     response = requests.post(url, json=payload, timeout=30)
     return response.json()
 
@@ -98,56 +95,22 @@ def get_history(prompt_id: str) -> dict:
     return response.json()
 
 
-def wait_for_completion(prompt_id: str, timeout: int = 300) -> dict:
-    """Wait for a prompt to complete."""
-    start = time.time()
-    while time.time() - start < timeout:
-        history = get_history(prompt_id)
-        if prompt_id in history:
-            return history[prompt_id]
-        time.sleep(2)
-    return {"error": "Timeout waiting for generation"}
-
-
 # Basic Mochi workflow template - will need to be customized based on actual ComfyUI setup
 MOCHI_WORKFLOW = {
     "3": {
         "class_type": "MochiTextEncode",
         "inputs": {
             "prompt": "",  # Will be filled in
-            "clip": ["4", 0]
-        }
+            "clip": ["4", 0],
+        },
     },
-    "4": {
-        "class_type": "MochiLoader",
-        "inputs": {
-            "model_name": "mochi_preview_bf16.safetensors"
-        }
-    },
+    "4": {"class_type": "MochiLoader", "inputs": {"model_name": "mochi_preview_bf16.safetensors"}},
     "5": {
         "class_type": "MochiSampler",
-        "inputs": {
-            "seed": 0,
-            "steps": 50,
-            "cfg": 4.5,
-            "conditioning": ["3", 0],
-            "model": ["4", 0]
-        }
+        "inputs": {"seed": 0, "steps": 50, "cfg": 4.5, "conditioning": ["3", 0], "model": ["4", 0]},
     },
-    "6": {
-        "class_type": "MochiDecode",
-        "inputs": {
-            "samples": ["5", 0],
-            "vae": ["4", 1]
-        }
-    },
-    "7": {
-        "class_type": "SaveVideo",
-        "inputs": {
-            "filename_prefix": "mochi_",
-            "video": ["6", 0]
-        }
-    }
+    "6": {"class_type": "MochiDecode", "inputs": {"samples": ["5", 0], "vae": ["4", 1]}},
+    "7": {"class_type": "SaveVideo", "inputs": {"filename_prefix": "mochi_", "video": ["6", 0]}},
 }
 
 
@@ -160,29 +123,22 @@ MOCHI_WORKFLOW = {
     parameters={
         "type": "object",
         "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "Text description of the video to generate"
-            },
+            "prompt": {"type": "string", "description": "Text description of the video to generate"},
             "action": {
                 "type": "string",
                 "enum": ["generate", "status", "check"],
                 "description": "Action to perform (default: generate)",
-                "default": "generate"
+                "default": "generate",
             },
-            "steps": {
-                "type": "integer",
-                "description": "Number of sampling steps (default: 50)",
-                "default": 50
-            },
+            "steps": {"type": "integer", "description": "Number of sampling steps (default: 50)", "default": 50},
             "seed": {
                 "type": "integer",
                 "description": "Random seed for reproducibility (default: random)",
-                "default": -1
-            }
+                "default": -1,
+            },
         },
-        "required": ["prompt"]
-    }
+        "required": ["prompt"],
+    },
 )
 def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1) -> str:
     """Generate video using Mochi via ComfyUI."""
@@ -241,8 +197,9 @@ def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1
 
         # Extract hostname for display
         from urllib.parse import urlparse
+
         parsed = urlparse(comfyui_url)
-        host = parsed.hostname or comfyui_url
+        _host = parsed.hostname or comfyui_url
         source = "mesh" if _cached_comfyui_url else "config"
 
         return (
@@ -275,14 +232,11 @@ def mochi(prompt: str, action: str = "generate", steps: int = 50, seed: int = -1
                 "type": "string",
                 "enum": ["status", "queue", "history"],
                 "description": "Action to perform",
-                "default": "status"
+                "default": "status",
             },
-            "prompt_id": {
-                "type": "string",
-                "description": "Prompt ID for history lookup"
-            }
-        }
-    }
+            "prompt_id": {"type": "string", "description": "Prompt ID for history lookup"},
+        },
+    },
 )
 def comfyui(action: str = "status", prompt_id: str = None) -> str:
     """Manage ComfyUI connection."""
@@ -296,7 +250,7 @@ def comfyui(action: str = "status", prompt_id: str = None) -> str:
             source = "mesh" if _cached_comfyui_url else "config"
 
             output = [
-                f"ComfyUI: Online",
+                "ComfyUI: Online",
                 f"Endpoint: {comfyui_url}",
                 f"Source: {source}",
                 f"Device: {system.get('device_name', 'Unknown')}",
@@ -305,7 +259,7 @@ def comfyui(action: str = "status", prompt_id: str = None) -> str:
             vram_total = system.get("vram_total", 0)
             vram_free = system.get("vram_free", 0)
             if vram_total:
-                output.append(f"VRAM: {vram_free/(1024**3):.1f} / {vram_total/(1024**3):.1f} GB free")
+                output.append(f"VRAM: {vram_free / (1024**3):.1f} / {vram_total / (1024**3):.1f} GB free")
 
             return "\n".join(output)
         else:

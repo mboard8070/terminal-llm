@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """Render realistic MAUDE screenshots."""
-import os, asyncio
+
+import asyncio
+import os
+
 os.environ["TERM"] = "xterm-256color"
 
 from pathlib import Path
+
 import cairosvg
 
 OUT = Path(__file__).parent / "screenshots"
 OUT.mkdir(exist_ok=True)
+
 
 def svg_to_png(svg_str, path, scale=2.0):
     cairosvg.svg2png(bytestring=svg_str.encode("utf-8"), write_to=str(path), scale=scale)
@@ -20,13 +25,14 @@ def svg_to_png(svg_str, path, scale=2.0):
 
 print("Rendering server TUI...")
 
-from textual.app import App, ComposeResult
-from textual.widgets import RichLog, Static, Input
-from textual.containers import Container
-from rich.text import Text
 import pyfiglet
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.containers import Container
+from textual.widgets import Input, RichLog, Static
 
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
+
 
 def fire_text(text, offset=24):
     result = Text()
@@ -36,6 +42,7 @@ def fire_text(text, offset=24):
         else:
             result.append(ch)
     return result
+
 
 class MockTUI(App):
     TITLE = "MAUDE"
@@ -80,9 +87,9 @@ class MockTUI(App):
         # Conversation
         log.write("[bold green]YOU >[/bold green] what's the weather like in austin today?\n")
         log.write("[dim cyan]  route: weather_query → nemotron (92%)[/dim cyan]")
-        log.write("[dim yellow]  \\[web_search] {\"query\": \"weather austin texas today\"}[/dim yellow]")
+        log.write('[dim yellow]  \\[web_search] {"query": "weather austin texas today"}[/dim yellow]')
         log.write("[dim]    → Austin, TX: 78°F, partly cloudy. High of 82°F... (1.3s)[/dim]")
-        log.write("[dim yellow]  \\[web_browse] {\"url\": \"https://weather.gov/austin\"}[/dim yellow]")
+        log.write('[dim yellow]  \\[web_browse] {"url": "https://weather.gov/austin"}[/dim yellow]')
         log.write("[dim]    → Current conditions: 78°F, humidity 45%, wind S 12mph... (2.1s)[/dim]\n")
 
         resp = Text()
@@ -121,6 +128,7 @@ async def take_tui_screenshot():
         svg = app.export_screenshot()
         svg_to_png(svg, OUT / "server-tui.png", scale=2.0)
 
+
 asyncio.run(take_tui_screenshot())
 
 
@@ -142,9 +150,9 @@ c.print("Type 'quit' to exit, '/help' for commands.\n")
 
 c.print("[bold]You:[/bold] search the web for DGX Spark specs\n")
 c.print("[dim]  \\[1200+180 tokens, 1.8s][/dim]")
-c.print("[dim]  \\[web_search] {\"query\": \"NVIDIA DGX Spark specifications\"}[/dim]")
+c.print('[dim]  \\[web_search] {"query": "NVIDIA DGX Spark specifications"}[/dim]')
 c.print("[dim]    → NVIDIA DGX Spark: Grace Blackwell, 128GB unified memory... (2.4s)[/dim]")
-c.print("[dim]  \\[web_browse] {\"url\": \"https://nvidia.com/dgx-spark\"}[/dim]")
+c.print('[dim]  \\[web_browse] {"url": "https://nvidia.com/dgx-spark"}[/dim]')
 c.print("[dim]    → DGX Spark is a personal AI supercomputer powered by... (1.7s)[/dim]")
 c.print("[dim]  \\[3200+490 tokens, 2.9s][/dim]\n")
 
@@ -167,7 +175,7 @@ c.print(
 )
 
 c.print("[bold]You:[/bold] search the web for DGX Spark specs again\n")
-c.print("[dim]  \\[web_search] {\"query\": \"NVIDIA DGX Spark specifications\"}[/dim]")
+c.print('[dim]  \\[web_search] {"query": "NVIDIA DGX Spark specifications"}[/dim]')
 c.print("[dim]    → [bold]\\[cached result][/bold] (0.0s)[/dim]")
 
 svg = c.export_svg(title="maude — bash")
@@ -203,7 +211,7 @@ phone_svg = f'''<?xml version="1.0" encoding="UTF-8"?>
 
   <!-- Status bar -->
   <text x="32" y="50" font-size="14" font-weight="600" fill="#e6edf3">9:41</text>
-  <text x="{W-80}" y="50" font-size="12" fill="#8b949e">LTE ▐▐▐ 🔋</text>
+  <text x="{W - 80}" y="50" font-size="12" fill="#8b949e">LTE ▐▐▐ 🔋</text>
 
   <!-- ─── Header ─── -->
   <rect x="0" y="58" width="{W}" height="52" fill="#161b22"/>

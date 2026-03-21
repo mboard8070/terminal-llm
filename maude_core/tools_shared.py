@@ -5,7 +5,8 @@ Shared folder and file transfer tool implementations.
 from pathlib import Path
 
 from tool_registry import register_tool
-from .paths import resolve_path, get_working_directory
+
+from .paths import get_working_directory, resolve_path
 
 SHARED_DIR = Path.home() / "nvidia-workbench" / "terminal-llm" / "shared"
 TRANSFERS_DIR = Path.home() / "nvidia-workbench" / "terminal-llm" / "transfers"
@@ -29,6 +30,7 @@ def tool_list_shared() -> str:
 def tool_share_file(path: str, filename: str = None) -> str:
     """Copy a file into the shared folder for the client to access."""
     import shutil
+
     src = resolve_path(path)
     if not src.exists():
         return f"Error: File not found: {src}"
@@ -39,7 +41,7 @@ def tool_share_file(path: str, filename: str = None) -> str:
         shutil.copy2(str(src), str(dest))
         result = f"Shared '{src.name}' as '{dest_name}' \u2014 client can now pull it from the shared folder."
         # If it's an image, include markdown so phone apps display it inline
-        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
         if Path(dest_name).suffix.lower() in image_exts:
             result += f"\n\n![{dest_name}](/download/{dest_name})"
         return result
@@ -65,6 +67,7 @@ def tool_list_transfers() -> str:
 def tool_get_transfer(filename: str, destination: str = None) -> str:
     """Copy a file from the transfers folder to the working directory."""
     import shutil
+
     src = TRANSFERS_DIR / filename
     if not src.exists():
         return f"Error: '{filename}' not found in transfers. Use list_transfers to see available files."
@@ -82,17 +85,21 @@ def tool_get_transfer(filename: str, destination: str = None) -> str:
 
 # ── Registry wrappers ──────────────────────────────────────────
 
+
 @register_tool("list_shared")
 def _dispatch_list_shared(args):
     return tool_list_shared()
+
 
 @register_tool("share_file")
 def _dispatch_share_file(args):
     return tool_share_file(args.get("path", ""), args.get("filename"))
 
+
 @register_tool("list_transfers")
 def _dispatch_list_transfers(args):
     return tool_list_transfers()
+
 
 @register_tool("get_transfer")
 def _dispatch_get_transfer(args):

@@ -3,6 +3,7 @@ Task scheduler tool implementation.
 """
 
 from tool_registry import register_tool
+
 from .log import log
 
 
@@ -10,6 +11,7 @@ def tool_schedule_task(action: str, name: str = None, cron: str = None, prompt: 
     """Manage scheduled tasks."""
     try:
         from scheduler import get_scheduler
+
         scheduler = get_scheduler()
 
         if action == "list":
@@ -49,10 +51,11 @@ def tool_schedule_task(action: str, name: str = None, cron: str = None, prompt: 
             log(f"Running task: {task_id}")
             # Synchronous wrapper for async run
             import asyncio
+
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    asyncio.create_task(scheduler.run_task_by_id(task_id))
+                    _task = asyncio.create_task(scheduler.run_task_by_id(task_id))  # noqa: RUF006
                     return f"Running task {task_id}..."
                 else:
                     return loop.run_until_complete(scheduler.run_task_by_id(task_id))
@@ -68,12 +71,9 @@ def tool_schedule_task(action: str, name: str = None, cron: str = None, prompt: 
 
 # ── Registry wrapper ──────────────────────────────────────────
 
+
 @register_tool("schedule_task")
 def _dispatch_schedule_task(args):
     return tool_schedule_task(
-        args.get("action", "list"),
-        args.get("name"),
-        args.get("cron"),
-        args.get("prompt"),
-        args.get("task_id")
+        args.get("action", "list"), args.get("name"), args.get("cron"), args.get("prompt"), args.get("task_id")
     )

@@ -5,10 +5,9 @@ Ported from the ai-command-center Next.js app into native MAUDE tools.
 """
 
 import json
-import subprocess
 import sqlite3
+import subprocess
 from pathlib import Path
-from datetime import datetime, timezone
 
 from tool_registry import register_tool
 
@@ -36,6 +35,7 @@ def _get_db():
 
 # ── System Stats ─────────────────────────────────────────────
 
+
 @register_tool("system_stats")
 def _dispatch_system_stats(args):
     """CPU, RAM, disk, GPU temperature/utilization/memory."""
@@ -60,11 +60,13 @@ def _dispatch_system_stats(args):
     }
 
     # GPU via nvidia-smi (GB10 reports [N/A] for some fields, so parse full output)
-    smi = _run([
-        "nvidia-smi",
-        "--query-gpu=name,temperature.gpu,utilization.gpu,power.draw",
-        "--format=csv,noheader,nounits",
-    ])
+    smi = _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,temperature.gpu,utilization.gpu,power.draw",
+            "--format=csv,noheader,nounits",
+        ]
+    )
     if smi:
         parts = [p.strip() for p in smi.split(",")]
         if len(parts) >= 3:
@@ -81,11 +83,13 @@ def _dispatch_system_stats(args):
     if gpu_mem:
         mem_parts = [p.strip() for p in gpu_mem.split(",")]
         if len(mem_parts) >= 2:
+
             def _parse_mem(s):
                 try:
                     return int(s)
                 except ValueError:
                     return s
+
             result.setdefault("gpu", {})["memory_used_mb"] = _parse_mem(mem_parts[0])
             result["gpu"]["memory_total_mb"] = _parse_mem(mem_parts[1])
 
@@ -94,14 +98,17 @@ def _dispatch_system_stats(args):
 
 # ── GPU Processes ────────────────────────────────────────────
 
+
 @register_tool("gpu_processes")
 def _dispatch_gpu_processes(args):
     """What's currently using the GPU."""
-    smi = _run([
-        "nvidia-smi",
-        "--query-compute-apps=pid,process_name,used_gpu_memory",
-        "--format=csv,noheader,nounits",
-    ])
+    smi = _run(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ]
+    )
     if not smi:
         return "No GPU processes found (or nvidia-smi unavailable)."
 
@@ -112,30 +119,40 @@ def _dispatch_gpu_processes(args):
         if len(parts) >= 3:
             mem = int(parts[2]) if parts[2].isdigit() else 0
             total_used += mem
-            processes.append({
-                "pid": parts[0],
-                "name": parts[1],
-                "memory_mb": mem,
-            })
+            processes.append(
+                {
+                    "pid": parts[0],
+                    "name": parts[1],
+                    "memory_mb": mem,
+                }
+            )
 
     # Get total GPU memory (GB10 may report [N/A], fall back to 128GB unified)
-    total_smi = _run([
-        "nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits",
-    ])
+    total_smi = _run(
+        [
+            "nvidia-smi",
+            "--query-gpu=memory.total",
+            "--format=csv,noheader,nounits",
+        ]
+    )
     try:
         total_mb = int(total_smi.strip())
     except (ValueError, AttributeError):
         total_mb = 131072  # 128GB default for GB10
 
-    return json.dumps({
-        "total_mb": total_mb,
-        "used_mb": total_used,
-        "free_mb": total_mb - total_used,
-        "processes": processes,
-    }, indent=2)
+    return json.dumps(
+        {
+            "total_mb": total_mb,
+            "used_mb": total_used,
+            "free_mb": total_mb - total_used,
+            "processes": processes,
+        },
+        indent=2,
+    )
 
 
 # ── Memory Browser ───────────────────────────────────────────
+
 
 @register_tool("memory_browse")
 def _dispatch_memory_browse(args):
@@ -165,8 +182,7 @@ def _dispatch_memory_browse(args):
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT key, value, category, updated_at, access_count "
-                "FROM memories ORDER BY updated_at DESC LIMIT ?",
+                "SELECT key, value, category, updated_at, access_count FROM memories ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
 
@@ -177,6 +193,7 @@ def _dispatch_memory_browse(args):
 
 
 # ── Sessions ─────────────────────────────────────────────────
+
 
 @register_tool("session_list")
 def _dispatch_session_list(args):
@@ -206,6 +223,7 @@ def _dispatch_session_list(args):
 
 # ── Activity Feed ────────────────────────────────────────────
 
+
 @register_tool("activity_feed")
 def _dispatch_activity_feed(args):
     """Recent activity from the chat sync log."""
@@ -224,12 +242,14 @@ def _dispatch_activity_feed(args):
         for line in recent:
             try:
                 entry = json.loads(line)
-                activities.append({
-                    "channel": entry.get("channel", "?"),
-                    "role": entry.get("role", "?"),
-                    "content": (entry.get("content", ""))[:200],
-                    "timestamp": entry.get("timestamp"),
-                })
+                activities.append(
+                    {
+                        "channel": entry.get("channel", "?"),
+                        "role": entry.get("role", "?"),
+                        "content": (entry.get("content", ""))[:200],
+                        "timestamp": entry.get("timestamp"),
+                    }
+                )
             except json.JSONDecodeError:
                 continue
 
@@ -239,6 +259,7 @@ def _dispatch_activity_feed(args):
 
 
 # ── Scheduler Status ─────────────────────────────────────────
+
 
 @register_tool("scheduler_status")
 def _dispatch_scheduler_status(args):
@@ -253,15 +274,19 @@ def _dispatch_scheduler_status(args):
         active = sum(1 for t in tasks if t.get("enabled"))
         total_runs = sum(t.get("run_count", 0) for t in tasks)
 
-        return json.dumps({
-            "stats": {"total": len(tasks), "active": active, "total_runs": total_runs},
-            "tasks": tasks,
-        }, indent=2)
+        return json.dumps(
+            {
+                "stats": {"total": len(tasks), "active": active, "total_runs": total_runs},
+                "tasks": tasks,
+            },
+            indent=2,
+        )
     except Exception as e:
         return f"Error reading schedules: {e}"
 
 
 # ── Node Status ──────────────────────────────────────────────
+
 
 @register_tool("node_status")
 def _dispatch_node_status(args):
@@ -272,39 +297,41 @@ def _dispatch_node_status(args):
     tmux_out = _run(["tmux", "list-sessions", "-F", "#{session_name}"])
     tmux_sessions = set(tmux_out.split("\n")) if tmux_out else set()
 
-    maude_running = "maude" in tmux_sessions or bool(
-        _run(["pgrep", "-f", "chat_local.py"])
-    )
+    maude_running = "maude" in tmux_sessions or bool(_run(["pgrep", "-f", "chat_local.py"]))
     gateway_running = bool(_run(["pgrep", "-f", "gateway.py"]))
     llama_running = bool(_run(["pgrep", "-f", "llama-server"]))
     telegram_running = bool(_run(["pgrep", "-f", "run_telegram"]))
 
-    nodes.append({
-        "name": "spark",
-        "type": "hub",
-        "status": "online",
-        "services": {
-            "maude": maude_running,
-            "gateway": gateway_running,
-            "llama_server": llama_running,
-            "telegram": telegram_running,
-        },
-    })
+    nodes.append(
+        {
+            "name": "spark",
+            "type": "hub",
+            "status": "online",
+            "services": {
+                "maude": maude_running,
+                "gateway": gateway_running,
+                "llama_server": llama_running,
+                "telegram": telegram_running,
+            },
+        }
+    )
 
     # Check Tailscale peers
     ts_json = _run(["tailscale", "status", "--json"])
     if ts_json:
         try:
             ts = json.loads(ts_json)
-            for peer_id, peer in ts.get("Peer", {}).items():
-                nodes.append({
-                    "name": peer.get("HostName", "unknown"),
-                    "type": "client",
-                    "status": "online" if peer.get("Online") else "offline",
-                    "os": peer.get("OS", ""),
-                    "ip": peer.get("TailscaleIPs", [None])[0],
-                    "last_seen": peer.get("LastSeen", ""),
-                })
+            for _peer_id, peer in ts.get("Peer", {}).items():
+                nodes.append(
+                    {
+                        "name": peer.get("HostName", "unknown"),
+                        "type": "client",
+                        "status": "online" if peer.get("Online") else "offline",
+                        "os": peer.get("OS", ""),
+                        "ip": peer.get("TailscaleIPs", [None])[0],
+                        "last_seen": peer.get("LastSeen", ""),
+                    }
+                )
         except json.JSONDecodeError:
             pass
 
@@ -319,14 +346,16 @@ def _dispatch_node_status(args):
                 if any(n["name"] == client_id for n in nodes):
                     continue
                 ts_val = hb.get("timestamp", "")
-                nodes.append({
-                    "name": client_id,
-                    "type": "client",
-                    "status": hb.get("status", "unknown"),
-                    "platform": hb.get("platform", ""),
-                    "version": hb.get("version", ""),
-                    "last_seen": ts_val,
-                })
+                nodes.append(
+                    {
+                        "name": client_id,
+                        "type": "client",
+                        "status": hb.get("status", "unknown"),
+                        "platform": hb.get("platform", ""),
+                        "version": hb.get("version", ""),
+                        "last_seen": ts_val,
+                    }
+                )
         except (json.JSONDecodeError, Exception):
             pass
 

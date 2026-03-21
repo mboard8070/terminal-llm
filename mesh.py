@@ -8,22 +8,24 @@ Supports:
 4. Multi-modal capability mesh (LLM, vision, video, 3D, etc.)
 """
 
-import os
 import json
+import os
 import socket
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, asdict, field
-from typing import Dict, List, Optional, Any
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
 import requests
 from rich.console import Console
 
 from capabilities import (
-    Capability, CapabilityType, EndpointType,
-    capability_from_ollama_model, capability_for_comfyui,
-    classify_ollama_model
+    Capability,
+    CapabilityType,
+    EndpointType,
+    capability_for_comfyui,
+    capability_from_ollama_model,
 )
 
 console = Console()
@@ -32,15 +34,16 @@ console = Console()
 @dataclass
 class MaudeNode:
     """Represents a MAUDE instance on the network."""
+
     hostname: str
     ip: str
-    tailscale_ip: Optional[str] = None
+    tailscale_ip: str | None = None
     api_port: int = 30080
     ollama_port: int = 11434
     comfyui_port: int = 8188
-    capabilities: List[str] = field(default_factory=list)  # Legacy: model names
-    models: Dict[str, str] = field(default_factory=dict)  # model_name -> model_id
-    node_capabilities: List[Capability] = field(default_factory=list)  # New: typed capabilities
+    capabilities: list[str] = field(default_factory=list)  # Legacy: model names
+    models: dict[str, str] = field(default_factory=dict)  # model_name -> model_id
+    node_capabilities: list[Capability] = field(default_factory=list)  # New: typed capabilities
     last_seen: float = 0.0
     last_check: float = 0.0
     healthy: bool = False
@@ -51,40 +54,22 @@ class MaudeNode:
         host = self.tailscale_ip or self.ip or self.hostname
         return f"http://{host}:{self.ollama_port}/v1"
 
-    def get_api_url(self) -> str:
-        """Get the main API URL for this node."""
-        host = self.tailscale_ip or self.ip or self.hostname
-        return f"http://{host}:{self.api_port}/v1"
-
     def get_comfyui_url(self) -> str:
         """Get the ComfyUI API URL for this node."""
         host = self.tailscale_ip or self.ip or self.hostname
         return f"http://{host}:{self.comfyui_port}"
 
-    def has_capability(self, cap_type: CapabilityType, name: str = None) -> bool:
-        """Check if node has a specific capability."""
-        for cap in self.node_capabilities:
-            if cap.matches(cap_type, name):
-                return True
-        return False
-
-    def get_capability(self, cap_type: CapabilityType, name: str = None) -> Optional[Capability]:
-        """Get a specific capability from this node."""
-        for cap in self.node_capabilities:
-            if cap.matches(cap_type, name):
-                return cap
-        return None
-
 
 @dataclass
 class MeshConfig:
     """Configuration for the MAUDE mesh."""
+
     enabled: bool = True
     health_check_interval: int = 60  # seconds
     node_timeout: int = 120  # seconds before marking node as dead
     discovery_port: int = 31337
     auto_discover_tailscale: bool = True
-    manual_nodes: List[str] = field(default_factory=list)  # ["host:port", ...]
+    manual_nodes: list[str] = field(default_factory=list)  # ["host:port", ...]
 
 
 class MaudeMesh:
@@ -92,10 +77,10 @@ class MaudeMesh:
 
     CONFIG_FILE = Path.home() / ".config" / "maude" / "mesh.json"
 
-    def __init__(self, my_capabilities: List[str] = None):
+    def __init__(self, my_capabilities: list[str] = None):
         self.my_hostname = socket.gethostname()
         self.my_capabilities = my_capabilities or []
-        self.nodes: Dict[str, MaudeNode] = {}
+        self.nodes: dict[str, MaudeNode] = {}
         self.config = self._load_config()
         self.running = False
         self._lock = threading.Lock()
@@ -143,7 +128,7 @@ class MaudeMesh:
             return
 
         self.running = True
-        console.print(f"[dim]Starting MAUDE mesh network...[/dim]")
+        console.print("[dim]Starting MAUDE mesh network...[/dim]")
 
         # Initial discovery
         self._discover_nodes()
@@ -168,17 +153,14 @@ class MaudeMesh:
     def _discover_tailscale(self):
         """Discover MAUDE instances on the Tailscale network."""
         try:
-            result = subprocess.run(
-                ["tailscale", "status", "--json"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return
 
             data = json.loads(result.stdout)
             peers = data.get("Peer", {})
 
-            for peer_id, peer in peers.items():
+            for _peer_id, peer in peers.items():
                 hostname = peer.get("HostName", "").lower()
                 if not hostname or hostname == self.my_hostname.lower():
                     continue
@@ -220,11 +202,7 @@ class MaudeMesh:
 
         with self._lock:
             if hostname not in self.nodes:
-                self.nodes[hostname] = MaudeNode(
-                    hostname=hostname,
-                    ip=hostname,
-                    api_port=port
-                )
+                self.nodes[hostname] = MaudeNode(hostname=hostname, ip=hostname, api_port=port)
 
     def _health_check_loop(self):
         """Periodically check health of all nodes."""
@@ -271,13 +249,14 @@ class MaudeMesh:
             if gossip:
                 try:
                     from collab import get_hub
+
                     get_hub().merge_gossip(node.hostname, gossip)
                 except Exception:
                     pass
 
         node.last_check = now
 
-    def _check_ollama(self, node: MaudeNode) -> Optional[Dict[str, str]]:
+    def _check_ollama(self, node: MaudeNode) -> dict[str, str] | None:
         """Check if node has Ollama running and get available models."""
         try:
             host = node.tailscale_ip or node.ip or node.hostname
@@ -307,7 +286,7 @@ class MaudeMesh:
         except:
             return False
 
-    def _check_comfyui(self, node: MaudeNode) -> Optional[dict]:
+    def _check_comfyui(self, node: MaudeNode) -> dict | None:
         """Check if ComfyUI is running on this node."""
         try:
             host = node.tailscale_ip or node.ip or node.hostname
@@ -319,7 +298,7 @@ class MaudeMesh:
             pass
         return None
 
-    def _fetch_capability_manifest(self, node: MaudeNode) -> Optional[List[dict]]:
+    def _fetch_capability_manifest(self, node: MaudeNode) -> list[dict] | None:
         """Fetch capability manifest from a remote node's /v1/capabilities endpoint."""
         try:
             host = node.tailscale_ip or node.ip or node.hostname
@@ -332,7 +311,7 @@ class MaudeMesh:
             pass
         return None
 
-    def _fetch_gossip(self, node: MaudeNode) -> Optional[dict]:
+    def _fetch_gossip(self, node: MaudeNode) -> dict | None:
         """Fetch collaboration gossip bundle from a remote node."""
         try:
             host = node.tailscale_ip or node.ip or node.hostname
@@ -344,7 +323,7 @@ class MaudeMesh:
             pass
         return None
 
-    def _build_node_capabilities(self, node: MaudeNode, ollama_models: Dict[str, str] = None):
+    def _build_node_capabilities(self, node: MaudeNode, ollama_models: dict[str, str] = None):
         """Build the capabilities list for a node."""
         host = node.tailscale_ip or node.ip or node.hostname
         caps = []
@@ -363,7 +342,7 @@ class MaudeMesh:
         if not caps:
             # Add capabilities from Ollama models
             if ollama_models:
-                for base_name, full_name in ollama_models.items():
+                for _base_name, full_name in ollama_models.items():
                     cap = capability_from_ollama_model(full_name, host, node.ollama_port)
                     caps.append(cap)
 
@@ -379,7 +358,7 @@ class MaudeMesh:
                     endpoint_url=f"http://{host}:{node.comfyui_port}",
                     port=node.comfyui_port,
                     models=["mochi"],
-                    metadata={"via_comfyui": True}
+                    metadata={"via_comfyui": True},
                 )
                 caps.append(comfyui_cap)
                 caps.append(video_cap)
@@ -390,7 +369,7 @@ class MaudeMesh:
 
         node.node_capabilities = caps
 
-    def _load_manual_capabilities(self, hostname: str) -> List[Capability]:
+    def _load_manual_capabilities(self, hostname: str) -> list[Capability]:
         """Load manually registered capabilities for a node from config."""
         caps = []
         config_file = Path.home() / ".config" / "maude" / "capabilities.json"
@@ -439,13 +418,10 @@ class MaudeMesh:
 
         return True
 
-    def find_node_for_model(self, model_name: str) -> Optional[MaudeNode]:
+    def find_node_for_model(self, model_name: str) -> MaudeNode | None:
         """Find a healthy node that has the specified model."""
         with self._lock:
-            candidates = [
-                n for n in self.nodes.values()
-                if n.healthy and model_name in n.capabilities
-            ]
+            candidates = [n for n in self.nodes.values() if n.healthy and model_name in n.capabilities]
 
         if not candidates:
             return None
@@ -453,23 +429,19 @@ class MaudeMesh:
         # Return node with lowest load
         return min(candidates, key=lambda n: n.load)
 
-    def find_node_for_capability(self, capability: str) -> Optional[MaudeNode]:
-        """Find a healthy node with the specified capability."""
-        return self.find_node_for_model(capability)
-
-    def get_remote_ollama_url(self, model_name: str) -> Optional[str]:
+    def get_remote_ollama_url(self, model_name: str) -> str | None:
         """Get Ollama URL for a model, checking remote nodes if not local."""
         node = self.find_node_for_model(model_name)
         if node:
             return node.get_ollama_url()
         return None
 
-    def list_nodes(self) -> List[MaudeNode]:
+    def list_nodes(self) -> list[MaudeNode]:
         """List all known nodes."""
         with self._lock:
             return list(self.nodes.values())
 
-    def list_available_models(self) -> Dict[str, List[str]]:
+    def list_available_models(self) -> dict[str, list[str]]:
         """List all available models across the mesh."""
         models = {}
         with self._lock:
@@ -488,184 +460,12 @@ class MaudeMesh:
 
 
 # Global mesh instance
-_mesh: Optional[MaudeMesh] = None
+_mesh: MaudeMesh | None = None
 
 
-def get_mesh(capabilities: List[str] = None) -> MaudeMesh:
+def get_mesh(capabilities: list[str] = None) -> MaudeMesh:
     """Get or create the global mesh instance."""
     global _mesh
     if _mesh is None:
         _mesh = MaudeMesh(capabilities)
     return _mesh
-
-
-def handle_mesh_command(args: list) -> str:
-    """Handle /mesh command."""
-    mesh = get_mesh()
-
-    if not args:
-        # Show mesh status
-        nodes = mesh.list_nodes()
-        if not nodes:
-            return (
-                "No mesh nodes discovered.\n\n"
-                "To add nodes:\n"
-                "  - Ensure Tailscale is connected (for auto-discovery)\n"
-                "  - Or set MAUDE_NODES=host1:port,host2:port\n"
-                "  - Or use: /mesh add <hostname>"
-            )
-
-        lines = ["MAUDE Mesh Network:\n"]
-        for node in nodes:
-            status = "[green]✓[/green]" if node.healthy else "[red]✗[/red]"
-            ts_ip = f" ({node.tailscale_ip})" if node.tailscale_ip else ""
-            lines.append(f"  {status} {node.hostname}{ts_ip}")
-            if node.capabilities:
-                lines.append(f"      Models: {', '.join(node.capabilities)}")
-            # Show typed capabilities
-            if node.node_capabilities:
-                cap_types = set(c.type.value for c in node.node_capabilities)
-                lines.append(f"      Capabilities: {', '.join(sorted(cap_types))}")
-            if node.last_seen:
-                ago = int(time.time() - node.last_seen)
-                lines.append(f"      Last seen: {ago}s ago")
-
-        # Show available models across mesh
-        models = mesh.list_available_models()
-        if models:
-            lines.append("\nAvailable models across mesh:")
-            for model, hosts in sorted(models.items()):
-                lines.append(f"  {model}: {', '.join(hosts)}")
-
-        return "\n".join(lines)
-
-    action = args[0].lower()
-
-    if action == "refresh":
-        mesh.refresh()
-        return "Mesh refreshed. Use /mesh to see status."
-
-    elif action == "caps" or action == "capabilities":
-        # List all capabilities by type
-        lines = ["Mesh Capabilities:\n"]
-        nodes = mesh.list_nodes()
-
-        # Group capabilities by type
-        by_type: Dict[str, List[str]] = {}
-        for node in nodes:
-            for cap in node.node_capabilities:
-                type_name = cap.type.value.upper()
-                if type_name not in by_type:
-                    by_type[type_name] = []
-                endpoint_info = f" ({cap.endpoint_type.value})" if cap.endpoint_type != EndpointType.OLLAMA else ""
-                status = " [unhealthy]" if not cap.healthy else ""
-                entry = f"{cap.name} @ {node.hostname}{endpoint_info}{status}"
-                if entry not in by_type[type_name]:
-                    by_type[type_name].append(entry)
-
-        if not by_type:
-            return "No capabilities discovered. Use /mesh refresh to scan nodes."
-
-        for type_name in sorted(by_type.keys()):
-            lines.append(f"  [{type_name}]")
-            for entry in sorted(by_type[type_name]):
-                lines.append(f"    - {entry}")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    elif action == "register" and len(args) >= 4:
-        # /mesh register <type> <name> <url>
-        # Example: /mesh register video_gen mochi http://mattwell:8188
-        cap_type_str = args[1].lower()
-        cap_name = args[2]
-        cap_url = args[3]
-
-        # Parse URL to extract host and port
-        import urllib.parse
-        parsed = urllib.parse.urlparse(cap_url)
-        hostname = parsed.hostname or "localhost"
-        port = parsed.port or 8188
-
-        # Map type string to CapabilityType
-        type_map = {
-            "llm": CapabilityType.LLM,
-            "vision": CapabilityType.VISION,
-            "image_gen": CapabilityType.IMAGE_GEN,
-            "video_gen": CapabilityType.VIDEO_GEN,
-            "model_3d": CapabilityType.MODEL_3D,
-            "3d": CapabilityType.MODEL_3D,
-            "comfyui": CapabilityType.COMFYUI,
-            "gaussian_splat": CapabilityType.GAUSSIAN_SPLAT,
-        }
-
-        if cap_type_str not in type_map:
-            return f"Unknown capability type: {cap_type_str}\nValid types: {', '.join(type_map.keys())}"
-
-        cap_type = type_map[cap_type_str]
-
-        # Determine endpoint type from URL or type
-        if "comfyui" in cap_type_str or cap_type == CapabilityType.COMFYUI:
-            endpoint_type = EndpointType.COMFYUI
-        elif cap_type in [CapabilityType.LLM, CapabilityType.VISION]:
-            endpoint_type = EndpointType.OLLAMA
-        else:
-            endpoint_type = EndpointType.CUSTOM
-
-        cap = Capability(
-            type=cap_type,
-            name=cap_name,
-            endpoint_type=endpoint_type,
-            endpoint_url=cap_url,
-            port=port,
-            models=[cap_name],
-            healthy=True
-        )
-
-        mesh.register_capability(hostname, cap)
-        return f"Registered capability: {cap_name} ({cap_type.value}) on {hostname}"
-
-    elif action == "add" and len(args) > 1:
-        node_spec = args[1]
-        mesh._add_manual_node(node_spec)
-        mesh.config.manual_nodes.append(node_spec)
-        mesh._save_config()
-        mesh._check_all_nodes()
-        return f"Added node: {node_spec}"
-
-    elif action == "remove" and len(args) > 1:
-        hostname = args[1].lower()
-        with mesh._lock:
-            if hostname in mesh.nodes:
-                del mesh.nodes[hostname]
-                mesh.config.manual_nodes = [
-                    n for n in mesh.config.manual_nodes
-                    if not n.lower().startswith(hostname)
-                ]
-                mesh._save_config()
-                return f"Removed node: {hostname}"
-        return f"Node not found: {hostname}"
-
-    elif action == "enable":
-        mesh.config.enabled = True
-        mesh._save_config()
-        mesh.start()
-        return "Mesh networking enabled"
-
-    elif action == "disable":
-        mesh.config.enabled = False
-        mesh._save_config()
-        mesh.stop()
-        return "Mesh networking disabled"
-
-    return (
-        f"Unknown mesh command: {action}\n\n"
-        "Usage:\n"
-        "  /mesh                    - Show nodes and models\n"
-        "  /mesh caps               - List all capabilities by type\n"
-        "  /mesh refresh            - Refresh node discovery\n"
-        "  /mesh add <host>         - Add a node manually\n"
-        "  /mesh remove <host>      - Remove a node\n"
-        "  /mesh register <type> <name> <url> - Register capability\n"
-        "  /mesh enable|disable     - Toggle mesh networking"
-    )

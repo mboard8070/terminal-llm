@@ -2,18 +2,25 @@
 
 import re
 from datetime import datetime, timedelta
-from skills import skill
 
+from skills import skill
 
 # Day name → cron day-of-week number
 _DAY_MAP = {
-    "monday": "1", "mon": "1",
-    "tuesday": "2", "tue": "2",
-    "wednesday": "3", "wed": "3",
-    "thursday": "4", "thu": "4",
-    "friday": "5", "fri": "5",
-    "saturday": "6", "sat": "6",
-    "sunday": "0", "sun": "0",
+    "monday": "1",
+    "mon": "1",
+    "tuesday": "2",
+    "tue": "2",
+    "wednesday": "3",
+    "wed": "3",
+    "thursday": "4",
+    "thu": "4",
+    "friday": "5",
+    "fri": "5",
+    "saturday": "6",
+    "sat": "6",
+    "sunday": "0",
+    "sun": "0",
 }
 
 # Named shortcuts for common schedules
@@ -39,12 +46,12 @@ def _parse_time(time_str: str) -> tuple:
     time_str = time_str.strip().lower().replace(" ", "")
 
     # 24-hour format: 14:00, 9:30
-    m = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+    m = re.match(r"^(\d{1,2}):(\d{2})$", time_str)
     if m:
         return int(m.group(1)), int(m.group(2))
 
     # 12-hour format: 3pm, 9:30am, 12am
-    m = re.match(r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$', time_str)
+    m = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$", time_str)
     if m:
         hour = int(m.group(1))
         minute = int(m.group(2) or 0)
@@ -81,7 +88,7 @@ def _parse_schedule(when: str) -> str:
         return when_lower
 
     # 3. "every N minutes/hours"
-    m = re.match(r'every\s+(\d+)\s+(minute|minutes|min|mins|hour|hours|hr|hrs)', when_lower)
+    m = re.match(r"every\s+(\d+)\s+(minute|minutes|min|mins|hour|hours|hr|hrs)", when_lower)
     if m:
         n = int(m.group(1))
         unit = m.group(2)
@@ -95,18 +102,18 @@ def _parse_schedule(when: str) -> str:
             return f"0 */{n} * * *"
 
     # 4. "every minute" (no number)
-    if re.match(r'every\s+minute', when_lower):
+    if re.match(r"every\s+minute", when_lower):
         return "* * * * *"
 
     # 5. "daily at <time>" / "every day at <time>"
-    m = re.match(r'(?:daily|every\s+day)\s+at\s+(.+)', when_lower)
+    m = re.match(r"(?:daily|every\s+day)\s+at\s+(.+)", when_lower)
     if m:
         hour, minute = _parse_time(m.group(1))
         if hour is not None:
             return f"{minute} {hour} * * *"
 
     # 6. "every <day> at <time>" — e.g. "every Monday at 10am"
-    m = re.match(r'every\s+(\w+)\s+at\s+(.+)', when_lower)
+    m = re.match(r"every\s+(\w+)\s+at\s+(.+)", when_lower)
     if m:
         day_name = m.group(1).lower()
         day_num = _DAY_MAP.get(day_name)
@@ -116,7 +123,7 @@ def _parse_schedule(when: str) -> str:
                 return f"{minute} {hour} * * {day_num}"
 
     # 7. "weekdays at <time>" / "weekends at <time>"
-    m = re.match(r'(weekdays|weekends)\s+at\s+(.+)', when_lower)
+    m = re.match(r"(weekdays|weekends)\s+at\s+(.+)", when_lower)
     if m:
         days = "1-5" if m.group(1) == "weekdays" else "0,6"
         hour, minute = _parse_time(m.group(2))
@@ -124,7 +131,7 @@ def _parse_schedule(when: str) -> str:
             return f"{minute} {hour} * * {days}"
 
     # 8. "every <day>" without time — default to 9am
-    m = re.match(r'every\s+(\w+)$', when_lower)
+    m = re.match(r"every\s+(\w+)$", when_lower)
     if m:
         day_name = m.group(1).lower()
         day_num = _DAY_MAP.get(day_name)
@@ -132,14 +139,14 @@ def _parse_schedule(when: str) -> str:
             return f"0 9 * * {day_num}"
 
     # 9. "at <time>" — daily at that time
-    m = re.match(r'at\s+(.+)', when_lower)
+    m = re.match(r"at\s+(.+)", when_lower)
     if m:
         hour, minute = _parse_time(m.group(1))
         if hour is not None:
             return f"{minute} {hour} * * *"
 
     # 10. "in N minutes/hours" — one-shot (approximate with specific cron)
-    m = re.match(r'in\s+(\d+)\s+(minute|minutes|min|mins|hour|hours|hr|hrs)', when_lower)
+    m = re.match(r"in\s+(\d+)\s+(minute|minutes|min|mins|hour|hours|hr|hrs)", when_lower)
     if m:
         n = int(m.group(1))
         unit = m.group(2)
@@ -152,9 +159,7 @@ def _parse_schedule(when: str) -> str:
 
     # 11. Raw cron expression — validate it looks like cron (5 space-separated fields)
     parts = when.strip().split()
-    if len(parts) == 5 and all(
-        re.match(r'^[\d\*\/\-\,]+$', p) for p in parts
-    ):
+    if len(parts) == 5 and all(re.match(r"^[\d\*\/\-\,]+$", p) for p in parts):
         return when.strip()
 
     # Fallback: return as-is and let the scheduler validate
@@ -210,36 +215,22 @@ def _human_relative_time(iso_str: str) -> str:
                 "type": "string",
                 "enum": ["schedule", "list", "cancel", "pause", "resume", "run"],
                 "description": "Action to perform",
-                "default": "list"
+                "default": "list",
             },
-            "task_name": {
-                "type": "string",
-                "description": "Name/label for the scheduled task (for 'schedule' action)"
-            },
+            "task_name": {"type": "string", "description": "Name/label for the scheduled task (for 'schedule' action)"},
             "when": {
                 "type": "string",
-                "description": "When to run — natural language ('every morning', 'daily at 3pm', 'every 30 minutes', 'in 2 hours') or cron expression"
+                "description": "When to run — natural language ('every morning', 'daily at 3pm', 'every 30 minutes', 'in 2 hours') or cron expression",
             },
-            "prompt": {
-                "type": "string",
-                "description": "What MAUDE should do when the task runs"
-            },
-            "task_id": {
-                "type": "string",
-                "description": "Task ID (for cancel/pause/resume/run actions)"
-            }
-        }
-    }
+            "prompt": {"type": "string", "description": "What MAUDE should do when the task runs"},
+            "task_id": {"type": "string", "description": "Task ID (for cancel/pause/resume/run actions)"},
+        },
+    },
 )
-def schedule(
-    action: str = "list",
-    task_name: str = "",
-    when: str = "",
-    prompt: str = "",
-    task_id: str = ""
-) -> str:
+def schedule(action: str = "list", task_name: str = "", when: str = "", prompt: str = "", task_id: str = "") -> str:
     """Manage scheduled tasks."""
     from scheduler import get_scheduler
+
     sched = get_scheduler()
 
     if action == "schedule":
@@ -256,7 +247,7 @@ def schedule(
         # Enhance the result with human-readable next run
         if "Invalid cron" in result:
             return (
-                f"Could not parse schedule: \"{when}\"\n\n"
+                f'Could not parse schedule: "{when}"\n\n'
                 "Examples:\n"
                 "  'every morning' — 8 AM daily\n"
                 "  'daily at 3pm' — 3 PM daily\n"
@@ -273,9 +264,9 @@ def schedule(
             return (
                 "No scheduled tasks.\n\n"
                 "Create one with:\n"
-                "  \"schedule a weather check every morning\"\n"
-                "  \"remind me to stand up every 30 minutes\"\n"
-                "  \"schedule daily standup notes at 9am\""
+                '  "schedule a weather check every morning"\n'
+                '  "remind me to stand up every 30 minutes"\n'
+                '  "schedule daily standup notes at 9am"'
             )
 
         lines = [f"Scheduled Tasks ({len(sched.tasks)}):\n"]
@@ -311,10 +302,11 @@ def schedule(
             return "Error: please provide 'task_id' to run."
         # Synchronous wrapper for async run
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(sched.run_task_by_id(task_id))
+                _task = asyncio.create_task(sched.run_task_by_id(task_id))  # noqa: RUF006
                 return f"Running task {task_id}..."
             else:
                 return loop.run_until_complete(sched.run_task_by_id(task_id))

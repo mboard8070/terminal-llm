@@ -5,44 +5,88 @@ The model emits a plan with stages. Each stage's tools run in parallel.
 Stages run sequentially. Later stages can reference earlier results via $N.M syntax.
 """
 
-import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tool_registry import register_tool
+
 from .log import log
 
 # Read-only tools safe to run concurrently — shared across all tool loops
-PARALLEL_SAFE = frozenset({
-    "read_file", "list_directory", "search_file", "search_directory",
-    "get_working_directory", "web_browse", "web_search", "web_image_search",
-    "web_view", "view_image", "gmail_list", "gmail_read",
-    "drive_list", "drive_search", "drive_read",
-    "sheets_read", "sheets_list_sheets",
-    "calendar_list_events", "calendar_search_events", "calendar_list_calendars",
-    "contacts_list", "contacts_get", "contacts_search",
-    "youtube_search", "youtube_get_video", "youtube_get_channel",
-    "youtube_list_playlists", "youtube_get_playlist_items",
-    "youtube_get_comments", "youtube_my_channel",
-    "github_list_prs", "github_view_pr", "github_pr_diff",
-    "github_pr_comments", "github_list_issues", "github_view_issue",
-    "github_list_repos", "github_view_repo", "github_list_branches",
-    "github_list_commits", "github_list_runs", "github_view_run",
-    "github_list_releases", "github_search", "github_notifications",
-    "slides_get_presentation", "slides_get_slide",
-    "substack_list_drafts", "substack_list_posts", "substack_get_post",
-    "substack_get_stats",
-    "recall_memory", "list_memories",
-    "mesh_status", "list_tasks", "list_projects",
-    "system_stats", "gpu_processes", "session_list",
-    "activity_feed", "scheduler_status", "node_status",
-    "sandbox_status", "sandbox_list", "sandbox_read_file",
-    "ask_frontier",
-})
+PARALLEL_SAFE = frozenset(
+    {
+        "read_file",
+        "list_directory",
+        "search_file",
+        "search_directory",
+        "get_working_directory",
+        "web_browse",
+        "web_search",
+        "web_image_search",
+        "web_view",
+        "view_image",
+        "gmail_list",
+        "gmail_read",
+        "drive_list",
+        "drive_search",
+        "drive_read",
+        "sheets_read",
+        "sheets_list_sheets",
+        "calendar_list_events",
+        "calendar_search_events",
+        "calendar_list_calendars",
+        "contacts_list",
+        "contacts_get",
+        "contacts_search",
+        "youtube_search",
+        "youtube_get_video",
+        "youtube_get_channel",
+        "youtube_list_playlists",
+        "youtube_get_playlist_items",
+        "youtube_get_comments",
+        "youtube_my_channel",
+        "github_list_prs",
+        "github_view_pr",
+        "github_pr_diff",
+        "github_pr_comments",
+        "github_list_issues",
+        "github_view_issue",
+        "github_list_repos",
+        "github_view_repo",
+        "github_list_branches",
+        "github_list_commits",
+        "github_list_runs",
+        "github_view_run",
+        "github_list_releases",
+        "github_search",
+        "github_notifications",
+        "slides_get_presentation",
+        "slides_get_slide",
+        "substack_list_drafts",
+        "substack_list_posts",
+        "substack_get_post",
+        "substack_get_stats",
+        "recall_memory",
+        "list_memories",
+        "mesh_status",
+        "list_tasks",
+        "list_projects",
+        "system_stats",
+        "gpu_processes",
+        "session_list",
+        "activity_feed",
+        "scheduler_status",
+        "node_status",
+        "sandbox_status",
+        "sandbox_list",
+        "sandbox_read_file",
+        "ask_frontier",
+    }
+)
 
 # Regex to match $N.M references in argument values
-_REF_PATTERN = re.compile(r'\$(\d+)\.(\d+)')
+_REF_PATTERN = re.compile(r"\$(\d+)\.(\d+)")
 
 
 def _resolve_refs(value, results_by_stage):
@@ -95,7 +139,9 @@ def execute_plan(stages: list) -> str:
 
     for stage_idx, stage in enumerate(stages):
         if not isinstance(stage, list):
-            output_parts.append(f"## Stage {stage_idx}: ERROR — expected list of tool calls, got {type(stage).__name__}")
+            output_parts.append(
+                f"## Stage {stage_idx}: ERROR — expected list of tool calls, got {type(stage).__name__}"
+            )
             continue
 
         stage_start = time.time()
@@ -122,10 +168,7 @@ def execute_plan(stages: list) -> str:
         # Run parallel-safe tools concurrently
         if len(parallel) > 1:
             with ThreadPoolExecutor(max_workers=min(len(parallel), 6)) as pool:
-                futures = {
-                    pool.submit(execute_tool, name, args): (idx, name)
-                    for idx, name, args in parallel
-                }
+                futures = {pool.submit(execute_tool, name, args): (idx, name) for idx, name, args in parallel}
                 for future in as_completed(futures):
                     idx, name = futures[future]
                     try:
@@ -147,7 +190,9 @@ def execute_plan(stages: list) -> str:
                 stage_results[idx] = f"Error: {e}"
 
         # Store results in order for reference by later stages
-        ordered_results = [stage_results.get(idx, "") for idx in range(max(stage_results.keys()) + 1)] if stage_results else []
+        ordered_results = (
+            [stage_results.get(idx, "") for idx in range(max(stage_results.keys()) + 1)] if stage_results else []
+        )
         results_by_stage[stage_idx] = ordered_results
         stage_elapsed = time.time() - stage_start
 

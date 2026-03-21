@@ -8,12 +8,12 @@ Provides:
   is_cacheable(name) -> bool               – whether results should be cached
 """
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 _REGISTRY: dict[str, Callable] = {}
 _CACHEABLE: set[str] = set()
-_PREFIX_HANDLERS: dict[str, tuple[str, str]] = {}     # prefix -> (module_path, executor_name)
-_PREFIX_CALLABLES: dict[str, Callable] = {}            # prefix -> callable(name, arguments)
+_PREFIX_HANDLERS: dict[str, tuple[str, str]] = {}  # prefix -> (module_path, executor_name)
+_PREFIX_CALLABLES: dict[str, Callable] = {}  # prefix -> callable(name, arguments)
 
 
 def register_tool(name: str, *, cacheable: bool = False):
@@ -24,11 +24,13 @@ def register_tool(name: str, *, cacheable: bool = False):
         def _dispatch_read_file(args):
             return tool_read_file(args.get("path", ""))
     """
+
     def decorator(func: Callable):
         _REGISTRY[name] = func
         if cacheable:
             _CACHEABLE.add(name)
         return func
+
     return decorator
 
 
@@ -49,7 +51,7 @@ def register_prefix(prefix: str, module_path: str = None, executor_name: str = N
         _PREFIX_HANDLERS[prefix] = (module_path, executor_name)
 
 
-def get_handler(name: str) -> Optional[Callable]:
+def get_handler(name: str) -> Callable | None:
     """Look up a handler: exact match first, then prefix fallback."""
     handler = _REGISTRY.get(name)
     if handler is not None:
@@ -58,21 +60,28 @@ def get_handler(name: str) -> Optional[Callable]:
     # Prefix-based lookup: callables first, then lazy-import
     for prefix, callable_handler in _PREFIX_CALLABLES.items():
         if name.startswith(prefix):
+
             def _wrap_callable(h, tool_name):
                 def _handler(arguments):
                     return h(tool_name, arguments)
+
                 return _handler
+
             return _wrap_callable(callable_handler, name)
 
     for prefix, (module_path, executor_name) in _PREFIX_HANDLERS.items():
         if name.startswith(prefix):
+
             def _make_prefix_handler(mod, func, tool_name):
                 def _handler(arguments):
                     import importlib
+
                     m = importlib.import_module(mod)
                     executor = getattr(m, func)
                     return executor(tool_name, arguments)
+
                 return _handler
+
             return _make_prefix_handler(module_path, executor_name, name)
 
     return None

@@ -4,21 +4,22 @@ Tests for client tool_router.py — ToolRouter fetch, cache, route.
 These tests run without needing a real gateway by mocking HTTP calls.
 """
 
-import time
-import json
-import pytest
-from unittest.mock import patch, MagicMock
-
 # Add maude-client to path
 import sys
+import time
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 CLIENT_DIR = Path(__file__).parent.parent / "maude-client"
 if str(CLIENT_DIR) not in sys.path:
     sys.path.insert(0, str(CLIENT_DIR))
 
 from maude_client.tool_router import (
-    ToolRouter, CLIENT_ONLY_TOOLS, _LOCAL_TOOL_NAMES,
-    _OFFLINE_TOOLS, CACHE_TTL,
+    CACHE_TTL,
+    CLIENT_ONLY_TOOLS,
+    ToolRouter,
 )
 
 
@@ -32,16 +33,20 @@ def mock_catalog():
                 "function": {
                     "name": "web_search",
                     "description": "Search the web",
-                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
-                }
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
             },
             {
                 "type": "function",
                 "function": {
                     "name": "read_file",
                     "description": "Read a file",
-                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
-                }
+                    "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+                },
             },
         ],
         "groups": {
@@ -78,7 +83,7 @@ class TestToolRouterFetch:
         mock_get.return_value = mock_resp
 
         router = ToolRouter(gateway_url="https://fake:30000")
-        catalog = router.fetch_catalog()
+        _catalog = router.fetch_catalog()
 
         assert router.is_online
         # Should have server tools + client-only tools merged
@@ -163,12 +168,13 @@ class TestFastDispatch:
         router = ToolRouter(gateway_url="http://192.0.2.1:39999")
         # Need to be in the tmp_path for list_directory to work with "."
         import os
+
         orig = os.getcwd()
         os.chdir(tmp_path)
         try:
             result = router.fast_dispatch("list files in directory")
             if result:
-                name, args, output = result
+                name, _args, _output = result
                 assert name == "list_directory"
         finally:
             os.chdir(orig)

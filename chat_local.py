@@ -3,46 +3,57 @@
 MAUDE - Terminal LLM Chat powered by local LLMs
 """
 
-import sys
-import os
 import asyncio
+import os
 import threading
+
 from dotenv import load_dotenv
+
 load_dotenv()
 # Also load variables.env (API keys used by gateway and subagents)
 _vars_env = os.path.join(os.path.dirname(os.path.abspath(__file__)), "variables.env")
 if os.path.exists(_vars_env):
     load_dotenv(_vars_env, override=False)
 
-import time
 import json
-from pathlib import Path
-from typing import Optional
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import ClassVar
+
+import pyfiglet
 from openai import OpenAI
+from rich.align import Align
+from rich.live import Live
+from rich.text import Text
+from textual import work
 
 # Textual TUI framework
 from textual.app import App, ComposeResult
-from textual.widgets import Input, RichLog, Static, Footer
-from textual.containers import Container, Vertical
 from textual.binding import Binding
-from textual import work
-from rich.text import Text
-from rich.panel import Panel
-import pyfiglet
+from textual.containers import Container
+from textual.widgets import Input, RichLog, Static
+
+import conversation_sync
 
 # MAUDE core - shared tools
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
-from maude_core.tools_plan import PARALLEL_SAFE
-import conversation_sync
 from collab import get_hub as get_collab_hub
-
-# Voice mode
-from voice import VoiceMode, VoiceConfig, check_voice_dependencies
 
 # Minimal imports
 from keys import KeyManager
+from maude_core import (
+    append_chat_log,
+    execute_tool,
+    fast_dispatch,
+    get_tools_for_message,
+    read_chat_log_since,
+    reset_rate_limits,
+)
+from maude_core.tools_plan import PARALLEL_SAFE
+
+# Voice mode
+from voice import VoiceMode, check_voice_dependencies
 
 # Global reference to app for output
 _app = None
@@ -53,12 +64,13 @@ _last_response = ""
 
 class TUIConsole:
     """Console that writes to Textual RichLog when app is running, otherwise stdout."""
+
     def __init__(self):
         self.width = 80
 
     def print(self, *args, end="\n", **kwargs):
         text = " ".join(str(a) for a in args)
-        if _app and hasattr(_app, 'output_log'):
+        if _app and hasattr(_app, "output_log"):
             try:
                 _app.call_from_thread(_app.write_output, text)
             except:
@@ -71,7 +83,7 @@ class TUIConsole:
 
     def clear(self):
         if not _app:
-            os.system('clear' if os.name != 'nt' else 'cls')
+            os.system("clear" if os.name != "nt" else "cls")
 
 
 console = TUIConsole()
@@ -80,13 +92,14 @@ console = TUIConsole()
 class VoiceController:
     """Manages voice mode state and lifecycle for TUI integration."""
 
-    def __init__(self, app: 'MaudeApp'):
+    def __init__(self, app: "MaudeApp"):
         self.app = app
-        self.voice_mode: Optional[VoiceMode] = None
+        self.voice_mode: VoiceMode | None = None
         self._active = False
 
     def create_maude_callback(self):
         """Create a synchronous callback that wraps chat() for voice mode."""
+
         def callback(text: str) -> str:
             # Add user message to shared history
             self.app.messages.append({"role": "user", "content": text})
@@ -118,7 +131,7 @@ class VoiceController:
                 ),
                 on_response=lambda r: self.app.call_from_thread(
                     self.app.write_output, f"[bold magenta]MAUDE:[/bold magenta] {r}"
-                )
+                ),
             )
 
             await self.voice_mode.initialize()
@@ -133,9 +146,7 @@ class VoiceController:
         text = await self.voice_mode.listen()
 
         if text:
-            self.app.call_from_thread(
-                self.app.write_output, f"\n[bold green]YOU (voice) >[/bold green] {text}"
-            )
+            self.app.call_from_thread(self.app.write_output, f"\n[bold green]YOU (voice) >[/bold green] {text}")
             self.app.call_from_thread(self.app.update_voice_status, "Processing...")
 
             callback = self.create_maude_callback()
@@ -168,6 +179,7 @@ class VoiceController:
 def tui_log(message: str):
     console.print(f"[dim cyan]  -> {message}[/dim cyan]")
 
+
 maude_core.set_log_callback(tui_log)
 
 # Get config from maude_core
@@ -178,13 +190,11 @@ NUM_CTX = maude_core.NUM_CTX
 # Color palette for animation - fire gradient
 COLORS = ["red", "bright_red", "orange1", "orange3", "yellow", "bright_yellow"]
 
+
 def create_client():
     """Create API client, routing cloud models through gateway."""
     base_url = GATEWAY_URL if MODEL in _CLOUD_MODELS else LOCAL_URL
-    return OpenAI(
-        base_url=base_url,
-        api_key="not-needed"
-    )
+    return OpenAI(base_url=base_url, api_key="not-needed")
 
 
 def fire_text(text: str, offset: int = 0) -> Text:
@@ -202,7 +212,7 @@ def fire_text(text: str, offset: int = 0) -> Text:
 def get_banner_with_mech():
     """Generate banner text."""
     banner = pyfiglet.figlet_format("MAUDE", font="banner3")
-    banner_lines = banner.rstrip('\n').split('\n')
+    banner_lines = banner.rstrip("\n").split("\n")
     return banner_lines
 
 
@@ -218,7 +228,7 @@ def animate_banner():
             # Add animated MAUDE banner
             for line in banner_lines:
                 content.append_text(fire_text(line, frame))
-                content.append('\n')
+                content.append("\n")
 
             live.update(Align.center(content))
             time.sleep(0.06)
@@ -227,7 +237,7 @@ def animate_banner():
     final_content = Text()
     for line in banner_lines:
         final_content.append_text(fire_text(line, 24))
-        final_content.append('\n')
+        final_content.append("\n")
 
     console.print(Align.center(final_content))
     console.print()
@@ -241,7 +251,7 @@ def print_separator():
 def _escalate_to_frontier(user_question: str) -> str:
     """Escalate a question to Claude/Gemini when the local model gets stuck."""
     try:
-        from frontier import ask_frontier, list_available_providers, RateLimitError
+        from frontier import RateLimitError, ask_frontier, list_available_providers
 
         available = list_available_providers()
         if not available:
@@ -258,11 +268,13 @@ def _escalate_to_frontier(user_question: str) -> str:
                 response = ask_frontier(
                     query=user_question,
                     provider_name=provider,
-                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise."
+                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise.",
                 )
-                console.print(f"[dim cyan]  ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})[/dim cyan]")
+                console.print(
+                    f"[dim cyan]  ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})[/dim cyan]"
+                )
                 return response.content
-            except RateLimitError as e:
+            except RateLimitError:
                 errors.append(f"{provider}: rate limited")
                 continue
             except Exception as e:
@@ -316,12 +328,13 @@ def chat(client, messages: list):
         try:
             start_time = time.time()
             clean_msgs = [m for m in messages if "tool_calls" not in m and m.get("role") != "tool"]
-            use_stream = _app and hasattr(_app, 'stream_token')
+            use_stream = _app and hasattr(_app, "stream_token")
 
             if use_stream:
                 # Raw SSE stream — captures both tool traces and content
                 import httpx
-                base_url = client.base_url if hasattr(client, 'base_url') else GATEWAY_URL
+
+                base_url = client.base_url if hasattr(client, "base_url") else GATEWAY_URL
                 url = f"{str(base_url).rstrip('/')}/chat/completions"
                 payload = {
                     "model": MODEL,
@@ -335,87 +348,103 @@ def chat(client, messages: list):
                 prompt_tokens = 0
                 first = True
 
-                with httpx.Client(timeout=300) as http:
-                    with http.stream("POST", url, json=payload, headers={"Authorization": "Bearer not-needed"}) as resp:
-                        if resp.status_code >= 400:
-                            resp.read()
-                            raise Exception(f"Gateway returned {resp.status_code}: {resp.text[:200]}")
-                        buf = ""
-                        for text_chunk in resp.iter_text():
-                            buf += text_chunk
-                            while "\n" in buf:
-                                line, buf = buf.split("\n", 1)
-                                line = line.strip()
-                                if not line:
+                with (
+                    httpx.Client(timeout=300) as http,
+                    http.stream("POST", url, json=payload, headers={"Authorization": "Bearer not-needed"}) as resp,
+                ):
+                    if resp.status_code >= 400:
+                        resp.read()
+                        raise Exception(f"Gateway returned {resp.status_code}: {resp.text[:200]}")
+                    buf = ""
+                    for text_chunk in resp.iter_text():
+                        buf += text_chunk
+                        while "\n" in buf:
+                            line, buf = buf.split("\n", 1)
+                            line = line.strip()
+                            if not line:
+                                continue
+                            # Tool trace comments from gateway
+                            if line.startswith(": trace "):
+                                try:
+                                    trace = json.loads(line[8:])
+                                    ttype = trace.get("type", "")
+                                    if ttype == "tool_call":
+                                        tname = trace.get("name", "?")
+                                        targs = trace.get("args", "")
+                                        # Try to extract the most useful arg value
+                                        arg_hint = ""
+                                        try:
+                                            parsed = json.loads(targs) if targs else {}
+                                            if isinstance(parsed, dict):
+                                                for k in (
+                                                    "command",
+                                                    "query",
+                                                    "path",
+                                                    "local_path",
+                                                    "name",
+                                                    "file_id",
+                                                    "content",
+                                                    "doc_id",
+                                                    "url",
+                                                ):
+                                                    if k in parsed:
+                                                        arg_hint = str(parsed[k])
+                                                        if len(arg_hint) > 55:
+                                                            arg_hint = arg_hint[:55] + "…"
+                                                        break
+                                        except (json.JSONDecodeError, TypeError):
+                                            if targs and targs != "{}" and len(targs) <= 60:
+                                                arg_hint = targs
+                                        console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tname}[/bold white]")
+                                        if arg_hint:
+                                            console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
+                                    elif ttype == "parallel_start":
+                                        pcount = trace.get("count", 0)
+                                        console.print(f"[dim cyan]  ⚡ {pcount} tools in parallel[/dim cyan]")
+                                    elif ttype == "tool_result":
+                                        tname = trace.get("name", "")
+                                        preview = trace.get("preview", "")
+                                        elapsed = trace.get("elapsed", 0)
+                                        status_color = "green" if not preview.startswith("Error") else "red"
+                                        console.print(
+                                            f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]"
+                                        )
+                                    elif ttype == "llm_call":
+                                        prompt_tokens += trace.get("prompt_tokens", 0)
+                                        token_count += trace.get("completion_tokens", 0)
+                                    elif ttype == "error":
+                                        err_msg = trace.get("message", "unknown error")
+                                        console.print(f"[red]  ✗ {err_msg}[/red]")
+                                except (json.JSONDecodeError, KeyError):
+                                    pass
+                                continue
+                            # Normal SSE data lines
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
                                     continue
-                                # Tool trace comments from gateway
-                                if line.startswith(": trace "):
-                                    try:
-                                        trace = json.loads(line[8:])
-                                        ttype = trace.get("type", "")
-                                        if ttype == "tool_call":
-                                            tname = trace.get("name", "?")
-                                            targs = trace.get("args", "")
-                                            # Try to extract the most useful arg value
-                                            arg_hint = ""
-                                            try:
-                                                parsed = json.loads(targs) if targs else {}
-                                                if isinstance(parsed, dict):
-                                                    for k in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
-                                                        if k in parsed:
-                                                            arg_hint = str(parsed[k])
-                                                            if len(arg_hint) > 55:
-                                                                arg_hint = arg_hint[:55] + "…"
-                                                            break
-                                            except (json.JSONDecodeError, TypeError):
-                                                if targs and targs != "{}" and len(targs) <= 60:
-                                                    arg_hint = targs
-                                            console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tname}[/bold white]")
-                                            if arg_hint:
-                                                console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
-                                        elif ttype == "parallel_start":
-                                            pcount = trace.get("count", 0)
-                                            console.print(f"[dim cyan]  ⚡ {pcount} tools in parallel[/dim cyan]")
-                                        elif ttype == "tool_result":
-                                            tname = trace.get("name", "")
-                                            preview = trace.get("preview", "")
-                                            elapsed = trace.get("elapsed", 0)
-                                            status_color = "green" if not preview.startswith("Error") else "red"
-                                            console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]")
-                                        elif ttype == "llm_call":
-                                            prompt_tokens += trace.get("prompt_tokens", 0)
-                                            token_count += trace.get("completion_tokens", 0)
-                                        elif ttype == "error":
-                                            err_msg = trace.get("message", "unknown error")
-                                            console.print(f"[red]  ✗ {err_msg}[/red]")
-                                    except (json.JSONDecodeError, KeyError):
-                                        pass
-                                    continue
-                                # Normal SSE data lines
-                                if line.startswith("data: "):
-                                    data_str = line[6:]
-                                    if data_str.strip() == "[DONE]":
-                                        continue
-                                    try:
-                                        chunk = json.loads(data_str)
-                                        choices = chunk.get("choices", [])
-                                        if choices:
-                                            delta = choices[0].get("delta", {})
-                                            content = delta.get("content", "")
-                                            if content:
-                                                _app.stream_token(content, is_first=first, prefix="MAUDE: ")
-                                                full_content += content
-                                                first = False
-                                        usage = chunk.get("usage")
-                                        if usage:
-                                            token_count = usage.get("completion_tokens", 0) or 0
-                                            prompt_tokens = usage.get("prompt_tokens", 0) or 0
-                                    except json.JSONDecodeError:
-                                        pass
+                                try:
+                                    chunk = json.loads(data_str)
+                                    choices = chunk.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        content = delta.get("content", "")
+                                        if content:
+                                            _app.stream_token(content, is_first=first, prefix="MAUDE: ")
+                                            full_content += content
+                                            first = False
+                                    usage = chunk.get("usage")
+                                    if usage:
+                                        token_count = usage.get("completion_tokens", 0) or 0
+                                        prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                                except json.JSONDecodeError:
+                                    pass
 
                 elapsed_time = time.time() - start_time
                 if full_content:
-                    _app.call_from_thread(_app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                    _app.call_from_thread(
+                        _app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]"
+                    )
             else:
                 # Non-streaming fallback (headless / no TUI)
                 response = client.chat.completions.create(
@@ -450,8 +479,7 @@ def chat(client, messages: list):
         if tool_iteration > max_tool_iterations:
             console.print("[dim yellow](max tool iterations reached — escalating to frontier model...)[/dim yellow]")
             user_question = next(
-                (m["content"] for m in reversed(messages) if m.get("role") == "user"),
-                "Help me with my request"
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"), "Help me with my request"
             )
             return _escalate_to_frontier(user_question)
         try:
@@ -462,7 +490,7 @@ def chat(client, messages: list):
             max_tokens = 2048 if has_tool_results else 4096
 
             # Stream when TUI is available (typewriter effect), non-stream otherwise
-            use_stream = _app and hasattr(_app, 'stream_token')
+            use_stream = _app and hasattr(_app, "stream_token")
             kwargs = dict(
                 model=MODEL,
                 messages=messages,
@@ -489,9 +517,9 @@ def chat(client, messages: list):
                 for chunk in response:
                     choice = chunk.choices[0] if chunk.choices else None
                     if not choice:
-                        if hasattr(chunk, 'usage') and chunk.usage:
-                            token_count = getattr(chunk.usage, 'completion_tokens', 0) or 0
-                            prompt_tokens = getattr(chunk.usage, 'prompt_tokens', 0) or 0
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            token_count = getattr(chunk.usage, "completion_tokens", 0) or 0
+                            prompt_tokens = getattr(chunk.usage, "prompt_tokens", 0) or 0
                         continue
                     delta = choice.delta
                     if not delta:
@@ -512,12 +540,16 @@ def chat(client, messages: list):
                                     tool_calls_acc[i]["name"] += tc.function.name
                                     # Show tool name immediately as it streams in
                                     _tool_step[0] += 1
-                                    console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tool_calls_acc[i]['name']}[/bold white]")
+                                    console.print(
+                                        f"[bold cyan]  ╭─ [/bold cyan][bold white]{tool_calls_acc[i]['name']}[/bold white]"
+                                    )
                                 if tc.function.arguments:
                                     tool_calls_acc[i]["arguments"] += tc.function.arguments
                 elapsed_time = time.time() - start_time
                 if full_content:
-                    _app.call_from_thread(_app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]")
+                    _app.call_from_thread(
+                        _app.write_output, f"[dim]{prompt_tokens}+{token_count} tokens in {elapsed_time:.1f}s[/dim]"
+                    )
                 # Build tool_calls_data from accumulated stream chunks
                 for tc in tool_calls_acc.values():
                     if tc["id"]:
@@ -535,29 +567,25 @@ def chat(client, messages: list):
                 tool_calls_data = {}
                 if msg.tool_calls:
                     for tc in msg.tool_calls:
-                        tool_calls_data[tc.id] = {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
+                        tool_calls_data[tc.id] = {"name": tc.function.name, "arguments": tc.function.arguments}
 
             # Handle tool calls
             if tool_calls_data:
                 # Add assistant message with tool calls to history
-                messages.append({
-                    "role": "assistant",
-                    "content": full_content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc_id,
-                            "type": "function",
-                            "function": {
-                                "name": tc_data["name"],
-                                "arguments": tc_data["arguments"]
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc_id,
+                                "type": "function",
+                                "function": {"name": tc_data["name"], "arguments": tc_data["arguments"]},
                             }
-                        }
-                        for tc_id, tc_data in tool_calls_data.items()
-                    ]
-                })
+                            for tc_id, tc_data in tool_calls_data.items()
+                        ],
+                    }
+                )
 
                 # Parse all tool calls and check for duplicates
                 # Tools that only read state can run in parallel; tools that
@@ -580,14 +608,14 @@ def chat(client, messages: list):
                     call_signature = (func_name, json.dumps(func_args, sort_keys=True))
                     if call_signature in recent_tool_calls:
                         consecutive_duplicates += 1
-                        console.print(f"[cyan]  ╰─[/cyan] [dim yellow]skipped (duplicate call)[/dim yellow]")
+                        console.print("[cyan]  ╰─[/cyan] [dim yellow]skipped (duplicate call)[/dim yellow]")
                         result = "(Already called with same arguments - see previous result. STOP retrying and respond to the user with the best answer you can based on information gathered so far.)"
                         messages.append({"role": "tool", "tool_call_id": tc_id, "content": result})
                         if consecutive_duplicates >= 3:
                             console.print("[dim yellow](escalating to frontier model...)[/dim yellow]")
                             user_question = next(
                                 (m["content"] for m in reversed(messages) if m.get("role") == "user"),
-                                "Help me with my request"
+                                "Help me with my request",
                             )
                             return _escalate_to_frontier(user_question)
                     else:
@@ -608,7 +636,17 @@ def chat(client, messages: list):
                 def _print_tool_status(func_name, func_args, result, elapsed):
                     """Print arg hint and result preview for a tool call."""
                     arg_hint = ""
-                    for key in ("command", "query", "path", "local_path", "name", "file_id", "content", "doc_id", "url"):
+                    for key in (
+                        "command",
+                        "query",
+                        "path",
+                        "local_path",
+                        "name",
+                        "file_id",
+                        "content",
+                        "doc_id",
+                        "url",
+                    ):
                         if key in func_args:
                             val = str(func_args[key])
                             if len(val) > 55:
@@ -622,7 +660,9 @@ def chat(client, messages: list):
                     if len(result_str) > 80:
                         preview += "…"
                     status_color = "green" if not result_str.startswith("Error") else "red"
-                    console.print(f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]")
+                    console.print(
+                        f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]"
+                    )
 
                 # Run parallel-safe tools concurrently
                 if len(parallel_batch) > 1:
@@ -638,31 +678,28 @@ def chat(client, messages: list):
                             _, _, func_args = futures[future]
                             parallel_results[tc_id] = (func_name, func_args, result, elapsed)
                     # Append results in original order
-                    for tc_id, fn, args in parallel_batch:
+                    for tc_id, _fn, _args in parallel_batch:
                         func_name, func_args, result, elapsed = parallel_results[tc_id]
                         _print_tool_status(func_name, func_args, result, elapsed)
-                        messages.append({
-                            "role": "tool", "tool_call_id": tc_id,
-                            "content": _compact_tool_result(func_name, result)
-                        })
+                        messages.append(
+                            {"role": "tool", "tool_call_id": tc_id, "content": _compact_tool_result(func_name, result)}
+                        )
                 elif len(parallel_batch) == 1:
                     # Single parallel-safe tool — no pool overhead
                     tc_id, func_name, func_args = parallel_batch[0]
                     tc_id, func_name, result, elapsed = _exec_one(tc_id, func_name, func_args)
                     _print_tool_status(func_name, func_args, result, elapsed)
-                    messages.append({
-                        "role": "tool", "tool_call_id": tc_id,
-                        "content": _compact_tool_result(func_name, result)
-                    })
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": _compact_tool_result(func_name, result)}
+                    )
 
                 # Run state-mutating tools sequentially (order matters)
                 for tc_id, func_name, func_args in sequential_batch:
                     tc_id, func_name, result, elapsed = _exec_one(tc_id, func_name, func_args)
                     _print_tool_status(func_name, func_args, result, elapsed)
-                    messages.append({
-                        "role": "tool", "tool_call_id": tc_id,
-                        "content": _compact_tool_result(func_name, result)
-                    })
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": _compact_tool_result(func_name, result)}
+                    )
 
                 # Continue loop to get next response
                 continue
@@ -713,12 +750,21 @@ AVAILABLE_MODELS = {
 # Cloud models route through the gateway's HTTP mirror (same port as local)
 GATEWAY_URL = "http://localhost:30080/v1"
 
-_CLOUD_MODELS = {"mistral-large-latest", "codestral-latest", "devstral-2512", "devstral-small-latest", "devstral-medium-latest", "claude-opus-4-20250514", "claude-sonnet-4-20250514"}
+_CLOUD_MODELS = {
+    "mistral-large-latest",
+    "codestral-latest",
+    "devstral-2512",
+    "devstral-small-latest",
+    "devstral-medium-latest",
+    "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514",
+}
 
 # Resolve short model name (e.g. "mistral") to full ID (e.g. "mistral-large-latest")
 if MODEL in AVAILABLE_MODELS and MODEL not in _CLOUD_MODELS:
     MODEL = AVAILABLE_MODELS[MODEL]
     maude_core.MODEL = MODEL
+
 
 def _switch_model(name: str) -> str:
     """Switch the active model at runtime, routing cloud models via gateway."""
@@ -734,7 +780,7 @@ def _switch_model(name: str) -> str:
         base_url = GATEWAY_URL
     else:
         base_url = LOCAL_URL
-    if _app and hasattr(_app, 'client'):
+    if _app and hasattr(_app, "client"):
         _app.client = OpenAI(base_url=base_url, api_key="not-needed")
 
     return f"Switched to {key} ({MODEL}) via {'gateway' if MODEL in _CLOUD_MODELS else 'local'}"
@@ -754,7 +800,7 @@ def _use_model_for_message(model_name: str):
                 base_url = GATEWAY_URL
             else:
                 base_url = LOCAL_URL
-            if _app and hasattr(_app, 'client'):
+            if _app and hasattr(_app, "client"):
                 _app.client = OpenAI(base_url=base_url, api_key="not-needed")
     return prev
 
@@ -769,7 +815,7 @@ def _restore_model(prev_model: str):
             base_url = GATEWAY_URL
         else:
             base_url = LOCAL_URL
-        if _app and hasattr(_app, 'client'):
+        if _app and hasattr(_app, "client"):
             _app.client = OpenAI(base_url=base_url, api_key="not-needed")
 
 
@@ -813,6 +859,7 @@ Say "quit" to exit."""
         elif len(parts) >= 2 and parts[1].lower() == "switch":
             return "Usage: /model switch <name>\nAvailable: nemotron, llava, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
         from frontier import list_available_providers
+
         frontier_providers = list_available_providers()
         frontier_info = ", ".join(frontier_providers) if frontier_providers else "none configured"
         return f"""Model Configuration:
@@ -844,6 +891,8 @@ Switch model: /model switch <name>"""
             return "No response to copy yet."
         # Try clipboard first
         import shutil
+        import subprocess
+
         copied = False
         for clip_cmd in ["xclip -selection clipboard", "xsel --clipboard", "pbcopy", "wl-copy"]:
             binary = clip_cmd.split()[0]
@@ -992,7 +1041,7 @@ class MaudeApp(App):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list] = [
         Binding("ctrl+c", "handle_interrupt", "Quit/Stop Voice"),
     ]
 
@@ -1009,7 +1058,7 @@ class MaudeApp(App):
     def __init__(self):
         super().__init__()
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        self.conv_id = str(__import__('uuid').uuid4())
+        self.conv_id = str(__import__("uuid").uuid4())
         self.conv_title = ""
         self._collab_activity = ""
         self.client = None
@@ -1017,10 +1066,11 @@ class MaudeApp(App):
         self.spinner_timer = None
         self.thinking_line_count = 0
         # Voice mode
-        self.voice_controller: Optional[VoiceController] = None
+        self.voice_controller: VoiceController | None = None
         self._voice_active = False
         # For sync: start from end of log file
         import os
+
         log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
         try:
             self.sync_position = os.path.getsize(log_path) if os.path.exists(log_path) else 0
@@ -1083,12 +1133,13 @@ class MaudeApp(App):
     def _start_collab_heartbeat(self):
         """Send presence heartbeat every 30s in background."""
         import threading
+
         def _loop():
             hub = get_collab_hub()
             while True:
                 try:
                     hub.heartbeat(
-                        client_id=f"tui-{hub.presence._clients and 'main' or 'main'}",
+                        client_id=f"tui-{(hub.presence._clients and 'main') or 'main'}",
                         client_type="tui",
                         activity=self._collab_activity or "idle",
                         conversation_id=self.conv_id,
@@ -1096,11 +1147,12 @@ class MaudeApp(App):
                 except Exception:
                     pass
                 time.sleep(30)
+
         threading.Thread(target=_loop, daemon=True).start()
 
     def write_output(self, text):
         """Write to the output log."""
-        if hasattr(self, 'output_log'):
+        if hasattr(self, "output_log"):
             self.output_log.write(text)
 
     def stream_token(self, token: str, is_first: bool = False, prefix: str = ""):
@@ -1112,7 +1164,7 @@ class MaudeApp(App):
         the Strips produced by the previous render and re-write the grown
         Text, giving a live typewriter effect.
         """
-        if not hasattr(self, 'output_log'):
+        if not hasattr(self, "output_log"):
             return
 
         if is_first:
@@ -1157,7 +1209,9 @@ class MaudeApp(App):
                     if role == "user":
                         self.write_output(f"\n[dim cyan][telegram][/dim cyan] [bold blue]USER >[/bold blue] {content}")
                     elif role == "assistant":
-                        self.write_output(f"[dim cyan][telegram][/dim cyan] [bold magenta]MAUDE:[/bold magenta] {content}")
+                        self.write_output(
+                            f"[dim cyan][telegram][/dim cyan] [bold magenta]MAUDE:[/bold magenta] {content}"
+                        )
         except:
             pass
         # Check again in 2 seconds
@@ -1235,16 +1289,14 @@ class MaudeApp(App):
         """Inject relevant memories into the system prompt for this turn."""
         try:
             from maude_core.memory_utils import get_memory
+
             mem = get_memory()
             if mem:
                 context = mem.get_context_for_prompt(user_input, max_memories=5)
                 if context:
                     # Update system message with memory context appended
                     base_prompt = SYSTEM_PROMPT
-                    self.messages[0] = {
-                        "role": "system",
-                        "content": base_prompt + "\n\n" + context
-                    }
+                    self.messages[0] = {"role": "system", "content": base_prompt + "\n\n" + context}
                 else:
                     # Reset to base prompt (no stale context from prior turns)
                     self.messages[0] = {"role": "system", "content": SYSTEM_PROMPT}
@@ -1268,14 +1320,17 @@ class MaudeApp(App):
         try:
             result = fast_dispatch(user_input)
             if result:
-                tool_name, args, tool_result = result
+                tool_name, _args, tool_result = result
                 console.print(f"[dim cyan]  → {tool_name}[/dim cyan]")
                 # Give the LLM just the result to summarize (no tool definitions needed)
                 summary_messages = [
-                    {"role": "system", "content": "You are MAUDE. The user asked a question and a tool was already called. Summarize the result concisely."},
+                    {
+                        "role": "system",
+                        "content": "You are MAUDE. The user asked a question and a tool was already called. Summarize the result concisely.",
+                    },
                     {"role": "user", "content": user_input},
                     {"role": "assistant", "content": f"I used {tool_name} and got this result:"},
-                    {"role": "user", "content": f"Tool result:\n{tool_result[:3000]}\n\nSummarize this for me."}
+                    {"role": "user", "content": f"Tool result:\n{tool_result[:3000]}\n\nSummarize this for me."},
                 ]
                 try:
                     sum_kwargs = dict(
@@ -1300,6 +1355,7 @@ class MaudeApp(App):
         if not response:
             try:
                 from auto_router import route_message
+
                 decision = route_message(user_input, self.messages[-10:])
 
                 # Per-message model auto-switch (DISABLED — models like codestral
@@ -1312,13 +1368,12 @@ class MaudeApp(App):
                 # Route to subagent if confident
                 if decision.subagent and decision.confidence >= 0.5:
                     cloud_tag = " [cloud]" if decision.prefer_cloud else ""
-                    console.print(f"[dim cyan]  route: {decision.intent} → {decision.subagent} ({decision.confidence:.0%}){cloud_tag}[/dim cyan]")
-                    from execution import execute_subagent
-                    response = execute_subagent(
-                        decision.subagent,
-                        user_input,
-                        prefer_cloud=decision.prefer_cloud
+                    console.print(
+                        f"[dim cyan]  route: {decision.intent} → {decision.subagent} ({decision.confidence:.0%}){cloud_tag}[/dim cyan]"
                     )
+                    from execution import execute_subagent
+
+                    response = execute_subagent(decision.subagent, user_input, prefer_cloud=decision.prefer_cloud)
                     subagent_response = True
             except ImportError:
                 pass
@@ -1350,14 +1405,13 @@ class MaudeApp(App):
             # Sync to gateway for cross-device history
             if not self.conv_title:
                 self.conv_title = conversation_sync.generate_title(user_input)
-            conversation_sync.save_conversation(
-                self.conv_id, self.conv_title, MODEL, self.messages
-            )
+            conversation_sync.save_conversation(self.conv_id, self.conv_title, MODEL, self.messages)
             # Emit activity event
             self._collab_activity = f"chatting: {user_input[:40]}"
             try:
                 get_collab_hub().emit(
-                    "chat", f"Asked about: {user_input[:50]}",
+                    "chat",
+                    f"Asked about: {user_input[:50]}",
                     data={"model": MODEL},
                     client_id="tui-main",
                     conversation_id=self.conv_id,
@@ -1407,6 +1461,7 @@ def run_telegram_in_background():
     """Run Telegram bot in a background thread."""
     try:
         from run_telegram import main as telegram_main
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(telegram_main(standalone=False))
@@ -1419,10 +1474,11 @@ def run_telegram_in_background():
 def run_transcription_server():
     """Run transcription server in a background thread."""
     try:
-        from fastapi import FastAPI, UploadFile, File
-        from fastapi.responses import JSONResponse
-        import uvicorn
         import tempfile
+
+        import uvicorn
+        from fastapi import FastAPI, File, UploadFile
+        from fastapi.responses import JSONResponse
 
         app = FastAPI()
         whisper_model = None
@@ -1435,15 +1491,17 @@ def run_transcription_server():
 
             try:
                 from faster_whisper import WhisperModel
+
                 whisper_model = WhisperModel("base", device="cuda", compute_type="float16")
                 whisper_type = "faster"
             except:
                 try:
                     import whisper
+
                     whisper_model = whisper.load_model("base")
                     whisper_type = "original"
-                except:
-                    raise RuntimeError("No Whisper available")
+                except Exception as exc:
+                    raise RuntimeError("No Whisper available") from exc
             return whisper_model, whisper_type
 
         @app.get("/health")
@@ -1470,6 +1528,7 @@ def run_transcription_server():
                 return JSONResponse({"text": text, "success": True})
             finally:
                 import os
+
                 os.unlink(temp_path)
 
         # Run on port 30001
@@ -1497,6 +1556,7 @@ def main():
     # Start proactive heartbeat in background
     try:
         from heartbeat import get_heartbeat
+
         hb = get_heartbeat()
         if hb.enabled:
             hb.set_tool_executor(execute_tool)

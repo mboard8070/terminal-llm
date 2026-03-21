@@ -5,10 +5,9 @@ Provides structured health reports for the gateway /health endpoint,
 tool pre-flight checks, and startup diagnostics.
 """
 
-import time
 import importlib
 import socket
-
+import time
 
 # ── Dependency → version mapping ──────────────────────────────────
 
@@ -34,8 +33,8 @@ _TOOL_DEPS = {
     "web_search": ["ddgs"],
     "web_browse": ["beautifulsoup4", "requests"],
     "web_view": ["playwright"],
-    "view_image": [],       # needs LLaVA reachable, checked via service
-    "generate_image": [],   # needs ComfyUI reachable, checked via service
+    "view_image": [],  # needs LLaVA reachable, checked via service
+    "generate_image": [],  # needs ComfyUI reachable, checked via service
     "gmail_list": ["google-api-python-client", "google-auth-oauthlib"],
     "gmail_read": ["google-api-python-client", "google-auth-oauthlib"],
     "gmail_send": ["google-api-python-client", "google-auth-oauthlib"],
@@ -94,13 +93,26 @@ _TOOL_DEPS = {
 
 # Tools with no external deps (always ready)
 _ALWAYS_READY = {
-    "read_file", "write_file", "edit_file", "list_directory",
-    "search_file", "search_directory", "run_command",
-    "change_directory", "get_working_directory",
-    "ask_frontier", "list_shared", "share_file",
-    "list_transfers", "get_transfer",
-    "mesh_status", "dispatch_task", "create_project",
-    "list_projects", "add_to_project", "list_tasks",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "list_directory",
+    "search_file",
+    "search_directory",
+    "run_command",
+    "change_directory",
+    "get_working_directory",
+    "ask_frontier",
+    "list_shared",
+    "share_file",
+    "list_transfers",
+    "get_transfer",
+    "mesh_status",
+    "dispatch_task",
+    "create_project",
+    "list_projects",
+    "add_to_project",
+    "list_tasks",
 }
 
 _start_time = time.time()
@@ -137,14 +149,14 @@ class HealthChecker:
     def check_services(self) -> dict:
         """Ping key services by TCP connect."""
         result = {}
-        for name, port in [("llama_server", 30010), ("personaplex", 8998)]:
+        for name, port in [("llama_server", 30010), ("voice_server", 8998)]:
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(2)
                 sock.connect(("127.0.0.1", port))
                 sock.close()
                 result[name] = {"status": "ok", "port": port}
-            except (socket.timeout, ConnectionRefusedError, OSError):
+            except (TimeoutError, ConnectionRefusedError, OSError):
                 result[name] = {"status": "down", "port": port}
         return result
 
@@ -167,6 +179,7 @@ class HealthChecker:
 
         try:
             from maude_core import TOOLS
+
             total = len(TOOLS)
             tool_names = {t["function"]["name"] for t in TOOLS}
         except ImportError:

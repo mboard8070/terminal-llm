@@ -3,8 +3,9 @@ Memory tools — LLM-callable persistent memory operations.
 """
 
 from tool_registry import register_tool
-from .memory_utils import get_memory
+
 from .log import log
+from .memory_utils import get_memory
 
 
 @register_tool("save_memory")

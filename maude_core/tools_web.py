@@ -5,41 +5,47 @@ Web and vision tool implementations — 4 tools (all cacheable).
 from openai import OpenAI
 
 from tool_registry import register_tool
+
+from .config import VISION_MODEL, VISION_URL
 from .log import log
 from .paths import resolve_path
-from .config import VISION_URL, VISION_MODEL
 
 
 def tool_web_browse(url: str) -> str:
     """Fetch and parse web page content."""
     import requests
+
     try:
         from bs4 import BeautifulSoup
     except ImportError:
         return "Error: beautifulsoup4 not installed"
 
     try:
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
 
         log(f"Fetching {url}")
 
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for tag in soup(['script', 'style', 'nav', 'footer', 'aside', 'header', 'noscript', 'iframe']):
+        soup = BeautifulSoup(response.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "aside", "header", "noscript", "iframe"]):
             tag.decompose()
 
-        main_content = soup.find('main') or soup.find('article') or soup.find('div', {'class': ['content', 'post', 'article', 'main']})
+        main_content = (
+            soup.find("main")
+            or soup.find("article")
+            or soup.find("div", {"class": ["content", "post", "article", "main"]})
+        )
         if main_content:
-            text = main_content.get_text(separator='\n', strip=True)
+            text = main_content.get_text(separator="\n", strip=True)
         else:
-            text = soup.get_text(separator='\n', strip=True)
+            text = soup.get_text(separator="\n", strip=True)
 
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        text = '\n'.join(lines)
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        text = "\n".join(lines)
 
         if len(text) > 15000:
             text = text[:15000] + "\n\n... (content truncated)"
@@ -95,20 +101,20 @@ def tool_web_view(url: str, question: str = None) -> str:
         return "Error: playwright not installed"
 
     try:
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
 
         log(f"Capturing screenshot of {url}")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={'width': 1024, 'height': 768})
-            page.goto(url, wait_until='networkidle', timeout=30000)
+            page = browser.new_page(viewport={"width": 1024, "height": 768})
+            page.goto(url, wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(1000)
             screenshot_bytes = page.screenshot(full_page=False)
             browser.close()
 
-        base64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+        base64_image = base64.b64encode(screenshot_bytes).decode("utf-8")
         log(f"Screenshot captured ({len(screenshot_bytes) // 1024}KB)")
 
         if question:
@@ -121,15 +127,17 @@ def tool_web_view(url: str, question: str = None) -> str:
         vision_client = OpenAI(base_url=VISION_URL, api_key="not-needed")
         response = vision_client.chat.completions.create(
             model=VISION_MODEL,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                ]
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                    ],
+                }
+            ],
             max_tokens=1024,
-            temperature=0.2
+            temperature=0.2,
         )
 
         analysis = response.choices[0].message.content
@@ -159,21 +167,26 @@ def tool_view_image(path: str, question: str = None) -> str:
             return f"Error: Not a file: {file_path}"
 
         ext = file_path.suffix.lower()
-        if ext not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+        if ext not in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
             return f"Error: Unsupported format: {ext}"
 
         if file_path.stat().st_size > 20_000_000:
-            return f"Error: Image too large (>20MB)"
+            return "Error: Image too large (>20MB)"
 
-        mime_types = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                      '.gif': 'image/gif', '.webp': 'image/webp'}
-        mime_type = mime_types.get(ext, 'image/png')
+        mime_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        mime_type = mime_types.get(ext, "image/png")
 
         log(f"Reading image {file_path}")
 
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             image_bytes = f.read()
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         log(f"Image loaded ({len(image_bytes) // 1024}KB)")
 
@@ -187,15 +200,17 @@ def tool_view_image(path: str, question: str = None) -> str:
         vision_client = OpenAI(base_url=VISION_URL, api_key="not-needed")
         response = vision_client.chat.completions.create(
             model=VISION_MODEL,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}}
-                ]
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_image}"}},
+                    ],
+                }
+            ],
             max_tokens=1024,
-            temperature=0.2
+            temperature=0.2,
         )
 
         analysis = response.choices[0].message.content
@@ -211,17 +226,21 @@ def tool_view_image(path: str, question: str = None) -> str:
 
 # ── Registry wrappers ──────────────────────────────────────────
 
+
 @register_tool("web_browse", cacheable=True)
 def _dispatch_web_browse(args):
     return tool_web_browse(args.get("url", ""))
+
 
 @register_tool("web_search", cacheable=True)
 def _dispatch_web_search(args):
     return tool_web_search(args.get("query", ""), args.get("num_results", 5))
 
+
 @register_tool("web_view", cacheable=True)
 def _dispatch_web_view(args):
     return tool_web_view(args.get("url", ""), args.get("question"))
+
 
 @register_tool("view_image", cacheable=True)
 def _dispatch_view_image(args):

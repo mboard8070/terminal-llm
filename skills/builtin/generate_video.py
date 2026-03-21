@@ -6,11 +6,9 @@ Supports ComfyUI (Mochi) and other video generation backends.
 """
 
 import copy
-import json
 import random
-import time
+
 import requests
-from typing import Optional
 
 from skills import skill
 
@@ -19,29 +17,28 @@ def _get_router():
     """Lazy import router to avoid circular dependencies."""
     try:
         from routing import get_router
+
         return get_router()
     except ImportError:
         return None
 
 
-def _get_comfyui_url_from_router(provider: str = None) -> Optional[str]:
+def _get_comfyui_url_from_router(provider: str = None) -> str | None:
     """Get ComfyUI URL from the capability router."""
     router = _get_router()
     if not router:
         return None
 
-    from capabilities import CapabilityType
-
     # Try to find video generation capability
     result = router.find_video_gen(provider if provider != "auto" else None)
     if result:
-        node, cap = result
+        _node, cap = result
         return cap.endpoint_url
 
     # Fall back to ComfyUI capability
     result = router.find_comfyui()
     if result:
-        node, cap = result
+        _node, cap = result
         return cap.endpoint_url
 
     return None
@@ -62,60 +59,21 @@ def _check_comfyui_status(base_url: str) -> dict:
 def _queue_prompt(base_url: str, workflow: dict, client_id: str = "maude") -> dict:
     """Queue a prompt/workflow for execution."""
     url = f"{base_url}/prompt"
-    payload = {
-        "prompt": workflow,
-        "client_id": client_id
-    }
+    payload = {"prompt": workflow, "client_id": client_id}
     response = requests.post(url, json=payload, timeout=30)
-    return response.json()
-
-
-def _get_history(base_url: str, prompt_id: str) -> dict:
-    """Get the history/results for a prompt."""
-    url = f"{base_url}/history/{prompt_id}"
-    response = requests.get(url, timeout=10)
     return response.json()
 
 
 # Basic Mochi workflow template
 MOCHI_WORKFLOW = {
-    "3": {
-        "class_type": "MochiTextEncode",
-        "inputs": {
-            "prompt": "",
-            "clip": ["4", 0]
-        }
-    },
-    "4": {
-        "class_type": "MochiLoader",
-        "inputs": {
-            "model_name": "mochi_preview_bf16.safetensors"
-        }
-    },
+    "3": {"class_type": "MochiTextEncode", "inputs": {"prompt": "", "clip": ["4", 0]}},
+    "4": {"class_type": "MochiLoader", "inputs": {"model_name": "mochi_preview_bf16.safetensors"}},
     "5": {
         "class_type": "MochiSampler",
-        "inputs": {
-            "seed": 0,
-            "steps": 50,
-            "cfg": 4.5,
-            "conditioning": ["3", 0],
-            "model": ["4", 0]
-        }
+        "inputs": {"seed": 0, "steps": 50, "cfg": 4.5, "conditioning": ["3", 0], "model": ["4", 0]},
     },
-    "6": {
-        "class_type": "MochiDecode",
-        "inputs": {
-            "samples": ["5", 0],
-            "vae": ["4", 1]
-        }
-    },
-    "7": {
-        "class_type": "SaveVideo",
-        "inputs": {
-            "filename_prefix": "mochi_",
-            "video": ["6", 0]
-        }
-    }
+    "6": {"class_type": "MochiDecode", "inputs": {"samples": ["5", 0], "vae": ["4", 1]}},
+    "7": {"class_type": "SaveVideo", "inputs": {"filename_prefix": "mochi_", "video": ["6", 0]}},
 }
 
 
@@ -128,41 +86,30 @@ MOCHI_WORKFLOW = {
     parameters={
         "type": "object",
         "properties": {
-            "prompt": {
-                "type": "string",
-                "description": "Text description of the video to generate"
-            },
+            "prompt": {"type": "string", "description": "Text description of the video to generate"},
             "provider": {
                 "type": "string",
                 "description": "Specific provider to use (auto, mochi, etc.)",
-                "default": "auto"
+                "default": "auto",
             },
-            "steps": {
-                "type": "integer",
-                "description": "Number of sampling steps (default: 50)",
-                "default": 50
-            },
+            "steps": {"type": "integer", "description": "Number of sampling steps (default: 50)", "default": 50},
             "seed": {
                 "type": "integer",
                 "description": "Random seed for reproducibility (default: random)",
-                "default": -1
+                "default": -1,
             },
             "action": {
                 "type": "string",
                 "enum": ["generate", "status", "list"],
                 "description": "Action to perform",
-                "default": "generate"
-            }
+                "default": "generate",
+            },
         },
-        "required": ["prompt"]
-    }
+        "required": ["prompt"],
+    },
 )
 def generate_video(
-    prompt: str,
-    provider: str = "auto",
-    steps: int = 50,
-    seed: int = -1,
-    action: str = "generate"
+    prompt: str, provider: str = "auto", steps: int = 50, seed: int = -1, action: str = "generate"
 ) -> str:
     """Generate video using the mesh capability router."""
 
@@ -209,12 +156,7 @@ def generate_video(
             stats = status.get("stats", {})
             device = stats.get("system", {}).get("device_name", "Unknown")
             vram = stats.get("system", {}).get("vram_total", 0) / (1024**3)
-            return (
-                f"Video Generation Status: Online\n"
-                f"Endpoint: {base_url}\n"
-                f"Device: {device}\n"
-                f"VRAM: {vram:.1f} GB"
-            )
+            return f"Video Generation Status: Online\nEndpoint: {base_url}\nDevice: {device}\nVRAM: {vram:.1f} GB"
         else:
             return f"Video Generation Status: Offline\nEndpoint: {base_url}"
 
@@ -227,6 +169,7 @@ def generate_video(
     if not base_url:
         # Fall back to environment variable
         import os
+
         comfyui_host = os.environ.get("COMFYUI_HOST", "mattwell")
         comfyui_port = os.environ.get("COMFYUI_PORT", "8188")
         base_url = f"http://{comfyui_host}:{comfyui_port}"
@@ -269,6 +212,7 @@ def generate_video(
 
         # Extract hostname from URL for display
         from urllib.parse import urlparse
+
         parsed = urlparse(base_url)
         host = parsed.hostname or base_url
 

@@ -9,28 +9,32 @@ Uses Playwright's sync API to match MAUDE's synchronous tool execution model.
 
 from __future__ import annotations
 
-import os
 import base64
+import os
 import queue
 import signal
-import time
 import threading
+import time
 from pathlib import Path
-from typing import Optional, Dict, List
 
 try:
-    from playwright.sync_api import sync_playwright, Browser, Page, Playwright, TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
 # Import MAUDE core for logging and vision model access
 try:
-    from maude_core import log, VISION_URL, VISION_MODEL
     from openai import OpenAI
+
+    from maude_core import VISION_MODEL, VISION_URL, log
 except ImportError:
+
     def log(msg: str):
         pass
+
     VISION_URL = "http://localhost:11434/v1"
     VISION_MODEL = "llava:7b"
 
@@ -41,8 +45,8 @@ except ImportError:
 
 HEADLESS = os.environ.get("MAUDE_BROWSER_HEADLESS", "true").lower() in ("true", "1", "yes")
 BROWSER_DATA_DIR = Path.home() / ".config" / "maude" / "browser_data"
-ACTION_TIMEOUT_MS = 30_000      # 30 seconds per action
-INACTIVITY_TIMEOUT = 3600       # 1 hour auto-close (supports social posting between uses)
+ACTION_TIMEOUT_MS = 30_000  # 30 seconds per action
+INACTIVITY_TIMEOUT = 3600  # 1 hour auto-close (supports social posting between uses)
 LOGIN_INACTIVITY_TIMEOUT = 3600  # 1 hour for login sessions
 SCREENSHOT_DIR = Path.home() / ".config" / "maude" / "screenshots"
 
@@ -67,6 +71,7 @@ SOCIAL_LOGIN_URLS = {
 # BrowserSession
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class BrowserSession:
     """Manages a persistent Playwright browser and page with lazy initialization.
 
@@ -78,16 +83,16 @@ class BrowserSession:
     """
 
     def __init__(self):
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._page: Optional[Page] = None
-        self._platform_pages: Dict[str, Page] = {}  # platform → tab (for multi-login)
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._page: Page | None = None
+        self._platform_pages: dict[str, Page] = {}  # platform → tab (for multi-login)
         self._last_activity: float = 0.0
         self._lock = threading.Lock()
-        self._inactivity_timer: Optional[threading.Timer] = None
+        self._inactivity_timer: threading.Timer | None = None
         # Dedicated thread for all Playwright operations
         self._work_queue: queue.Queue = queue.Queue()
-        self._worker: Optional[threading.Thread] = None
+        self._worker: threading.Thread | None = None
 
     def _ensure_worker(self):
         """Start the Playwright worker thread if not already running."""
@@ -267,6 +272,12 @@ class BrowserSession:
                 if not url.startswith(("http://", "https://")):
                     url = "https://" + url
 
+                # Reuse existing platform tab if available
+                if self.is_active:
+                    result = self._use_platform_tab(url)
+                    if result:
+                        return result
+
                 self._ensure_browser()
                 log(f"Navigating to {url}")
 
@@ -358,15 +369,63 @@ class BrowserSession:
             except Exception as e:
                 return f"Error typing into '{selector}': {e}"
 
+    def _detect_platform(self, url: str) -> str | None:
+        """Detect which social platform a URL belongs to."""
+        url_lower = url.lower()
+        platform_domains = {
+            "linkedin": ["linkedin.com"],
+            "facebook": ["facebook.com", "fb.com"],
+            "instagram": ["instagram.com"],
+            "x": ["x.com", "twitter.com"],
+            "github": ["github.com"],
+            "reddit": ["reddit.com"],
+            "youtube": ["youtube.com"],
+            "tiktok": ["tiktok.com"],
+            "bluesky": ["bsky.app"],
+        }
+        for platform, domains in platform_domains.items():
+            for domain in domains:
+                if domain in url_lower:
+                    return platform
+        return None
+
+    def _use_platform_tab(self, url: str) -> str | None:
+        """If we have an existing tab for this platform, navigate it there.
+        Returns result string, or None if no existing tab."""
+        platform = self._detect_platform(url)
+        if not platform:
+            return None
+
+        page = self.get_platform_page(platform)
+        if page is None:
+            return None
+
+        log(f"Reusing existing {platform} tab for {url}")
+        self._page = page
+        page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10_000)
+        except PlaywrightTimeout:
+            pass
+        title = page.title() or "(no title)"
+        self._touch()
+        return f"Navigated to: ({platform} session) {title}\nURL: {page.url}"
+
     def navigate(self, url: str) -> str:
         """Navigate to a new URL in the existing session."""
         with self._lock:
             try:
-                if not self.is_active:
-                    return "Error: No browser session. Use browser_open first."
-
                 if not url.startswith(("http://", "https://")):
                     url = "https://" + url
+
+                # Try to reuse an existing logged-in platform tab
+                if self.is_active:
+                    result = self._use_platform_tab(url)
+                    if result:
+                        return result
+
+                if not self.is_active:
+                    return "Error: No browser session. Use browser_open first."
 
                 log(f"Navigating to {url}")
                 self._page.goto(url, wait_until="domcontentloaded", timeout=ACTION_TIMEOUT_MS)
@@ -418,15 +477,20 @@ class BrowserSession:
                     vision_client = OpenAI(base_url=VISION_URL, api_key="not-needed")
                     response = vision_client.chat.completions.create(
                         model=VISION_MODEL,
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}}
-                            ]
-                        }],
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": prompt},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {"url": f"data:image/png;base64,{base64_image}"},
+                                    },
+                                ],
+                            }
+                        ],
                         max_tokens=1024,
-                        temperature=0.2
+                        temperature=0.2,
                     )
                     analysis = response.choices[0].message.content
                     log("Vision analysis complete.")
@@ -434,11 +498,7 @@ class BrowserSession:
                     analysis = f"(Vision model unavailable: {ve})\nScreenshot saved to {screenshot_path}"
 
                 self._touch()
-                return (
-                    f"Screenshot of {title} ({url})\n"
-                    f"Saved: {screenshot_path}\n\n"
-                    f"Visual analysis:\n{analysis}"
-                )
+                return f"Screenshot of {title} ({url})\nSaved: {screenshot_path}\n\nVisual analysis:\n{analysis}"
 
             except Exception as e:
                 return f"Error taking screenshot: {e}"
@@ -468,10 +528,7 @@ class BrowserSession:
                 text = _clean_text(text, limit=10_000)
 
                 self._touch()
-                return (
-                    f"Page: {title}\nURL: {url}\nSource: {source}\n\n"
-                    f"Content ({len(text)} chars):\n{text}"
-                )
+                return f"Page: {title}\nURL: {url}\nSource: {source}\n\nContent ({len(text)} chars):\n{text}"
 
             except Exception as e:
                 return f"Error extracting content: {e}"
@@ -503,10 +560,7 @@ class BrowserSession:
 
                 self._touch()
                 filled = sum(1 for r in results if r.startswith("  OK"))
-                return (
-                    f"Form fill complete: {filled}/{len(fields)} fields filled.\n"
-                    + "\n".join(results)
-                )
+                return f"Form fill complete: {filled}/{len(fields)} fields filled.\n" + "\n".join(results)
 
             except Exception as e:
                 return f"Error filling form: {e}"
@@ -558,12 +612,15 @@ class BrowserSession:
         a new browser from acquiring the profile lock.
         """
         import subprocess as _sp
+
         data_dir = str(BROWSER_DATA_DIR)
         try:
             # Find chrome/chromium processes whose command line references our data dir
             result = _sp.run(
                 ["pgrep", "-f", data_dir],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode != 0 or not result.stdout.strip():
                 return  # No orphaned processes
@@ -585,7 +642,7 @@ class BrowserSession:
         except Exception as e:
             log(f"Warning: orphan cleanup failed: {e}")
 
-    def _resolve_platform(self, url: str) -> Optional[str]:
+    def _resolve_platform(self, url: str) -> str | None:
         """Return platform key if url matches a known social login shorthand."""
         key = url.lower().strip()
         if key in SOCIAL_LOGIN_URLS:
@@ -594,7 +651,7 @@ class BrowserSession:
             return "x"
         return None
 
-    def get_platform_page(self, platform: str) -> Optional[Page]:
+    def get_platform_page(self, platform: str) -> Page | None:
         """Return the open tab for a platform, or None if not tracked / closed."""
         page = self._platform_pages.get(platform)
         if page is not None and not page.is_closed():
@@ -622,6 +679,27 @@ class BrowserSession:
                 # Resolve shorthand names like "x", "linkedin"
                 platform = self._resolve_platform(url)
                 resolved = SOCIAL_LOGIN_URLS.get(url.lower().strip())
+
+                # Check if already logged in — if so, skip login flow
+                if self.is_active and platform:
+                    page = self.get_platform_page(platform)
+                    if page is not None and not page.is_closed():
+                        from social_posting import _is_logged_in
+
+                        try:
+                            if _is_logged_in(page, platform):
+                                log(f"Already logged into {platform} — skipping login")
+                                self._page = page
+                                self._touch()
+                                title = page.title() or "(no title)"
+                                return (
+                                    f"Already logged into {platform}.\n"
+                                    f"Page: {title}\n"
+                                    f"URL: {page.url}\n"
+                                    f"Use browser_navigate to go where you need."
+                                )
+                        except Exception:
+                            pass  # Fall through to normal login
                 if resolved:
                     log(f"Resolved '{url}' → {resolved}")
                     url = resolved
@@ -661,9 +739,16 @@ class BrowserSession:
 
                 # Clean up stale profile state that blocks visible launch
                 import shutil
-                for stale in ("SingletonLock", "SingletonSocket", "SingletonCookie",
-                              "ShaderCache", "GrShaderCache", "GraphiteDawnCache",
-                              "BrowserMetrics"):
+
+                for stale in (
+                    "SingletonLock",
+                    "SingletonSocket",
+                    "SingletonCookie",
+                    "ShaderCache",
+                    "GrShaderCache",
+                    "GraphiteDawnCache",
+                    "BrowserMetrics",
+                ):
                     p = BROWSER_DATA_DIR / stale
                     if p.exists():
                         if p.is_dir():
@@ -680,6 +765,7 @@ class BrowserSession:
                     # DISPLAY was set (possibly from a previous login) — verify X is alive
                     try:
                         from vnc_session import get_vnc_session
+
                         if not get_vnc_session().is_active:
                             needs_vnc = True
                             local_display = None
@@ -690,6 +776,7 @@ class BrowserSession:
                     # No local display — start VNC session
                     try:
                         from vnc_session import get_vnc_session
+
                         vnc = get_vnc_session()
                         result = vnc.start()
 
@@ -817,11 +904,7 @@ class BrowserSession:
                 self._touch()
 
                 if element is not None:
-                    return (
-                        f"Session VALID — found '{logged_in_selector}' on page.\n"
-                        f"Page: {title}\n"
-                        f"URL: {current_url}"
-                    )
+                    return f"Session VALID — found '{logged_in_selector}' on page.\nPage: {title}\nURL: {current_url}"
                 else:
                     # Check if we got redirected to a login page
                     login_indicators = ["login", "signin", "sign-in", "sign_in", "auth"]
@@ -872,6 +955,7 @@ class BrowserSession:
             vnc_stopped = False
             try:
                 from vnc_session import get_vnc_session
+
                 vnc = get_vnc_session()
                 if vnc.is_active:
                     vnc.stop()
@@ -898,7 +982,7 @@ class BrowserSession:
 # Module-level singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
-_session: Optional[BrowserSession] = None
+_session: BrowserSession | None = None
 
 
 def _get_session() -> BrowserSession:
@@ -917,6 +1001,7 @@ def _get_session() -> BrowserSession:
 # call in a new thread, but Playwright's sync API requires all operations
 # on a browser context to happen on the thread that created it.
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def browser_open(url: str) -> str:
     """Open a URL in a headless Chromium browser. Returns page title and text summary."""
@@ -989,6 +1074,7 @@ def browser_close() -> str:
 # Utility
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _clean_text(text: str, limit: int = 10_000) -> str:
     """Clean extracted page text: collapse whitespace, strip blank lines, truncate."""
     lines = text.split("\n")
@@ -1007,6 +1093,7 @@ def _clean_text(text: str, limit: int = 10_000) -> str:
 # Tool Definitions (OpenAI-compatible)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def get_browser_tool_definitions() -> list:
     """Return OpenAI-compatible tool definitions for all browser tools."""
     return [
@@ -1022,14 +1109,11 @@ def get_browser_tool_definitions() -> list:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The URL to open (e.g. 'https://example.com')"
-                        }
+                        "url": {"type": "string", "description": "The URL to open (e.g. 'https://example.com')"}
                     },
-                    "required": ["url"]
-                }
-            }
+                    "required": ["url"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1048,12 +1132,12 @@ def get_browser_tool_definitions() -> list:
                             "description": (
                                 "CSS selector (e.g. '#submit-btn', '.nav-link'), "
                                 "visible text (e.g. 'Sign In'), or aria-label"
-                            )
+                            ),
                         }
                     },
-                    "required": ["selector"]
-                }
-            }
+                    "required": ["selector"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1069,18 +1153,14 @@ def get_browser_tool_definitions() -> list:
                         "selector": {
                             "type": "string",
                             "description": (
-                                "CSS selector, placeholder text, label, or 'active' "
-                                "for the currently focused element"
-                            )
+                                "CSS selector, placeholder text, label, or 'active' for the currently focused element"
+                            ),
                         },
-                        "text": {
-                            "type": "string",
-                            "description": "The text to type into the field"
-                        }
+                        "text": {"type": "string", "description": "The text to type into the field"},
                     },
-                    "required": ["selector", "text"]
-                }
-            }
+                    "required": ["selector", "text"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1092,15 +1172,10 @@ def get_browser_tool_definitions() -> list:
                 ),
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "url": {
-                            "type": "string",
-                            "description": "The URL to navigate to"
-                        }
-                    },
-                    "required": ["url"]
-                }
-            }
+                    "properties": {"url": {"type": "string", "description": "The URL to navigate to"}},
+                    "required": ["url"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1111,12 +1186,8 @@ def get_browser_tool_definitions() -> list:
                     "with the LLaVA vision model. Returns a description of the visual "
                     "layout, content, and interactive elements."
                 ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
         },
         {
             "type": "function",
@@ -1133,14 +1204,13 @@ def get_browser_tool_definitions() -> list:
                         "selector": {
                             "type": "string",
                             "description": (
-                                "Optional CSS selector to extract from a specific element. "
-                                "Omit for full page text."
-                            )
+                                "Optional CSS selector to extract from a specific element. Omit for full page text."
+                            ),
                         }
                     },
-                    "required": []
-                }
-            }
+                    "required": [],
+                },
+            },
         },
         {
             "type": "function",
@@ -1158,14 +1228,14 @@ def get_browser_tool_definitions() -> list:
                             "type": "object",
                             "description": (
                                 "Object mapping selectors to values. "
-                                "Example: {\"#username\": \"alice\", \"#password\": \"secret\"}"
+                                'Example: {"#username": "alice", "#password": "secret"}'
                             ),
-                            "additionalProperties": {"type": "string"}
+                            "additionalProperties": {"type": "string"},
                         }
                     },
-                    "required": ["fields"]
-                }
-            }
+                    "required": ["fields"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1178,18 +1248,15 @@ def get_browser_tool_definitions() -> list:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "selector": {
-                            "type": "string",
-                            "description": "CSS selector for the <select> element"
-                        },
+                        "selector": {"type": "string", "description": "CSS selector for the <select> element"},
                         "value": {
                             "type": "string",
-                            "description": "The option value, visible label, or numeric index to select"
-                        }
+                            "description": "The option value, visible label, or numeric index to select",
+                        },
                     },
-                    "required": ["selector", "value"]
-                }
-            }
+                    "required": ["selector", "value"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1210,12 +1277,12 @@ def get_browser_tool_definitions() -> list:
                             "description": (
                                 "Site to log into — shorthand name (e.g. 'x', 'linkedin', 'instagram') "
                                 "or full URL (e.g. 'https://example.com/login')"
-                            )
+                            ),
                         }
                     },
-                    "required": ["url"]
-                }
-            }
+                    "required": ["url"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1231,22 +1298,19 @@ def get_browser_tool_definitions() -> list:
                     "properties": {
                         "url": {
                             "type": "string",
-                            "description": (
-                                "Site to check — shorthand name (e.g. 'x', 'linkedin') "
-                                "or full URL"
-                            )
+                            "description": ("Site to check — shorthand name (e.g. 'x', 'linkedin') or full URL"),
                         },
                         "logged_in_selector": {
                             "type": "string",
                             "description": (
                                 "CSS selector, text, or aria-label that indicates a logged-in state "
                                 "(e.g. 'nav[aria-label=\"Primary\"]', 'Home', 'Profile')"
-                            )
-                        }
+                            ),
+                        },
                     },
-                    "required": ["url", "logged_in_selector"]
-                }
-            }
+                    "required": ["url", "logged_in_selector"],
+                },
+            },
         },
         {
             "type": "function",
@@ -1256,12 +1320,8 @@ def get_browser_tool_definitions() -> list:
                     "Close the browser session and free resources. "
                     "The session will also auto-close after 5 minutes of inactivity."
                 ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
         },
     ]
 
@@ -1269,6 +1329,7 @@ def get_browser_tool_definitions() -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool Dispatcher
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def execute_browser_tool(name: str, args: dict) -> str:
     """
@@ -1282,17 +1343,17 @@ def execute_browser_tool(name: str, args: dict) -> str:
         String result of the tool execution.
     """
     dispatch = {
-        "browser_open":          lambda a: browser_open(a.get("url", "")),
-        "browser_click":         lambda a: browser_click(a.get("selector", "")),
-        "browser_type":          lambda a: browser_type(a.get("selector", ""), a.get("text", "")),
-        "browser_navigate":      lambda a: browser_navigate(a.get("url", "")),
-        "browser_screenshot":    lambda a: browser_screenshot(),
-        "browser_extract":       lambda a: browser_extract(a.get("selector")),
-        "browser_fill_form":     lambda a: browser_fill_form(a.get("fields", {})),
-        "browser_select":        lambda a: browser_select(a.get("selector", ""), a.get("value", "")),
-        "browser_login":         lambda a: browser_login(a.get("url", "")),
+        "browser_open": lambda a: browser_open(a.get("url", "")),
+        "browser_click": lambda a: browser_click(a.get("selector", "")),
+        "browser_type": lambda a: browser_type(a.get("selector", ""), a.get("text", "")),
+        "browser_navigate": lambda a: browser_navigate(a.get("url", "")),
+        "browser_screenshot": lambda a: browser_screenshot(),
+        "browser_extract": lambda a: browser_extract(a.get("selector")),
+        "browser_fill_form": lambda a: browser_fill_form(a.get("fields", {})),
+        "browser_select": lambda a: browser_select(a.get("selector", ""), a.get("value", "")),
+        "browser_login": lambda a: browser_login(a.get("url", "")),
         "browser_check_session": lambda a: browser_check_session(a.get("url", ""), a.get("logged_in_selector", "")),
-        "browser_close":         lambda a: browser_close(),
+        "browser_close": lambda a: browser_close(),
     }
 
     handler = dispatch.get(name)

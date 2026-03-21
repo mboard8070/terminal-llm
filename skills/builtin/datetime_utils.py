@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
 from skills import skill
 
 
@@ -18,34 +19,19 @@ from skills import skill
                 "type": "string",
                 "enum": ["now", "convert", "diff", "add"],
                 "description": "Action to perform",
-                "default": "now"
+                "default": "now",
             },
             "timezone": {
                 "type": "string",
-                "description": "Timezone (e.g., 'America/New_York', 'Europe/London', 'UTC')"
+                "description": "Timezone (e.g., 'America/New_York', 'Europe/London', 'UTC')",
             },
-            "from_tz": {
-                "type": "string",
-                "description": "Source timezone for conversion"
-            },
-            "to_tz": {
-                "type": "string",
-                "description": "Target timezone for conversion"
-            },
-            "date1": {
-                "type": "string",
-                "description": "First date (YYYY-MM-DD format)"
-            },
-            "date2": {
-                "type": "string",
-                "description": "Second date (YYYY-MM-DD format)"
-            },
-            "days": {
-                "type": "integer",
-                "description": "Number of days to add/subtract"
-            }
-        }
-    }
+            "from_tz": {"type": "string", "description": "Source timezone for conversion"},
+            "to_tz": {"type": "string", "description": "Target timezone for conversion"},
+            "date1": {"type": "string", "description": "First date (YYYY-MM-DD format)"},
+            "date2": {"type": "string", "description": "Second date (YYYY-MM-DD format)"},
+            "days": {"type": "integer", "description": "Number of days to add/subtract"},
+        },
+    },
 )
 def datetime_utils(
     action: str = "now",
@@ -54,7 +40,7 @@ def datetime_utils(
     to_tz: str = None,
     date1: str = None,
     date2: str = None,
-    days: int = None
+    days: int = None,
 ) -> str:
     """Date/time utilities."""
 
@@ -131,10 +117,6 @@ def _date_difference(date1: str, date2: str = None) -> str:
 
         weeks = days // 7
         remaining_days = days % 7
-
-        direction = "from now" if diff.days > 0 else "ago"
-        if date2:
-            direction = "between dates"
 
         return (
             f"Date difference:\n"

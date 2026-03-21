@@ -3,8 +3,9 @@
 import base64
 from datetime import datetime
 from pathlib import Path
-from skills import skill
 
+from skills import skill
+from skills.utils import _is_dispatch_error
 
 SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent / "shared" / "screenshots"
 
@@ -12,6 +13,7 @@ SCREENSHOTS_DIR = Path(__file__).resolve().parent.parent.parent / "shared" / "sc
 def _dispatch_shell(command: str, target: str) -> str:
     """Dispatch a shell command to a remote machine via collab."""
     from collab_tools import execute_collab_tool
+
     args = {
         "prompt": command,
         "capability": "SHELL",
@@ -19,22 +21,6 @@ def _dispatch_shell(command: str, target: str) -> str:
     if target:
         args["target"] = target
     return execute_collab_tool("dispatch_task", args)
-
-
-def _is_dispatch_error(result: str) -> bool:
-    """Check if a dispatch result indicates failure."""
-    if not result:
-        return True
-    r = result.strip()
-    if r.startswith("ERROR"):
-        return True
-    if "not found or offline" in r:
-        return True
-    if "no result yet" in r:
-        return True
-    if r.startswith("Task failed"):
-        return True
-    return False
 
 
 def _extract_output(result: str) -> str:
@@ -45,7 +31,7 @@ def _extract_output(result: str) -> str:
         if result.startswith(prefix):
             newline = result.find("\n")
             if newline != -1:
-                return result[newline + 1:].strip()
+                return result[newline + 1 :].strip()
     return result.strip()
 
 
@@ -65,25 +51,21 @@ def _build_screenshot_command(platform: str) -> str:
     """Build a platform-aware screenshot + base64 command."""
     if platform == "windows":
         return (
-            'Add-Type -AssemblyName System.Windows.Forms,System.Drawing; '
-            '$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; '
-            '$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height); '
-            '$gfx = [System.Drawing.Graphics]::FromImage($bmp); '
-            '$gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); '
-            '$ms = New-Object System.IO.MemoryStream; '
-            '$bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); '
-            '$gfx.Dispose(); $bmp.Dispose(); '
-            '[Convert]::ToBase64String($ms.ToArray())'
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+            "$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+            "$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height); "
+            "$gfx = [System.Drawing.Graphics]::FromImage($bmp); "
+            "$gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); "
+            "$ms = New-Object System.IO.MemoryStream; "
+            "$bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); "
+            "$gfx.Dispose(); $bmp.Dispose(); "
+            "[Convert]::ToBase64String($ms.ToArray())"
         )
     if platform == "macos":
-        return (
-            'screencapture -x /tmp/maude_ss.png && '
-            'base64 /tmp/maude_ss.png && '
-            'rm -f /tmp/maude_ss.png'
-        )
+        return "screencapture -x /tmp/maude_ss.png && base64 /tmp/maude_ss.png && rm -f /tmp/maude_ss.png"
     # Linux: try multiple tools
     return (
-        'SS=/tmp/maude_ss.png && '
+        "SS=/tmp/maude_ss.png && "
         '{ scrot "$SS" 2>/dev/null || '
         'import -window root "$SS" 2>/dev/null || '
         'gnome-screenshot -f "$SS" 2>/dev/null || '
@@ -104,15 +86,15 @@ def _build_screenshot_command(platform: str) -> str:
             "target": {
                 "type": "string",
                 "description": "Target device — hostname, client_id, or platform (e.g. 'windows', 'macos'). Leave empty for default.",
-                "default": ""
+                "default": "",
             },
             "save_path": {
                 "type": "string",
                 "description": "Custom save path for the screenshot. Leave empty for auto-generated path in shared/screenshots/.",
-                "default": ""
-            }
-        }
-    }
+                "default": "",
+            },
+        },
+    },
 )
 def screenshot(target: str = "", save_path: str = "") -> str:
     """Take a screenshot of a remote device."""

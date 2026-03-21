@@ -10,7 +10,7 @@ interface AppIcon {
 
 const APPS: AppIcon[] = [
   { path: "/maude", label: "MAUDE", icon: "\u25C6", description: "AI Chat" },
-  { path: "/maude/voice", label: "Voice", icon: "\uD83C\uDF99\uFE0F", description: "PersonaPlex" },
+  { path: "/maude/voice", label: "Voice", icon: "\uD83C\uDF99\uFE0F", description: "Voice Chat" },
   { path: "/terminal", label: "Terminal", icon: ">_", description: "SSH Shell" },
   { path: "/browser", label: "Browser", icon: "\u25CE", description: "Web" },
   { path: "/messages", label: "Messages", icon: "\u2709", description: "Telegram" },
