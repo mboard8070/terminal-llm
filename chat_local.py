@@ -1351,6 +1351,9 @@ class MaudeApp(App):
             "cybersecurity-best-practices.md": re.compile(
                 r"\b(security|secure|vulnerab|exploit|injection|xss|csrf|auth(entication|orization)|encrypt|hash|password|firewall|tls|ssl|certificate|hardening|pentest|malware|phishing|incident\s*response|secrets?\s*manag|container\s*security|audit)\b"
             ),
+            "marketing-best-practices.md": re.compile(
+                r"\b(marketing|campaign|seo|social\s*media\s*strategy|email\s*marketing|newsletter|funnel|conversion|lead\s*gen|brand\s*voice|copywriting|landing\s*page|paid\s*ads|retarget|cta|call\s*to\s*action|content\s*marketing|hashtag|engagement\s*rate|click\s*rate|a/?b\s*test)\b"
+            ),
             "web-design-patterns.md": re.compile(
                 r"\b(modal|dialog|toast|notification|skeleton|loading\s*state|spinner|empty\s*state|infinite\s*scroll|pagination|drag.?and.?drop|sidebar|tab(s|bed)|breadcrumb|command\s*palette|dashboard|card\s*layout|dark\s*mode|design\s*token|form\s*design|wizard|stepper|table\s*design|data\s*table|micro.?interaction|component|ui\s*pattern|ux\s*pattern)\b"
             ),
