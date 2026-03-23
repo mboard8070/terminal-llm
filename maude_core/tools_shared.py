@@ -17,6 +17,8 @@ def tool_list_shared() -> str:
     SHARED_DIR.mkdir(parents=True, exist_ok=True)
     entries = []
     for entry in sorted(SHARED_DIR.iterdir()):
+        if entry.name.startswith(".maude_"):
+            continue
         if entry.is_dir():
             entries.append(f"[DIR]  {entry.name}/")
         else:
@@ -64,6 +66,24 @@ def tool_list_transfers() -> str:
     return f"Client uploads ({TRANSFERS_DIR}):\n" + "\n".join(entries)
 
 
+DELETIONS_FILE = SHARED_DIR / ".maude_deletions"
+
+
+def tool_remove_shared(filename: str) -> str:
+    """Remove a file from the shared folder and record the deletion so sync propagates it."""
+    target = SHARED_DIR / filename
+    if not target.exists():
+        return f"Error: '{filename}' not found in shared folder."
+    try:
+        target.unlink()
+        # Append to deletions manifest so client sync knows to remove its local copy
+        with open(DELETIONS_FILE, "a") as f:
+            f.write(filename + "\n")
+        return f"Removed '{filename}' from shared folder."
+    except Exception as e:
+        return f"Error removing file: {e}"
+
+
 def tool_get_transfer(filename: str, destination: str = None) -> str:
     """Copy a file from the transfers folder to the working directory."""
     import shutil
@@ -99,6 +119,11 @@ def _dispatch_share_file(args):
 @register_tool("list_transfers")
 def _dispatch_list_transfers(args):
     return tool_list_transfers()
+
+
+@register_tool("remove_shared")
+def _dispatch_remove_shared(args):
+    return tool_remove_shared(args.get("filename", ""))
 
 
 @register_tool("get_transfer")

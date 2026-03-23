@@ -87,6 +87,33 @@ def sync_now() -> str:
         results.append(f"Pull error: {e}")
         logger.error(f"Pull error: {e}")
 
+    # Process deletions manifest — remove local files the server deleted
+    deletions_file = local_dir / ".maude_deletions"
+    if deletions_file.exists():
+        try:
+            deleted_names = [
+                line.strip() for line in deletions_file.read_text().splitlines() if line.strip()
+            ]
+            for name in deleted_names:
+                local_file = local_dir / name
+                if local_file.exists():
+                    local_file.unlink()
+                    logger.info(f"Deleted local shared file (server removed): {name}")
+            # Clear the manifest locally so push doesn't re-upload stale entries
+            deletions_file.unlink()
+            # Clear the manifest on the server too
+            try:
+                subprocess.run(
+                    ["ssh", SERVER_SSH_HOST, f"rm -f {SERVER_SHARED_DIR}/.maude_deletions"],
+                    capture_output=True, timeout=10
+                )
+            except Exception as e:
+                logger.warning(f"Failed to clear remote deletions manifest: {e}")
+            if deleted_names:
+                results.append(f"Removed {len(deleted_names)} deleted file(s) locally")
+        except Exception as e:
+            logger.error(f"Error processing deletions manifest: {e}")
+
     # Push second: local -> server (no --delete — server decides what to keep)
     try:
         r = _run_rsync(local_path, remote_path)

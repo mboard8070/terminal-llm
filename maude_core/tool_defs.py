@@ -77,7 +77,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Execute a shell command. Use for: pip, python, git, rm, mv, cp, etc. Also use to remove files from the shared/ or transfers/ folder when asked to clean up.",
+            "description": "Execute a shell command. Use for: pip, python, git, rm, mv, cp, etc. Do NOT use rm to remove shared folder files — use the remove_shared tool instead so deletions sync to clients.",
             "parameters": {
                 "type": "object",
                 "properties": {"command": {"type": "string", "description": "The shell command to execute"}},
@@ -1609,7 +1609,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "list_shared",
-            "description": "List files in the shared folder. Files placed here are synced to connected clients automatically. To remove files, use run_command with rm.",
+            "description": "List files in the shared folder. Files placed here are synced to connected clients automatically. To remove files, use the remove_shared tool (NOT rm — rm won't propagate the deletion to clients).",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -1628,6 +1628,23 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     },
                 },
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_shared",
+            "description": "Remove a file from the shared folder. ALWAYS use this instead of rm for shared folder files — it records the deletion so client sync removes the file locally too, preventing it from being re-synced back.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Name of the file to remove from the shared folder",
+                    },
+                },
+                "required": ["filename"],
             },
         },
     },
