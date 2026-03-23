@@ -7,6 +7,8 @@ Supports: list files, download files, upload files.
 """
 
 import json
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote
@@ -118,10 +120,44 @@ class FileHandler(BaseHTTPRequestHandler):
         self._json_response({"error": msg}, code)
 
 
+DELETIONS_FILE = SHARED_DIR / ".maude_deletions"
+
+
+def _scan_shared():
+    """Return set of non-hidden filenames in shared dir."""
+    return {
+        f.name for f in SHARED_DIR.iterdir()
+        if f.is_file() and not f.name.startswith(".")
+    }
+
+
+def _shared_watcher(interval=5):
+    """Background thread: detect files deleted from shared/ and record them."""
+    known = _scan_shared()
+    while True:
+        time.sleep(interval)
+        try:
+            current = _scan_shared()
+            deleted = known - current
+            if deleted:
+                with open(DELETIONS_FILE, "a") as f:
+                    for name in sorted(deleted):
+                        f.write(name + "\n")
+                print(f"  [watcher] Recorded deletions: {sorted(deleted)}")
+            known = current
+        except Exception as e:
+            print(f"  [watcher] Error: {e}")
+
+
 if __name__ == "__main__":
     print(f"MAUDE File Server on port {PORT}")
     print(f"  Shared:    {SHARED_DIR}")
     print(f"  Transfers: {TRANSFERS_DIR}")
+
+    # Start shared folder watcher (detects deletions for sync propagation)
+    threading.Thread(target=_shared_watcher, daemon=True).start()
+    print("  Watcher:   active (scanning every 5s)")
+
     server = HTTPServer(("0.0.0.0", PORT), FileHandler)
     try:
         server.serve_forever()

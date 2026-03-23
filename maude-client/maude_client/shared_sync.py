@@ -37,13 +37,15 @@ def _ensure_dirs():
     return local
 
 
-def _run_rsync(src: str, dst: str) -> subprocess.CompletedProcess:
+def _run_rsync(src: str, dst: str, exclude: list = None) -> subprocess.CompletedProcess:
     """Run a single rsync command (add/update only, never delete)."""
     cmd = [
         "rsync", "-avz", "--update",
         "-e", "ssh",
-        src, dst
     ]
+    for pattern in (exclude or []):
+        cmd.extend(["--exclude", pattern])
+    cmd.extend([src, dst])
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
 
@@ -89,6 +91,7 @@ def sync_now() -> str:
 
     # Process deletions manifest — remove local files the server deleted
     deletions_file = local_dir / ".maude_deletions"
+    deleted_names = []
     if deletions_file.exists():
         try:
             deleted_names = [
@@ -99,12 +102,12 @@ def sync_now() -> str:
                 if local_file.exists():
                     local_file.unlink()
                     logger.info(f"Deleted local shared file (server removed): {name}")
-            # Clear the manifest locally so push doesn't re-upload stale entries
+            # Clear the manifest locally
             deletions_file.unlink()
             # Clear the manifest on the server too
             try:
                 subprocess.run(
-                    ["ssh", SERVER_SSH_HOST, f"rm -f {SERVER_SHARED_DIR}/.maude_deletions"],
+                    ["ssh", SERVER_SSH_HOST, f"truncate -s 0 {SERVER_SHARED_DIR}/.maude_deletions"],
                     capture_output=True, timeout=10
                 )
             except Exception as e:
@@ -114,9 +117,10 @@ def sync_now() -> str:
         except Exception as e:
             logger.error(f"Error processing deletions manifest: {e}")
 
-    # Push second: local -> server (no --delete — server decides what to keep)
+    # Push: local -> server (exclude manifest and any files we just deleted)
+    push_excludes = [".maude_*"]
     try:
-        r = _run_rsync(local_path, remote_path)
+        r = _run_rsync(local_path, remote_path, exclude=push_excludes)
         if r.returncode == 0:
             pushed = [l for l in r.stdout.splitlines() if not l.startswith("sending") and not l.startswith("sent") and not l.startswith("total") and l.strip()]
             if pushed:
