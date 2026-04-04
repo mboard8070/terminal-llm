@@ -116,7 +116,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_view",
-            "description": "Screenshot a webpage and analyze it visually using LLaVA.",
+            "description": "Screenshot a webpage and analyze it visually using the active model's vision.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,7 +131,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "view_image",
-            "description": "Analyze a local image file using LLaVA vision model.",
+            "description": "Analyze a local image file using the active model's vision.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1006,6 +1006,33 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     "text": {"type": "string", "description": "Comment text"},
                 },
                 "required": ["video_id", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_upload",
+            "description": "Upload a video to YouTube. Defaults to private. Can set thumbnail and add to playlist in one call.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the video file"},
+                    "title": {"type": "string", "description": "Video title"},
+                    "description": {"type": "string", "description": "Video description"},
+                    "tags": {"type": "string", "description": "Comma-separated tags"},
+                    "privacy": {
+                        "type": "string",
+                        "description": "Privacy: 'public', 'private', or 'unlisted'. Default: 'private'",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "YouTube category ID. Default: '22' (People & Blogs). Common: '24'=Entertainment, '28'=Science & Tech, '10'=Music",
+                    },
+                    "thumbnail_path": {"type": "string", "description": "Path to custom thumbnail image"},
+                    "playlist_id": {"type": "string", "description": "Playlist ID to add the video to after upload"},
+                },
+                "required": ["file_path", "title"],
             },
         },
     },

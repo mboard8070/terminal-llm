@@ -4,14 +4,16 @@ MAUDE Multi-Channel Messaging Gateway.
 Connect MAUDE to messaging platforms for remote interaction.
 """
 
-import os
-import json
 import asyncio
+import json
+import os
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
-from typing import Callable, Optional, Dict, Any, List
-from pathlib import Path
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 from rich.console import Console
 
 console = Console()
@@ -20,25 +22,27 @@ console = Console()
 @dataclass
 class IncomingMessage:
     """Unified message format from any channel."""
-    channel: str           # "telegram", "discord", "cli"
-    channel_id: str        # Chat/channel ID
-    user_id: str           # Sender ID
-    username: str          # Display name
-    text: str              # Message content
-    timestamp: str = ""    # ISO timestamp
-    attachments: List[str] = field(default_factory=list)  # Image URLs/paths
-    reply_to: Optional[str] = None  # Message being replied to
-    raw: Any = None        # Original platform message
+
+    channel: str  # "telegram", "discord", "cli"
+    channel_id: str  # Chat/channel ID
+    user_id: str  # Sender ID
+    username: str  # Display name
+    text: str  # Message content
+    timestamp: str = ""  # ISO timestamp
+    attachments: list[str] = field(default_factory=list)  # Image URLs/paths
+    reply_to: str | None = None  # Message being replied to
+    raw: Any = None  # Original platform message
 
 
 @dataclass
 class OutgoingMessage:
     """Response to send back."""
+
     text: str
     channel: str = ""
     channel_id: str = ""
-    attachments: List[str] = field(default_factory=list)
-    reply_to: Optional[str] = None
+    attachments: list[str] = field(default_factory=list)
+    reply_to: str | None = None
     parse_mode: str = "markdown"
 
 
@@ -72,6 +76,7 @@ class Channel(ABC):
 @dataclass
 class AuthorizedUser:
     """An authorized user/chat."""
+
     channel: str
     channel_id: str
     user_id: str
@@ -87,10 +92,10 @@ class ChannelGateway:
     AUTH_FILE = Path.home() / ".config" / "maude" / "authorized.json"
 
     def __init__(self):
-        self.channels: Dict[str, Channel] = {}
-        self.maude_callback: Optional[Callable] = None
-        self.authorized: Dict[str, AuthorizedUser] = {}
-        self.pending_pairs: Dict[str, dict] = {}  # pairing_code -> {channel, channel_id, ...}
+        self.channels: dict[str, Channel] = {}
+        self.maude_callback: Callable | None = None
+        self.authorized: dict[str, AuthorizedUser] = {}
+        self.pending_pairs: dict[str, dict] = {}  # pairing_code -> {channel, channel_id, ...}
         self.running = False
         self._load_authorized()
 
@@ -134,15 +139,12 @@ class ChannelGateway:
         """Generate a new pairing code."""
         import random
         import string
-        code = ''.join(random.choices(string.digits, k=6))
-        self.pending_pairs[code] = {
-            "created": datetime.now().isoformat(),
-            "used": False
-        }
+
+        code = "".join(random.choices(string.digits, k=6))
+        self.pending_pairs[code] = {"created": datetime.now().isoformat(), "used": False}
         return code
 
-    def complete_pairing(self, code: str, channel: str, channel_id: str,
-                         user_id: str, username: str) -> bool:
+    def complete_pairing(self, code: str, channel: str, channel_id: str, user_id: str, username: str) -> bool:
         """Complete pairing with a code."""
         if code not in self.pending_pairs:
             return False
@@ -161,7 +163,7 @@ class ChannelGateway:
             channel_id=channel_id,
             user_id=user_id,
             username=username,
-            paired_at=datetime.now().isoformat()
+            paired_at=datetime.now().isoformat(),
         )
         self._save_authorized()
 
@@ -178,44 +180,47 @@ class ChannelGateway:
         if msg.text.startswith("/pair "):
             code = msg.text[6:].strip()
             print(f">>> Gateway: pairing with code {code}", flush=True)
-            if self.complete_pairing(code, msg.channel, msg.channel_id,
-                                     msg.user_id, msg.username):
-                print(f">>> Gateway: pairing successful!", flush=True)
-                await self.send(msg.channel, msg.channel_id,
-                               OutgoingMessage(text="Paired successfully! You can now chat with MAUDE."))
+            if self.complete_pairing(code, msg.channel, msg.channel_id, msg.user_id, msg.username):
+                print(">>> Gateway: pairing successful!", flush=True)
+                await self.send(
+                    msg.channel,
+                    msg.channel_id,
+                    OutgoingMessage(text="Paired successfully! You can now chat with MAUDE."),
+                )
             else:
-                print(f">>> Gateway: pairing failed", flush=True)
-                await self.send(msg.channel, msg.channel_id,
-                               OutgoingMessage(text="Invalid or expired pairing code."))
+                print(">>> Gateway: pairing failed", flush=True)
+                await self.send(msg.channel, msg.channel_id, OutgoingMessage(text="Invalid or expired pairing code."))
             return
 
         # Check authorization
         if not self.is_authorized(msg.channel, msg.channel_id):
             print(f">>> Gateway: not authorized {msg.channel}:{msg.channel_id}", flush=True)
-            await self.send(msg.channel, msg.channel_id,
-                           OutgoingMessage(text="Not authorized. Use /pair <code> with a code from MAUDE CLI."))
+            await self.send(
+                msg.channel,
+                msg.channel_id,
+                OutgoingMessage(text="Not authorized. Use /pair <code> with a code from MAUDE CLI."),
+            )
             return
 
-        print(f">>> Gateway: authorized, calling MAUDE", flush=True)
+        print(">>> Gateway: authorized, calling MAUDE", flush=True)
 
         # Process with MAUDE
         if self.maude_callback:
             try:
-                print(f">>> Gateway: invoking callback...", flush=True)
+                print(">>> Gateway: invoking callback...", flush=True)
                 response = await self.maude_callback(msg)
                 print(f">>> Gateway: got response ({len(response) if response else 0} chars)", flush=True)
                 if response:
-                    await self.send(msg.channel, msg.channel_id,
-                                   OutgoingMessage(text=response, reply_to=msg.reply_to))
-                    print(f">>> Gateway: response sent", flush=True)
+                    await self.send(msg.channel, msg.channel_id, OutgoingMessage(text=response, reply_to=msg.reply_to))
+                    print(">>> Gateway: response sent", flush=True)
             except Exception as e:
                 print(f">>> Gateway: ERROR {e}", flush=True)
                 import traceback
+
                 traceback.print_exc()
-                await self.send(msg.channel, msg.channel_id,
-                               OutgoingMessage(text=f"Error: {e}"))
+                await self.send(msg.channel, msg.channel_id, OutgoingMessage(text=f"Error: {e}"))
         else:
-            print(f">>> Gateway: no callback set!", flush=True)
+            print(">>> Gateway: no callback set!", flush=True)
 
     async def send(self, channel: str, channel_id: str, message: OutgoingMessage):
         """Send a message through a specific channel."""
@@ -233,7 +238,7 @@ class ChannelGateway:
 
     async def broadcast(self, message: OutgoingMessage):
         """Send a message to all authorized chats."""
-        for key, auth in self.authorized.items():
+        for _key, auth in self.authorized.items():
             if auth.enabled:
                 await self.send(auth.channel, auth.channel_id, message)
 
@@ -273,7 +278,7 @@ class ChannelGateway:
 
         if self.authorized:
             lines.append("\nAuthorized Chats:")
-            for key, auth in self.authorized.items():
+            for _key, auth in self.authorized.items():
                 status = "[green]✓[/green]" if auth.enabled else "[dim]disabled[/dim]"
                 lines.append(f"  {status} {auth.channel}: {auth.username}")
 
@@ -281,7 +286,7 @@ class ChannelGateway:
 
 
 # Global gateway instance
-_gateway: Optional[ChannelGateway] = None
+_gateway: ChannelGateway | None = None
 
 
 def get_gateway() -> ChannelGateway:

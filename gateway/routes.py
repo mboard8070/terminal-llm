@@ -261,7 +261,7 @@ class RoutesMixin:
             self._json_response({"error": str(e)}, 500)
 
     def _analyze_image(self):
-        """Analyze an image in shared/ using LLaVA via maude_core.execute_tool."""
+        """Analyze an image in shared/ using the active vision model via maude_core.execute_tool."""
         if not TOOL_SUPPORT:
             self._json_response({"error": "Tool support not available (maude_core not loaded)"}, 503)
             return

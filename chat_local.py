@@ -737,7 +737,7 @@ def chat(client, messages: list):
 
 AVAILABLE_MODELS = {
     "nemotron": "nemotron",
-    "llava": "llava",
+    "nemotron-super": "nemotron-super",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
     "devstral": "devstral-2512",
@@ -751,6 +751,7 @@ AVAILABLE_MODELS = {
 GATEWAY_URL = "http://localhost:30080/v1"
 
 _CLOUD_MODELS = {
+    "nemotron-super",
     "mistral-large-latest",
     "codestral-latest",
     "devstral-2512",
@@ -835,7 +836,7 @@ def handle_command(cmd: str) -> str:
 
 /help              - Show this help
 /model             - Show current model configuration
-/model switch NAME - Switch model (nemotron, llava, mistral, codestral, devstral, claude, sonnet)
+/model switch NAME - Switch model (nemotron, mistral, codestral, devstral, claude, sonnet)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -857,7 +858,7 @@ Say "quit" to exit."""
         if len(parts) >= 3 and parts[1].lower() == "switch":
             return _switch_model(parts[2])
         elif len(parts) >= 2 and parts[1].lower() == "switch":
-            return "Usage: /model switch <name>\nAvailable: nemotron, llava, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
+            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
         from frontier import list_available_providers
 
         frontier_providers = list_available_providers()
@@ -870,17 +871,15 @@ Context:      {NUM_CTX} tokens
 
 Available models:
   nemotron            local (llama-server)
-  llava               LLaVA (local, vision)
-  mistral             Mistral Large (cloud)
+  mistral             Mistral Large (cloud, vision)
   codestral           Codestral (cloud, code)
   devstral            Devstral 2 (cloud, code agent)
   devstral-small      Devstral Small (cloud, code light)
   devstral-medium     Devstral Medium (cloud, code mid)
-  claude              Claude Opus (cloud)
-  sonnet              Claude Sonnet (cloud)
+  claude              Claude Opus (cloud, vision)
+  sonnet              Claude Sonnet (cloud, vision)
 
-Vision:       {maude_core.VISION_MODEL}
-Vision URL:   {maude_core.VISION_URL}
+Vision:       native multimodal (active model) / LLaVA fallback
 
 Frontier:     {frontier_info}
 
@@ -968,7 +967,7 @@ CRITICAL RULES — FOLLOW THESE EXACTLY:
 TOOLS AVAILABLE:
 - File ops: read_file, write_file, edit_file, search_file, search_directory, list_directory, change_directory, get_working_directory
 - Shell: run_command (git, pip, python, etc.)
-- Web: web_search, web_browse, web_view, view_image (LLaVA vision)
+- Web: web_search, web_browse, web_view, view_image (native multimodal vision)
   IMPORTANT: Do NOT use web_search unless the user explicitly asks you to search/look something up, or you genuinely need current external information (news, prices, docs) to answer. For tasks like scheduling, posting, file operations, coding, or using existing tools — just do the task directly. Never web search as a first step.
 - Cloud AI: ask_frontier (escalate to Claude/Gemini), send_to_claude (delegate to Claude Code)
 - Gmail: gmail_list, gmail_read, gmail_send
@@ -977,13 +976,16 @@ TOOLS AVAILABLE:
 - Google Calendar: calendar_list_events, calendar_create_event, calendar_update_event, calendar_delete_event, calendar_search_events, calendar_list_calendars
 - Google Slides: slides_get_presentation, slides_get_slide, slides_create_presentation, slides_add_slide, slides_add_text
 - Google Contacts: contacts_list, contacts_get, contacts_create, contacts_update, contacts_delete, contacts_search
-- YouTube: youtube_search, youtube_get_video, youtube_get_channel, youtube_list_playlists, youtube_get_playlist_items, youtube_create_playlist, youtube_add_to_playlist, youtube_get_comments, youtube_post_comment, youtube_my_channel
+- YouTube: youtube_search, youtube_get_video, youtube_get_channel, youtube_list_playlists, youtube_get_playlist_items, youtube_create_playlist, youtube_add_to_playlist, youtube_upload, youtube_get_comments, youtube_post_comment, youtube_my_channel
+  youtube_upload defaults to PRIVATE. Always confirm with the user before setting privacy to 'public'.
 - Substack: substack_create_draft, substack_list_drafts, substack_list_posts, substack_get_post, substack_update_draft, substack_delete_draft, substack_get_stats
-- Browser: browser_open, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
-- Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky" or any URL). browser_check_session (verify if saved login is still valid)
+- Browser: browser_open, browser_snapshot, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
+  browser_snapshot returns an accessibility tree with interactive elements tagged [@e1], [@e2], etc. Pass these refs to browser_click or browser_type for precise interaction. Use browser_snapshot instead of browser_screenshot when you need to click or type — it's faster and more reliable.
+  You can interact with ANY website using browser_open → browser_snapshot → browser_click/type. This includes posting to forums, CMS, blogs, or any site with a web form.
+- Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky", "youtube", "google", "pinterest" or any URL). browser_check_session (verify if saved login is still valid)
 - Browser Workflows: workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
 IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or social media, USE browser_login — do NOT give text instructions. The tool handles VNC automatically for remote access.
-- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram). Uses saved browser_login sessions. ALWAYS prefer this over skill_post_social. When posting with an image, you MUST pass image_path to social_post — use the same file path from view_image.
+- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram, Reddit, TikTok, Bluesky). Uses saved browser_login sessions. For Reddit, first line of content is the title; use subreddit param. TikTok requires a video via image_path. When posting with an image, you MUST pass image_path to social_post.
 - Social media API (fallback): skill_post_social (requires API keys — only use if social_post fails), skill_social_status
 - Scheduling: schedule_task
 - Planning: execute_plan — run a multi-stage tool plan in one call. Define stages (each an array of tool calls); tools within a stage run in parallel, stages run sequentially. Use $N.M to reference results from stage N, tool M. Use this when you can foresee multiple steps ahead (e.g. read 3 files, then edit based on findings). This saves round-trips — prefer it over calling tools one at a time when the full plan is known upfront.
@@ -1124,8 +1126,8 @@ class MaudeApp(App):
             for line in self.banner_lines:
                 self.output_log.write(fire_text(line, 24))
             self.write_output("")
-            self.write_output(f"[dim]{MODEL} | Files | Shell | Web | Vision[/dim]")
-            self.write_output("[dim]Type /help for commands, 'quit' to exit[/dim]\n")
+            self.write_output(f"[dim grey50]{MODEL}[/dim grey50]")
+            self.write_output("")
             self.input_widget.focus()
             # Start sync polling
             self.check_telegram_messages()

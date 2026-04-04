@@ -49,7 +49,7 @@ MODELS = {
     "sonnet": "claude-sonnet-4-20250514",
 }
 
-DEFAULT_MODEL = "mistral"
+DEFAULT_MODEL = "nemotron-super"
 
 # ── Globals ───────────────────────────────────────────────────────────────
 
@@ -377,7 +377,11 @@ def main():
     console.print(
         Panel.fit(
             "[bold magenta]MAUDE[/bold magenta]\n"
-            f"[dim]Model: {current_model[0]} | /model switch <name> | /help for commands[/dim]",
+            "\n"
+            "[dim]Files · Shell · Web · Gmail · Drive · Calendar · YouTube · Substack\n"
+            "Browser · Social · Vision · Voice · Cross-machine[/dim]\n"
+            "\n"
+            f"[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
             border_style="magenta",
         )
     )
@@ -385,9 +389,8 @@ def main():
 
     while True:
         try:
-            model_tag = current_model[0]
             user_input = session.prompt(
-                HTML(f"<ansigreen><b>{model_tag}</b></ansigreen> <ansigray>›</ansigray> "),
+                HTML("<ansigreen><b>maude</b></ansigreen> <ansigray>›</ansigray> "),
             ).strip()
 
             if not user_input:

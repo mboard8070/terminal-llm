@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import os
 import queue
+import re
 import signal
 import threading
 import time
@@ -87,6 +88,7 @@ class BrowserSession:
         self._browser: Browser | None = None
         self._page: Page | None = None
         self._platform_pages: dict[str, Page] = {}  # platform → tab (for multi-login)
+        self._ref_map: dict[str, dict] = {}  # @eN → {role, name, nth} for snapshot refs
         self._last_activity: float = 0.0
         self._lock = threading.Lock()
         self._inactivity_timer: threading.Timer | None = None
@@ -200,11 +202,18 @@ class BrowserSession:
     def _resolve_element(self, selector: str, page: Page):
         """
         Smart selector resolution.  Tries strategies in order:
+          0. @eN ref from snapshot
           1. CSS selector
           2. Text content (case-insensitive)
           3. aria-label
         Returns a Playwright Locator.
         """
+        # 0. Try as snapshot ref (@e1, @e2, ...)
+        if selector.startswith("@e"):
+            loc = self._resolve_ref(selector, page)
+            if loc is not None:
+                return loc
+
         # 1. Try as CSS
         try:
             loc = page.locator(selector)
@@ -262,6 +271,84 @@ class BrowserSession:
         title = page.title() or "(no title)"
         url = page.url
         return f"Page: {title}\nURL: {url}"
+
+    # ── Accessibility snapshot ──────────────────────────────────────────────
+
+    # Roles that represent interactive elements worth tagging with refs.
+    _INTERACTIVE_ROLES = {
+        "link", "button", "textbox", "checkbox", "radio", "combobox",
+        "searchbox", "slider", "switch", "tab", "menuitem", "option",
+        "spinbutton", "treeitem",
+    }
+
+    # Regex to match YAML lines like "  - button \"Sign In\":" or "  - textbox \"Email\":"
+    _ROLE_LINE_RE = re.compile(
+        r"^(\s*-\s+)("
+        r"link|button|textbox|checkbox|radio|combobox|searchbox|"
+        r"slider|switch|tab|menuitem|option|spinbutton|treeitem"
+        r')(\s+"[^"]*")?(.*)$'
+    )
+
+    def snapshot(self, max_chars: int = 12000) -> str:
+        """Return an accessibility tree snapshot with @eN refs on interactive elements."""
+        with self._lock:
+            if not self.is_active:
+                return "Error: No browser session. Use browser_open first."
+
+            try:
+                page = self._page
+                raw = page.locator("body").aria_snapshot()
+
+                # Annotate interactive elements with @eN refs
+                self._ref_map.clear()
+                ref_counter = 0
+                annotated_lines = []
+
+                for line in raw.split("\n"):
+                    m = self._ROLE_LINE_RE.match(line)
+                    if m:
+                        ref_counter += 1
+                        ref = f"@e{ref_counter}"
+                        indent, role, name_part, rest = m.groups()
+                        name_clean = name_part.strip().strip('"') if name_part else ""
+                        self._ref_map[ref] = {"role": role, "name": name_clean}
+                        annotated_lines.append(f"{indent}{role}{name_part or ''} [{ref}]{rest}")
+                    else:
+                        annotated_lines.append(line)
+
+                snapshot_text = "\n".join(annotated_lines)
+
+                # Truncate if needed
+                if len(snapshot_text) > max_chars:
+                    snapshot_text = snapshot_text[:max_chars] + "\n\n[... truncated ...]"
+
+                title = page.title() or "(no title)"
+                url = page.url
+                header = f"Page: {title}\nURL: {url}\nInteractive elements: {ref_counter}\n\n"
+
+                self._touch()
+                return header + snapshot_text
+
+            except Exception as e:
+                return f"Error getting snapshot: {e}"
+
+    def _resolve_ref(self, ref: str, page: Page):
+        """Resolve an @eN ref from the last snapshot to a Playwright Locator."""
+        info = self._ref_map.get(ref)
+        if not info:
+            return None
+        role = info["role"]
+        name = info["name"]
+        try:
+            if name:
+                loc = page.get_by_role(role, name=name)
+            else:
+                loc = page.get_by_role(role)
+            if loc.count() > 0:
+                return loc.first
+        except Exception:
+            pass
+        return None
 
     # ── Public actions ───────────────────────────────────────────────────────
 
@@ -1003,32 +1090,56 @@ def _get_session() -> BrowserSession:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _use_camofox() -> bool:
+    """Check if Camofox backend is configured and available."""
+    try:
+        from camofox import is_camofox_mode
+        return is_camofox_mode()
+    except ImportError:
+        return False
+
+
 def browser_open(url: str) -> str:
-    """Open a URL in a headless Chromium browser. Returns page title and text summary."""
+    """Open a URL in a headless browser. Returns page title and text summary."""
+    if _use_camofox():
+        from camofox import open_page
+        return open_page(url)
     s = _get_session()
     return s._run_on_worker(lambda: s.open(url))
 
 
 def browser_click(selector: str) -> str:
-    """Click an element by CSS selector, text content, or aria-label."""
+    """Click an element by @eN ref, CSS selector, text content, or aria-label."""
+    if _use_camofox():
+        from camofox import click
+        return click(selector)
     s = _get_session()
     return s._run_on_worker(lambda: s.click(selector))
 
 
 def browser_type(selector: str, text: str) -> str:
-    """Type text into an input or textarea. Use selector='active' for the focused element."""
+    """Type text into an input or textarea. Use @eN ref or 'active' for the focused element."""
+    if _use_camofox():
+        from camofox import type_text
+        return type_text(selector, text)
     s = _get_session()
     return s._run_on_worker(lambda: s.type_text(selector, text))
 
 
 def browser_navigate(url: str) -> str:
     """Navigate to a new URL in the current browser session."""
+    if _use_camofox():
+        from camofox import navigate
+        return navigate(url)
     s = _get_session()
     return s._run_on_worker(lambda: s.navigate(url))
 
 
 def browser_screenshot() -> str:
     """Take a screenshot and return a visual description via the LLaVA vision model."""
+    if _use_camofox():
+        from camofox import take_screenshot
+        return take_screenshot()
     s = _get_session()
     return s._run_on_worker(lambda: s.screenshot())
 
@@ -1064,8 +1175,20 @@ def browser_check_session(url: str, logged_in_selector: str) -> str:
     return s._run_on_worker(lambda: s.check_session(url, logged_in_selector))
 
 
+def browser_snapshot() -> str:
+    """Get an accessibility tree snapshot of the current page with @eN refs for interactive elements."""
+    if _use_camofox():
+        from camofox import snapshot
+        return snapshot()
+    s = _get_session()
+    return s._run_on_worker(lambda: s.snapshot())
+
+
 def browser_close() -> str:
     """Close the browser session and free resources."""
+    if _use_camofox():
+        from camofox import close
+        return close()
     s = _get_session()
     return s._run_on_worker(lambda: s.close())
 
@@ -1120,9 +1243,9 @@ def get_browser_tool_definitions() -> list:
             "function": {
                 "name": "browser_click",
                 "description": (
-                    "Click an element on the current page. Accepts a CSS selector, "
-                    "visible text, or aria-label. Smart resolution tries multiple "
-                    "strategies to find the element."
+                    "Click an element on the current page. Accepts a snapshot ref "
+                    "(e.g. '@e5' from browser_snapshot), CSS selector, visible text, "
+                    "or aria-label."
                 ),
                 "parameters": {
                     "type": "object",
@@ -1130,7 +1253,7 @@ def get_browser_tool_definitions() -> list:
                         "selector": {
                             "type": "string",
                             "description": (
-                                "CSS selector (e.g. '#submit-btn', '.nav-link'), "
+                                "Snapshot ref (e.g. '@e5'), CSS selector, "
                                 "visible text (e.g. 'Sign In'), or aria-label"
                             ),
                         }
@@ -1145,7 +1268,7 @@ def get_browser_tool_definitions() -> list:
                 "name": "browser_type",
                 "description": (
                     "Type text into an input field or textarea on the current page. "
-                    "Use selector='active' to type into the currently focused element."
+                    "Use a snapshot ref (e.g. '@e3'), or 'active' for the focused element."
                 ),
                 "parameters": {
                     "type": "object",
@@ -1153,7 +1276,7 @@ def get_browser_tool_definitions() -> list:
                         "selector": {
                             "type": "string",
                             "description": (
-                                "CSS selector, placeholder text, label, or 'active' for the currently focused element"
+                                "Snapshot ref (e.g. '@e3'), CSS selector, placeholder text, label, or 'active'"
                             ),
                         },
                         "text": {"type": "string", "description": "The text to type into the field"},
@@ -1175,6 +1298,20 @@ def get_browser_tool_definitions() -> list:
                     "properties": {"url": {"type": "string", "description": "The URL to navigate to"}},
                     "required": ["url"],
                 },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "browser_snapshot",
+                "description": (
+                    "Get a text-based accessibility tree of the current page. "
+                    "Interactive elements (buttons, links, inputs) are tagged with refs "
+                    "like [@e1], [@e2] that you can pass to browser_click or browser_type. "
+                    "Use this INSTEAD of browser_screenshot when you need to interact — "
+                    "it's faster and more precise than vision. Call after browser_open or browser_navigate."
+                ),
+                "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
         {
@@ -1347,6 +1484,7 @@ def execute_browser_tool(name: str, args: dict) -> str:
         "browser_click": lambda a: browser_click(a.get("selector", "")),
         "browser_type": lambda a: browser_type(a.get("selector", ""), a.get("text", "")),
         "browser_navigate": lambda a: browser_navigate(a.get("url", "")),
+        "browser_snapshot": lambda a: browser_snapshot(),
         "browser_screenshot": lambda a: browser_screenshot(),
         "browser_extract": lambda a: browser_extract(a.get("selector")),
         "browser_fill_form": lambda a: browser_fill_form(a.get("fields", {})),

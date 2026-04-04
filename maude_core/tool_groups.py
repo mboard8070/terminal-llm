@@ -136,13 +136,14 @@ _TOOL_GROUPS = {
         },
     },
     "youtube": {
-        "keywords": ["youtube", "playlist", "channel", "subscribe"],
+        "keywords": ["youtube", "playlist", "channel", "subscribe", "upload video", "upload to youtube", "video"],
         "tools": {
             "youtube_search",
             "youtube_get_video",
             "youtube_get_channel",
             "youtube_list_playlists",
             "youtube_create_playlist",
+            "youtube_upload",
             "youtube_get_comments",
             "youtube_post_comment",
             "youtube_my_channel",
@@ -189,6 +190,7 @@ _TOOL_GROUPS = {
         ],
         "tools": {
             "browser_open",
+            "browser_snapshot",
             "browser_click",
             "browser_type",
             "browser_navigate",
@@ -238,6 +240,9 @@ _TOOL_GROUPS = {
             "facebook",
             "instagram",
             "x.com",
+            "reddit",
+            "tiktok",
+            "subreddit",
         ],
         "tools": {"social_post"},
     },

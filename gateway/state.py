@@ -224,6 +224,8 @@ TOOL_ADDENDUM = (
     "cannot proceed without info you have no way to obtain (e.g. a password). "
     "'Should I proceed?' and 'Do you want me to...?' are almost never appropriate — just do the work. "
     "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
+    "The view_image tool uses your own native multimodal vision when available (Claude, Mistral Large), "
+    "falling back to local LLaVA otherwise. "
     "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
     "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
     "The image path is provided in the message. Do NOT tell the user to upload it — it is "

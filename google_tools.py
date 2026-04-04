@@ -1891,6 +1891,117 @@ def youtube_post_comment(video_id: str, text: str) -> str:
         return f"Error posting comment: {e}"
 
 
+def youtube_upload(
+    file_path: str,
+    title: str,
+    description: str = "",
+    tags: str = "",
+    privacy: str = "private",
+    category: str = "22",
+    thumbnail_path: str = "",
+    playlist_id: str = "",
+) -> str:
+    """Upload a video to YouTube.
+
+    Args:
+        file_path: Path to the video file.
+        title: Video title.
+        description: Video description.
+        tags: Comma-separated tags.
+        privacy: 'public', 'private', or 'unlisted'. Default: 'private'.
+        category: YouTube category ID. Default: '22' (People & Blogs).
+        thumbnail_path: Optional path to a custom thumbnail image.
+        playlist_id: Optional playlist ID to add the video to after upload.
+    """
+    status = check_google_setup()
+    if status != "OK":
+        return status
+
+    from pathlib import Path as P
+
+    video = P(file_path)
+    if not video.exists():
+        return f"Error: Video file not found: {file_path}"
+
+    valid_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".3gp"}
+    if video.suffix.lower() not in valid_exts:
+        return f"Error: Unsupported video format '{video.suffix}'. Supported: {', '.join(sorted(valid_exts))}"
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    try:
+        creds = get_credentials()
+        service = build("youtube", "v3", credentials=creds)
+
+        body = {
+            "snippet": {
+                "title": title,
+                "description": description,
+                "tags": tag_list,
+                "categoryId": category,
+            },
+            "status": {
+                "privacyStatus": privacy,
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+
+        media = MediaFileUpload(str(video), resumable=True, chunksize=10 * 1024 * 1024)
+
+        request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+
+        video_id = response.get("id", "Unknown")
+        url = f"https://youtu.be/{video_id}"
+
+        output = [
+            "Video uploaded successfully!",
+            f"Title: {title}",
+            f"Video ID: {video_id}",
+            f"Privacy: {privacy}",
+            f"URL: {url}",
+        ]
+
+        # Set custom thumbnail if provided
+        if thumbnail_path:
+            thumb = P(thumbnail_path)
+            if thumb.exists():
+                try:
+                    service.thumbnails().set(
+                        videoId=video_id,
+                        media_body=MediaFileUpload(str(thumb)),
+                    ).execute()
+                    output.append(f"Thumbnail: set from {thumbnail_path}")
+                except Exception as e:
+                    output.append(f"Thumbnail failed: {e}")
+            else:
+                output.append(f"Thumbnail not found: {thumbnail_path}")
+
+        # Add to playlist if specified
+        if playlist_id:
+            try:
+                service.playlistItems().insert(
+                    part="snippet",
+                    body={
+                        "snippet": {
+                            "playlistId": playlist_id,
+                            "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                        }
+                    },
+                ).execute()
+                output.append(f"Added to playlist: {playlist_id}")
+            except Exception as e:
+                output.append(f"Playlist add failed: {e}")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"Error uploading video: {e}"
+
+
 def youtube_my_channel() -> str:
     """Get the authenticated user's YouTube channel info."""
     status = check_google_setup()

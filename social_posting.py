@@ -118,6 +118,21 @@ _LOGIN_SELECTORS = {
         'a:has(span:text-is("Post"))',
         'span:text-is("Home")',  # sidebar nav present = logged in
     ],
+    "reddit": [
+        '[data-testid="reddit-user-nav"]',
+        'button[aria-label*="profile" i]',
+        'a[href*="/user/"]',
+    ],
+    "tiktok": [
+        '[data-e2e="upload-btn"]',
+        'a[href*="/upload"]',
+        '[data-e2e="profile-icon"]',
+    ],
+    "bluesky": [
+        '[data-testid="composeButton"]',
+        'button[aria-label*="New post" i]',
+        'button[aria-label*="compose" i]',
+    ],
 }
 
 
@@ -740,6 +755,247 @@ def _post_instagram(page, content: str, image_path: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Reddit
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _post_reddit(page, content: str, image_path: str | None, subreddit: str = None) -> str:
+    """Post to Reddit. If subreddit is given, posts there; otherwise posts to the user's profile."""
+    if subreddit:
+        sub = subreddit.lstrip("r/").lstrip("/")
+        page.goto(f"https://www.reddit.com/r/{sub}/submit", wait_until="domcontentloaded", timeout=30_000)
+    else:
+        page.goto("https://www.reddit.com/submit", wait_until="domcontentloaded", timeout=30_000)
+    _human_pause(2, 4)
+
+    # Check login
+    login_indicators = [
+        'button:has-text("Log In")',
+        'a[href*="login"]',
+    ]
+    for sel in login_indicators:
+        try:
+            if page.locator(sel).count() > 0 and page.locator('[data-testid="reddit-user-nav"]').count() == 0:
+                return "Error: Not logged in to Reddit. Run browser_login('reddit') first."
+        except Exception:
+            continue
+
+    _human_pause(1, 2)
+
+    # Reddit's new editor — try the title field first
+    title_field = _first_match(page, [
+        'textarea[placeholder*="title" i]',
+        'input[placeholder*="title" i]',
+        '[data-testid="post-title"]',
+        'div[contenteditable="true"][role="textbox"]:first-of-type',
+    ])
+
+    # Split content: first line is title, rest is body
+    lines = content.strip().split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else ""
+
+    if title_field:
+        title_field.click(timeout=5_000)
+        _type_human(page, title)
+        _human_pause(0.5, 1.5)
+
+    # Body text
+    if body:
+        body_field = _first_match(page, [
+            'div[contenteditable="true"][role="textbox"]',
+            'textarea[placeholder*="text" i]',
+            '.DraftEditor-root',
+            '[data-testid="post-content"]',
+        ])
+        if body_field:
+            body_field.click(timeout=5_000)
+            _human_pause(0.3, 0.8)
+            _type_human(page, body)
+
+    # Image upload
+    if image_path:
+        file_input = _first_match(page, [
+            'input[type="file"]',
+            'input[accept*="image"]',
+        ])
+        if file_input:
+            file_input.set_input_files(image_path)
+            _human_pause(3, 5)
+
+    _human_pause(1, 2)
+
+    # Post button
+    post_btn = _first_match(page, [
+        'button:has-text("Post")',
+        'button[type="submit"]:has-text("Post")',
+        '[data-testid="post-submit-button"]',
+    ])
+    if not post_btn:
+        _screenshot(page, "reddit_post_fail")
+        return "Error: Could not find Reddit Post button."
+
+    post_btn.click(timeout=10_000)
+    _human_pause(3, 5)
+
+    ss = _screenshot(page, "reddit_posted")
+    return f"Posted to Reddit successfully.{f' Screenshot: {ss}' if ss else ''}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TikTok
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _post_tiktok(page, content: str, image_path: str | None) -> str:
+    """Post to TikTok. Requires a video file (image_path should be a video)."""
+    if not image_path:
+        return "Error: TikTok requires a video file. Provide image_path pointing to a video (.mp4, .mov, .webm)."
+
+    page.goto("https://www.tiktok.com/upload", wait_until="domcontentloaded", timeout=30_000)
+    _human_pause(3, 5)
+
+    # Check login
+    login_check = _first_match(page, [
+        'button:has-text("Log in")',
+        '[data-e2e="top-login-button"]',
+    ])
+    profile_check = _first_match(page, [
+        '[data-e2e="upload-btn"]',
+        'div[class*="upload"]',
+        'input[type="file"]',
+    ])
+    if login_check and not profile_check:
+        return "Error: Not logged in to TikTok. Run browser_login('tiktok') first."
+
+    # File upload
+    file_input = _first_match(page, [
+        'input[type="file"][accept*="video"]',
+        'input[type="file"]',
+    ])
+    if not file_input:
+        _screenshot(page, "tiktok_upload_fail")
+        return "Error: Could not find TikTok file upload input."
+
+    file_input.set_input_files(image_path)
+    _human_pause(5, 10)  # TikTok processes the video
+
+    # Caption
+    caption_field = _first_match(page, [
+        'div[contenteditable="true"][data-text="true"]',
+        'div[contenteditable="true"]',
+        '[data-e2e="caption-input"]',
+        'div[class*="caption"] div[contenteditable]',
+    ])
+    if caption_field:
+        caption_field.click(timeout=5_000)
+        # Clear default text
+        page.keyboard.press("Control+a")
+        _human_pause(0.2, 0.5)
+        _type_human(page, content)
+        _human_pause(1, 2)
+
+    # Post button
+    post_btn = _first_match(page, [
+        'button:has-text("Post")',
+        '[data-e2e="post-button"]',
+        'button[class*="post-button"]',
+    ])
+    if not post_btn:
+        _screenshot(page, "tiktok_post_fail")
+        return "Error: Could not find TikTok Post button."
+
+    post_btn.click(timeout=10_000)
+    _human_pause(5, 8)
+
+    ss = _screenshot(page, "tiktok_posted")
+    return f"Posted to TikTok successfully.{f' Screenshot: {ss}' if ss else ''}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bluesky
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _post_bluesky(page, content: str, image_path: str | None) -> str:
+    """Post to Bluesky (bsky.app)."""
+    page.goto("https://bsky.app/", wait_until="domcontentloaded", timeout=30_000)
+    _human_pause(2, 4)
+
+    # Check login — look for compose button or "Sign in" button
+    signin_check = _first_match(page, [
+        'button:has-text("Sign in")',
+        'a:has-text("Sign in")',
+    ])
+    compose_check = _first_match(page, [
+        '[data-testid="composeButton"]',
+        'button[aria-label*="New post" i]',
+        'button[aria-label*="compose" i]',
+    ])
+    if signin_check and not compose_check:
+        return "Error: Not logged in to Bluesky. Run browser_login('bluesky') first."
+
+    # Click compose
+    if compose_check:
+        compose_check.click(timeout=5_000)
+        _human_pause(1, 2)
+
+    # Type into the compose box
+    editor = _first_match(page, [
+        'div[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        '[data-testid="composerTextInput"]',
+    ])
+    if not editor:
+        _screenshot(page, "bluesky_compose_fail")
+        return "Error: Could not find Bluesky compose editor."
+
+    editor.click(timeout=5_000)
+    _human_pause(0.3, 0.8)
+    _type_human(page, content)
+    _human_pause(1, 2)
+
+    # Image upload
+    if image_path:
+        file_input = _first_match(page, [
+            'input[type="file"][accept*="image"]',
+            'input[type="file"]',
+        ])
+        if file_input:
+            file_input.set_input_files(image_path)
+            _human_pause(2, 4)
+        else:
+            # Try the image button then the file input
+            img_btn = _first_match(page, [
+                'button[aria-label*="photo" i]',
+                'button[aria-label*="image" i]',
+                'button[aria-label*="gallery" i]',
+            ])
+            if img_btn:
+                img_btn.click(timeout=5_000)
+                _human_pause(1, 2)
+                file_input = page.locator('input[type="file"]').first
+                file_input.set_input_files(image_path)
+                _human_pause(2, 4)
+
+    # Post button
+    post_btn = _first_match(page, [
+        'button:has-text("Post")',
+        '[data-testid="composerPublishButton"]',
+        'button[aria-label*="publish" i]',
+    ])
+    if not post_btn:
+        _screenshot(page, "bluesky_post_fail")
+        return "Error: Could not find Bluesky Post button."
+
+    post_btn.click(timeout=10_000)
+    _human_pause(3, 5)
+
+    ss = _screenshot(page, "bluesky_posted")
+    return f"Posted to Bluesky successfully.{f' Screenshot: {ss}' if ss else ''}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public tool function
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -748,10 +1004,13 @@ _POSTERS = {
     "linkedin": _post_linkedin,
     "facebook": _post_facebook,
     "instagram": _post_instagram,
+    "reddit": _post_reddit,
+    "tiktok": _post_tiktok,
+    "bluesky": _post_bluesky,
 }
 
 
-def social_post(platform: str, content: str, image_path: str = None) -> str:
+def social_post(platform: str, content: str, image_path: str = None, **kwargs) -> str:
     """Post content using the running browser session.
 
     Requires browser_login('<platform>') first — keep the browser open.
@@ -766,7 +1025,7 @@ def social_post(platform: str, content: str, image_path: str = None) -> str:
         platform = "x"
 
     if platform not in _POSTERS:
-        return f"Error: Unsupported platform '{platform}'. Supported: x, linkedin, facebook, instagram"
+        return f"Error: Unsupported platform '{platform}'. Supported: {', '.join(_POSTERS)}"
 
     if platform == "instagram" and not image_path:
         return "Error: Instagram requires an image. Provide image_path."
@@ -786,7 +1045,11 @@ def social_post(platform: str, content: str, image_path: str = None) -> str:
         if err:
             return err
         try:
-            return _POSTERS[platform](page, content, image_path)
+            poster = _POSTERS[platform]
+            # Reddit accepts an extra subreddit kwarg
+            if platform == "reddit":
+                return poster(page, content, image_path, subreddit=kwargs.get("subreddit"))
+            return poster(page, content, image_path)
         except Exception as e:
             _screenshot(page, f"{platform}_error")
             return f"Error posting to {platform}: {e}"
@@ -804,33 +1067,34 @@ SOCIAL_TOOLS = [
         "function": {
             "name": "social_post",
             "description": (
-                "Post content to a social media platform (X, LinkedIn, Facebook, Instagram) "
-                "using the running browser session. Requires browser_login('<platform>') first — "
-                "the browser must be kept open after logging in. The same live browser is used "
-                "to navigate and post, so sessions never expire. Instagram requires an image. "
-                "IMPORTANT: When the user asks to post WITH an image, you MUST pass image_path. "
-                "If you used view_image to analyze a photo, pass that same file path as image_path."
+                "Post content to a social media platform using the running browser session. "
+                "Requires browser_login('<platform>') first — keep the browser open after login. "
+                "Instagram requires an image. TikTok requires a video file. "
+                "For Reddit, first line of content is the title, rest is the body. "
+                "IMPORTANT: When the user asks to post WITH an image, you MUST pass image_path."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "platform": {
                         "type": "string",
-                        "enum": ["x", "linkedin", "facebook", "instagram"],
+                        "enum": ["x", "linkedin", "facebook", "instagram", "reddit", "tiktok", "bluesky"],
                         "description": "Target platform to post to.",
                     },
                     "content": {
                         "type": "string",
-                        "description": "The text content of the post (tweet, status update, caption).",
+                        "description": "The text content of the post. For Reddit: first line is title, rest is body.",
                     },
                     "image_path": {
                         "type": "string",
                         "description": (
-                            "Absolute path to an image file to attach to the post. "
-                            "Required for Instagram. For other platforms, ALWAYS include "
-                            "this when the user asks to post an image or photo. Use the "
-                            "same path from view_image if you just analyzed one."
+                            "Path to image/video to attach. Required for Instagram (image) "
+                            "and TikTok (video). Use the same path from view_image if you just analyzed one."
                         ),
+                    },
+                    "subreddit": {
+                        "type": "string",
+                        "description": "Reddit only — subreddit to post to (e.g. 'python'). Omit for user profile.",
                     },
                 },
                 "required": ["platform", "content"],
@@ -851,6 +1115,7 @@ def execute_social_tool(name: str, args: dict) -> str:
             a.get("platform", ""),
             a.get("content", ""),
             a.get("image_path"),
+            subreddit=a.get("subreddit"),
         ),
     }
     handler = dispatch.get(name)

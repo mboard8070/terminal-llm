@@ -375,6 +375,22 @@ def _dispatch_youtube_post_comment(args):
     return youtube_post_comment(args.get("video_id", ""), args.get("text", ""))
 
 
+@register_tool("youtube_upload")
+def _dispatch_youtube_upload(args):
+    from google_tools import youtube_upload
+
+    return youtube_upload(
+        file_path=args.get("file_path", ""),
+        title=args.get("title", ""),
+        description=args.get("description", ""),
+        tags=args.get("tags", ""),
+        privacy=args.get("privacy", "private"),
+        category=args.get("category", "22"),
+        thumbnail_path=args.get("thumbnail_path", ""),
+        playlist_id=args.get("playlist_id", ""),
+    )
+
+
 @register_tool("youtube_my_channel")
 def _dispatch_youtube_my_channel(args):
     from google_tools import youtube_my_channel

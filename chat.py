@@ -66,7 +66,7 @@ _CLOUD_MODELS = {
 }
 
 # Default model
-DEFAULT_MODEL = "mistral"
+DEFAULT_MODEL = "nemotron-super"
 
 
 def create_nvidia_client():
