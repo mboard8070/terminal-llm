@@ -542,14 +542,18 @@ class CollabHub:
     # ── Status (merged view) ──
 
     def get_status(self) -> dict:
-        """Return full merged dashboard view for clients."""
+        """Return merged dashboard view for clients (truncated for mobile)."""
+        tasks = self.tasks.list_all()[:50]  # Cap at 50 most recent
+        for t in tasks:
+            if t.get("result") and len(t["result"]) > 300:
+                t["result"] = t["result"][:300] + "..."
         return {
             "hostname": MY_HOSTNAME,
             "ts": time.time(),
             "presence": self.presence.get_all(),
             "activity": self.activity.get_recent(),
             "projects": self.projects.list_all(),
-            "tasks": self.tasks.list_all(),
+            "tasks": tasks,
         }
 
     # ── Gossip ──

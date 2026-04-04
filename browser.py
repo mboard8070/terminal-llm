@@ -843,43 +843,27 @@ class BrowserSession:
                         else:
                             p.unlink(missing_ok=True)
 
-                # Detect if we have a local display or need VNC
+                # Detect if we have a usable local display
                 local_display = os.environ.get("DISPLAY")
-                vnc_url = None
-                needs_vnc = not local_display
 
-                if local_display and local_display.startswith(":"):
-                    # DISPLAY was set (possibly from a previous login) — verify X is alive
+                if local_display:
+                    # Verify the display is actually alive (not stale)
+                    import subprocess
                     try:
-                        from vnc_session import get_vnc_session
-
-                        if not get_vnc_session().is_active:
-                            needs_vnc = True
-                            local_display = None
-                    except ImportError:
-                        pass
-
-                if needs_vnc:
-                    # No local display — start VNC session
-                    try:
-                        from vnc_session import get_vnc_session
-
-                        vnc = get_vnc_session()
-                        result = vnc.start()
-
-                        if result.startswith("Error"):
-                            return result
-
-                        vnc_url = result
-                        local_display = vnc.display
-                        os.environ["DISPLAY"] = local_display
-                        log(f"Using VNC display {local_display}, noVNC at {vnc_url}")
-                    except ImportError:
-                        return (
-                            "Error: No display available and vnc_session module not found.\n"
-                            "Either run from a graphical session or install VNC:\n"
-                            "  sudo apt-get install -y xvfb x11vnc novnc python3-websockify"
+                        subprocess.run(
+                            ["xdpyinfo", "-display", local_display],
+                            capture_output=True, timeout=3,
                         )
+                    except (subprocess.TimeoutExpired, FileNotFoundError):
+                        local_display = None
+
+                if not local_display:
+                    return (
+                        "Error: No display available for visible browser login.\n"
+                        "Run this from a graphical session, or launch Chromium manually:\n"
+                        "  /home/mboard76/.cache/ms-playwright/chromium-1208/chrome-linux/chrome "
+                        "--user-data-dir=/home/mboard76/.config/maude/browser_data --no-sandbox https://x.com/login"
+                    )
 
                 log(f"Starting VISIBLE browser for login to {url} on {local_display}")
 
@@ -921,27 +905,15 @@ class BrowserSession:
                 self._inactivity_timer.daemon = True
                 self._inactivity_timer.start()
 
-                # Build response based on whether we're using VNC or local display
-                if vnc_url:
-                    return (
-                        "Browser opened via VNC for login.\n"
-                        f"Page: {title}\n"
-                        f"URL: {self._page.url}\n\n"
-                        "VNC_LINK: http://100.107.132.16:6080/vnc.html?autoconnect=true\n\n"
-                        "Log in manually. Leave the browser open — do NOT close it.\n"
-                        "You can log into more accounts with browser_login('<platform>').\n"
-                        "Each gets its own tab. Sessions stay alive as long as tabs are open."
-                    )
-                else:
-                    return (
-                        f"Browser opened in VISIBLE mode for login.\n"
-                        f"Page: {title}\n"
-                        f"URL: {self._page.url}\n\n"
-                        f"Log in manually in the browser window.\n"
-                        f"Leave the browser open — do NOT close it.\n"
-                        f"You can log into more accounts with browser_login('<platform>').\n"
-                        f"Each gets its own tab. Sessions stay alive as long as tabs are open."
-                    )
+                return (
+                    f"Browser opened in VISIBLE mode for login.\n"
+                    f"Page: {title}\n"
+                    f"URL: {self._page.url}\n\n"
+                    f"Log in manually in the browser window.\n"
+                    f"Leave the browser open — do NOT close it.\n"
+                    f"You can log into more accounts with browser_login('<platform>').\n"
+                    f"Each gets its own tab. Sessions stay alive as long as tabs are open."
+                )
 
             except Exception as e:
                 return f"Error opening login browser: {e}"
@@ -1038,28 +1010,8 @@ class BrowserSession:
             self._platform_pages.clear()
             self._last_activity = 0.0
 
-            # Stop VNC session if one was started for login
-            vnc_stopped = False
-            try:
-                from vnc_session import get_vnc_session
-
-                vnc = get_vnc_session()
-                if vnc.is_active:
-                    vnc.stop()
-                    vnc_stopped = True
-                    # Clear stale DISPLAY so next login restarts VNC
-                    display = os.environ.get("DISPLAY", "")
-                    if display == vnc.display:
-                        del os.environ["DISPLAY"]
-                    log("VNC session stopped.")
-            except ImportError:
-                pass
-
             log("Browser session closed.")
-            msg = "Browser session closed. Login cookies saved."
-            if vnc_stopped:
-                msg += " VNC session stopped."
-            return msg
+            return "Browser session closed. Login cookies saved."
 
         except Exception as e:
             return f"Error closing browser: {e}"
@@ -1403,8 +1355,8 @@ def get_browser_tool_definitions() -> list:
                     "Open a VISIBLE (non-headless) browser window for manual login to a website. "
                     "Accepts shorthand names like 'x', 'linkedin', 'instagram', 'facebook', "
                     "'github', 'reddit', 'google', 'tiktok', 'pinterest', 'bluesky' or a full URL. "
-                    "Opens via VNC — tell user to open http://100.107.132.16:6080/vnc.html?autoconnect=true "
-                    "to interact with the browser. Do NOT modify that URL. Leave browser open after login."
+                    "Opens a visible Chromium window on the local display for manual login. "
+                    "Requires a graphical session. Leave browser open after login."
                 ),
                 "parameters": {
                     "type": "object",
