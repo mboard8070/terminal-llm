@@ -17,17 +17,29 @@ import asyncio
 import tempfile
 import subprocess
 import threading
-try:
-    import readline  # Unix line editing; not available on Windows
-    # Disable tab completion — it interferes with normal typing
-    readline.set_completer(None)
-    _rl_doc = getattr(readline, "__doc__", None) or ""
-    if "libedit" in _rl_doc:
-        readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
-    else:
-        readline.parse_and_bind("tab: self-insert")   # GNU readline
-except Exception:
-    pass
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
+    # Force-remove readline/pyreadline to prevent it from hooking input()
+    sys.modules.pop("readline", None)
+    # Enable ANSI/VT processing on Windows console
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+else:
+    try:
+        import readline
+        readline.set_completer(None)
+        _rl_doc = getattr(readline, "__doc__", None) or ""
+        if "libedit" in _rl_doc:
+            readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
+        else:
+            readline.parse_and_bind("tab: self-insert")   # GNU readline
+    except Exception:
+        pass
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -49,14 +61,16 @@ from maude_client.task_executor import start_task_executor, stop_task_executor
 # ─────────────────────────────────────────────────────────────────
 
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_ASCII_SPIN = "|/-\\"
 
 class Spinner:
-    """Braille spinner shown while waiting for first response chunk."""
+    """Spinner shown while waiting for first response chunk."""
 
     def __init__(self, label: str = "thinking"):
         self._label = label
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._frames = _ASCII_SPIN if _IS_WINDOWS else _BRAILLE
 
     def start(self):
         self._running = True
@@ -66,7 +80,7 @@ class Spinner:
     def _spin(self):
         i = 0
         while self._running:
-            frame = _BRAILLE[i % len(_BRAILLE)]
+            frame = self._frames[i % len(self._frames)]
             print(f"\r{frame} {self._label}...", end="", flush=True)
             time.sleep(0.1)
             i += 1
@@ -75,8 +89,9 @@ class Spinner:
         self._running = False
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Clear spinner line: move to column 0, erase entire line
-        sys.stdout.write("\r\033[2K")
+        # Clear spinner line
+        label_len = len(self._label) + 6  # frame + space + label + "..."
+        sys.stdout.write("\r" + " " * label_len + "\r")
         sys.stdout.flush()
 
 
@@ -485,17 +500,19 @@ def check_server_connection() -> bool:
 
 def _format_trace(data: dict) -> str:
     """Format a trace event for terminal display (dim/muted)."""
+    _dim = "" if _IS_WINDOWS else "\033[2m"
+    _reset = "" if _IS_WINDOWS else "\033[0m"
     t = data.get("type", "")
     if t == "tool_call":
-        return f"\033[2m  [{data.get('name', '')}] {data.get('args', '')}\033[0m\n"
+        return f"{_dim}  [{data.get('name', '')}] {data.get('args', '')}{_reset}\n"
     elif t == "tool_result":
         elapsed = data.get("elapsed", 0)
-        return f"\033[2m    \u2192 {data.get('preview', '')} ({elapsed}s)\033[0m\n"
+        return f"{_dim}    -> {data.get('preview', '')} ({elapsed}s){_reset}\n"
     elif t == "llm_call":
         pt = data.get("prompt_tokens", 0)
         ct = data.get("completion_tokens", 0)
         elapsed = data.get("elapsed", 0)
-        return f"\033[2m  [{pt}+{ct} tokens, {elapsed}s]\033[0m\n"
+        return f"{_dim}  [{pt}+{ct} tokens, {elapsed}s]{_reset}\n"
     return ""
 
 
@@ -889,7 +906,15 @@ def main():
     try:
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                if _IS_WINDOWS:
+                    sys.stdout.write("\nYou: ")
+                    sys.stdout.flush()
+                    user_input = sys.stdin.readline()
+                    if not user_input:
+                        break
+                    user_input = user_input.strip()
+                else:
+                    user_input = input("\nYou: ").strip()
 
                 if not user_input:
                     continue
