@@ -19,6 +19,12 @@ import subprocess
 import threading
 try:
     import readline  # Unix line editing; not available on Windows
+    # Disable tab completion — it interferes with normal typing
+    readline.set_completer(None)
+    if "libedit" in getattr(readline, "__doc__", "") or "":
+        readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
+    else:
+        readline.parse_and_bind("tab: self-insert")   # GNU readline
 except ImportError:
     pass
 import requests
@@ -882,7 +888,8 @@ def main():
     try:
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                print()
+                user_input = input("You: ").strip()
 
                 if not user_input:
                     continue
