@@ -241,7 +241,11 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._json_response({"sid": sid})
             return
 
-        if parsed.path == "/api/tools/execute":
+        if parsed.path == "/api/image/stylize":
+            self._handle_image_stylize()
+        elif parsed.path == "/api/image/generate":
+            self._handle_image_generate()
+        elif parsed.path == "/api/tools/execute":
             self._execute_tool_api()
         elif parsed.path.startswith("/api/collab/"):
             self._handle_collab_post(parsed.path)
@@ -408,6 +412,67 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
         except Exception as e:
             self._json_response({"error": f"Provider proxy error: {e}"}, 502)
+
+    def _handle_image_stylize(self):
+        """POST /api/image/stylize — img2img via Replicate Flux 2 Klein."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            req = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        prompt = req.get("prompt", "")
+        image = req.get("image", "")
+        if not prompt or not image:
+            self._json_response({"error": "Both 'prompt' and 'image' (base64) are required"}, 400)
+            return
+
+        try:
+            from .replicate import stylize_image
+
+            result = stylize_image(
+                prompt=prompt,
+                image_base64=image,
+                strength=req.get("strength", 0.55),
+                model=req.get("model", "black-forest-labs/flux-2-klein"),
+                width=req.get("width", 1024),
+                height=req.get("height", 1024),
+            )
+            self._json_response(result)
+        except Exception as e:
+            logger.error("Image stylize failed: %s", e)
+            self._json_response({"error": str(e)}, 500)
+
+    def _handle_image_generate(self):
+        """POST /api/image/generate — text-to-image via Replicate."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else b""
+        try:
+            req = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            self._json_response({"error": "Invalid JSON"}, 400)
+            return
+
+        prompt = req.get("prompt", "")
+        if not prompt:
+            self._json_response({"error": "'prompt' is required"}, 400)
+            return
+
+        try:
+            from .replicate import generate_image
+
+            result = generate_image(
+                prompt=prompt,
+                model=req.get("model", "black-forest-labs/flux-2-klein"),
+                width=req.get("width", 1024),
+                height=req.get("height", 1024),
+            )
+            self._json_response(result)
+        except Exception as e:
+            logger.error("Image generate failed: %s", e)
+            self._json_response({"error": str(e)}, 500)
 
     def _json_response(self, obj, code=200):
         data = json.dumps(obj).encode()
