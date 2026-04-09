@@ -21,11 +21,12 @@ try:
     import readline  # Unix line editing; not available on Windows
     # Disable tab completion — it interferes with normal typing
     readline.set_completer(None)
-    if "libedit" in getattr(readline, "__doc__", "") or "":
+    _rl_doc = getattr(readline, "__doc__", None) or ""
+    if "libedit" in _rl_doc:
         readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
     else:
         readline.parse_and_bind("tab: self-insert")   # GNU readline
-except ImportError:
+except Exception:
     pass
 import requests
 import urllib3
@@ -888,8 +889,7 @@ def main():
     try:
         while True:
             try:
-                print()
-                user_input = input("You: ").strip()
+                user_input = input("\nYou: ").strip()
 
                 if not user_input:
                     continue
@@ -953,7 +953,7 @@ def main():
                     # Use tarball URL to avoid git clone entirely (bypasses hook issues)
                     result = subprocess.run(
                         [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir",
-                         "https://github.com/mboard8070/terminal-llm/archive/collaboration.tar.gz#subdirectory=maude-client"],
+                         "https://github.com/mboard8070/terminal-llm/archive/Astra.tar.gz#subdirectory=maude-client"],
                         capture_output=False
                     )
                     if result.returncode == 0:
