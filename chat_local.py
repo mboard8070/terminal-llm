@@ -1303,6 +1303,16 @@ class MaudeApp(App):
         except Exception:
             pass  # Memory unavailable — proceed without context
 
+        # MemPalace context — layered long-term memory (L3 semantic search)
+        try:
+            from maude_core.mempalace_utils import get_palace_context_for_prompt
+
+            palace_ctx = get_palace_context_for_prompt(user_input, n_results=5)
+            if palace_ctx:
+                extra_sections.append(palace_ctx)
+        except Exception:
+            pass  # Palace unavailable — proceed without context
+
         # Best-practice guides — inject relevant guide based on user input keywords
         guide = self._match_guide(user_input)
         if guide:

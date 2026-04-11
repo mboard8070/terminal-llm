@@ -1631,6 +1631,84 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
             },
         },
     },
+    # MemPalace — layered long-term memory (L0 identity / L1 essential / L2 on-demand / L3 deep search)
+    {
+        "type": "function",
+        "function": {
+            "name": "palace_search",
+            "description": "Semantic search over MemPalace drawers (L3 deep search). Use for general-purpose recall when key/value memory doesn't find what you need. Returns ranked snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for"},
+                    "wing": {"type": "string", "description": "Optional wing name to narrow the search"},
+                    "room": {"type": "string", "description": "Optional room name to narrow the search"},
+                    "n_results": {"type": "integer", "description": "Max results (default 5)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "palace_recall",
+            "description": "Browse MemPalace drawers by wing/room without a query (L2 on-demand retrieval). Use when you want to see everything in a topic area.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "wing": {"type": "string", "description": "Wing name"},
+                    "room": {"type": "string", "description": "Room name"},
+                    "n_results": {"type": "integer", "description": "Max results (default 10)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "palace_status",
+            "description": "Show MemPalace stats: palace path, total drawers, and whether L0 identity is configured.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "palace_kg_add_fact",
+            "description": "Record a structured fact in the MemPalace knowledge graph as a (subject, predicate, object) triple. Use for durable relational facts like 'Matt works_at NVIDIA' that should survive rewrites.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "Entity the fact is about"},
+                    "predicate": {"type": "string", "description": "Relationship (e.g. 'works_at', 'owns', 'prefers')"},
+                    "object": {"type": "string", "description": "Target of the relationship"},
+                    "confidence": {"type": "number", "description": "0.0–1.0 confidence (default 1.0)"},
+                },
+                "required": ["subject", "predicate", "object"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "palace_kg_query",
+            "description": "Query the MemPalace knowledge graph for all facts involving an entity.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity": {"type": "string", "description": "Entity name to look up"},
+                    "direction": {
+                        "type": "string",
+                        "description": "Relationship direction (default 'outgoing')",
+                        "enum": ["outgoing", "incoming", "both"],
+                    },
+                },
+                "required": ["entity"],
+            },
+        },
+    },
     # Shared Folder / File Transfer Tools
     {
         "type": "function",
