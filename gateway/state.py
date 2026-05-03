@@ -130,10 +130,10 @@ MODEL_ROUTES = {
         "api_key_env": None,
         "max_context": 8192,
     },
-    # Mistral Small 3.1 24B — local (llama-server on 30012), fast + tool use
-    "mistral-small-local": {
+    # Gemma 4 31B — local (llama-server on 30013), multimodal, 256K context
+    "gemma-4-31b": {
         "provider": "local",
-        "base_url": "http://localhost:30012",
+        "base_url": "http://localhost:30013",
         "api_key_env": None,
         "max_context": 32768,
     },
@@ -165,8 +165,8 @@ MODEL_ALIASES = {
     "vision": "llava",
     "hermes": "hermes",
     "hermes3": "hermes",
-    "mistral-small-local": "mistral-small-local",
-    "msl": "mistral-small-local",
+    "gemma4": "gemma-4-31b",
+    "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }

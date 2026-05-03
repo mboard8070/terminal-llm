@@ -49,6 +49,8 @@ MODELS = {
     "sonnet": "claude-sonnet-4-20250514",
     # Local (via gateway)
     "nemotron": "nemotron",
+    "gemma4": "gemma-4-31b",
+    "gemma": "gemma-4-31b",
     "llava": "llava",
 }
 
@@ -62,6 +64,8 @@ _CLOUD_MODELS = {
     "claude",
     "sonnet",
     "nemotron",
+    "gemma4",
+    "gemma",
     "llava",
 }
 

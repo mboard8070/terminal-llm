@@ -84,7 +84,7 @@ const ChatView: FC<{
           <div className="flex h-full flex-col items-center justify-center text-center">
             <span className="fire-gradient mb-3 text-5xl font-black">{"\u25C7"}</span>
             <h2 className="mb-1 text-lg font-semibold text-maude-text">MAUDE</h2>
-            <p className="max-w-xs text-sm text-maude-muted">Your local AI assistant. Powered by Mistral &amp; Codestral. Ask me anything.</p>
+            <p className="max-w-xs text-sm text-maude-muted">Your local AI assistant. Ask me anything.</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               {["What can you do?", "Write a Python script", "Explain this code", "System status"].map((q) => (
                 <button key={q} onClick={() => handleSend(q)}

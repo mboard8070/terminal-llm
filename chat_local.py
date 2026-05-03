@@ -743,11 +743,15 @@ AVAILABLE_MODELS = {
     "devstral": "devstral-2512",
     "devstral-small": "devstral-small-latest",
     "devstral-medium": "devstral-medium-latest",
+    "gemma4": "gemma-4-31b",
+    "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }
 
-# Cloud models route through the gateway's HTTP mirror (same port as local)
+# Cloud models route through the gateway's HTTP mirror (same port as local).
+# Also includes non-nemotron local models (e.g. gemma-4-31b on port 30013),
+# since LOCAL_URL points at nemotron's port — the gateway knows the right route.
 GATEWAY_URL = "http://localhost:30080/v1"
 
 _CLOUD_MODELS = {
@@ -757,6 +761,7 @@ _CLOUD_MODELS = {
     "devstral-2512",
     "devstral-small-latest",
     "devstral-medium-latest",
+    "gemma-4-31b",
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
 }
@@ -948,7 +953,7 @@ Say "stop", "exit", or "quit" during talk mode to end."""
         return f"Unknown command: /{command}\nType /help for available commands."
 
 
-SYSTEM_PROMPT = f"""You are MAUDE, a local AI assistant running on Matt's DGX Spark ({MODEL}).
+SYSTEM_PROMPT = """You are MAUDE, a local AI assistant running on Matt's DGX Spark.
 
 STYLE: Be brief. Action over explanation. Use tools proactively.
 
@@ -1290,6 +1295,16 @@ class MaudeApp(App):
     def _inject_memory_context(self, user_input: str):
         """Inject relevant memories and best-practice guides into the system prompt for this turn."""
         extra_sections = []
+
+        # Current model identity — rebuilt each turn so /model switch is reflected immediately.
+        # Tell the LLM who it is so it doesn't guess or try to read random config files.
+        current_model = maude_core.MODEL
+        alias = next((k for k, v in AVAILABLE_MODELS.items() if v == current_model), None)
+        model_line = f"CURRENT MODEL: You are running as `{current_model}`"
+        if alias and alias != current_model:
+            model_line += f" (alias: {alias})"
+        model_line += ". If the user asks which model you are, answer directly from this — do NOT read files or call tools to find out."
+        extra_sections.append(model_line)
 
         # Memory context
         try:

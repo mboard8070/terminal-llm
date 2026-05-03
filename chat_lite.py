@@ -45,6 +45,8 @@ MODELS = {
     "devstral": "devstral-2512",
     "devstral-small": "devstral-small-latest",
     "devstral-medium": "devstral-medium-latest",
+    "gemma4": "gemma-4-31b",
+    "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
 }

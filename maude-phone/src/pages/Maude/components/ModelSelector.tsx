@@ -17,6 +17,7 @@ const MODELS = [
   { id: "devstral-medium-latest", label: "Devstral Medium", desc: "Code Mid" },
   { id: "nemotron", label: "Nemotron", desc: "Local" },
   { id: "nemotron-super", label: "Nemotron Super", desc: "Local 120B" },
+  { id: "gemma-4-31b", label: "Gemma 4", desc: "Local 31B" },
   { id: "llava", label: "LLaVA", desc: "Vision" },
 ];
 
