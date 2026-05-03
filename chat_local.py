@@ -743,6 +743,8 @@ AVAILABLE_MODELS = {
     "devstral": "devstral-2512",
     "devstral-small": "devstral-small-latest",
     "devstral-medium": "devstral-medium-latest",
+    "openai": os.environ.get("MAUDE_OPENAI_MODEL", "gpt-4o"),
+    "codex": "codex-cli",
     "gemma4": "gemma-4-31b",
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
@@ -761,6 +763,7 @@ _CLOUD_MODELS = {
     "devstral-2512",
     "devstral-small-latest",
     "devstral-medium-latest",
+    "codex-cli",
     "gemma-4-31b",
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
@@ -863,7 +866,7 @@ Say "quit" to exit."""
         if len(parts) >= 3 and parts[1].lower() == "switch":
             return _switch_model(parts[2])
         elif len(parts) >= 2 and parts[1].lower() == "switch":
-            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet"
+            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral, devstral, devstral-small, devstral-medium, openai, codex, claude, sonnet"
         from frontier import list_available_providers
 
         frontier_providers = list_available_providers()
@@ -881,6 +884,8 @@ Available models:
   devstral            Devstral 2 (cloud, code agent)
   devstral-small      Devstral Small (cloud, code light)
   devstral-medium     Devstral Medium (cloud, code mid)
+  openai              OpenAI (cloud)
+  codex               OpenAI/Codex route (cloud, code)
   claude              Claude Opus (cloud, vision)
   sonnet              Claude Sonnet (cloud, vision)
 

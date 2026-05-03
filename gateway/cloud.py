@@ -9,8 +9,11 @@ import http.client
 import json
 import os
 import re
+import shutil
 import ssl
 import string
+import subprocess
+import tempfile
 import threading
 import time
 from urllib.parse import urlparse
@@ -27,6 +30,343 @@ from .state import (
 
 class CloudMixin:
     """Mixin providing cloud model tool loop methods for GatewayHandler."""
+
+    @staticmethod
+    def _messages_to_codex_prompt(messages: list[dict]) -> str:
+        """Flatten chat messages into a single prompt for `codex exec`."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+                )
+            if content:
+                parts.append(f"{role.upper()}:\n{content}")
+        return "\n\n".join(parts).strip()
+
+    def _codex_cli_response(self, req, resolved_name):
+        """Handle a request by invoking the locally authenticated Codex CLI."""
+        prompt = self._messages_to_codex_prompt(req.get("messages", []))
+        if not prompt:
+            self._json_response({"error": "No prompt provided for Codex CLI"}, 400)
+            return
+
+        stream = bool(req.get("stream"))
+        model = os.environ.get("MAUDE_CODEX_MODEL", "")
+        workdir = os.environ.get("MAUDE_CODEX_WORKDIR", "/home/mboard76")
+        timeout = int(os.environ.get("MAUDE_CODEX_TIMEOUT", "900"))
+
+        with tempfile.NamedTemporaryFile(prefix="maude-codex-", suffix=".txt", delete=False) as tmp:
+            output_path = tmp.name
+
+        cmd = [
+            os.environ.get("MAUDE_CODEX_BIN", shutil.which("codex") or "/home/mboard76/.npm-global/bin/codex"),
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            os.environ.get("MAUDE_CODEX_SANDBOX", "danger-full-access"),
+            "-C",
+            workdir,
+            "--output-last-message",
+            output_path,
+        ]
+        if model:
+            cmd.extend(["--model", model])
+        cmd.append("-")
+
+        started = time.time()
+        try:
+            if stream:
+                self._start_sse_headers()
+                self._send_trace_sse(
+                    "tool_call",
+                    {
+                        "name": "codex_exec",
+                        "args": json.dumps({"model": model or "default", "workdir": workdir}),
+                    },
+                )
+
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=workdir,
+            )
+            stdout, stderr = self._run_codex_json_process(proc, prompt, stream, started, timeout)
+            try:
+                with open(output_path, encoding="utf-8") as f:
+                    content = f.read().strip()
+            except OSError:
+                content = ""
+
+            if proc.returncode != 0:
+                err = (stderr or stdout or "Codex CLI failed").strip()
+                if stream:
+                    self._send_trace_sse(
+                        "tool_result",
+                        {
+                            "name": "codex_exec",
+                            "preview": f"Error: {err[:160]}",
+                            "elapsed": round(time.time() - started, 1),
+                        },
+                    )
+                    self._close_sse_with_error(err)
+                else:
+                    self._json_response({"error": err}, 502)
+                return
+
+            if not content:
+                content = self._last_codex_agent_message(stdout) or stdout.strip()
+
+            elapsed = time.time() - started
+            logger.info("Codex CLI: %.1fs, %d chars", elapsed, len(content))
+
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "codex_exec",
+                        "preview": f"Done in {elapsed:.1f}s",
+                        "elapsed": round(elapsed, 1),
+                    },
+                )
+                chunk = {
+                    "id": f"chatcmpl-maude-codex-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                }
+                line = f"data: {json.dumps(chunk)}\n\n".encode()
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+                finish = {
+                    "id": chunk["id"],
+                    "object": "chat.completion.chunk",
+                    "created": chunk["created"],
+                    "model": resolved_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                finish_line = f"data: {json.dumps(finish)}\n\n".encode()
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(finish_line), finish_line))
+                done_line = b"data: [DONE]\n\n"
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+                return
+
+            self._json_response(
+                {
+                    "id": f"chatcmpl-maude-codex-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"Codex CLI timed out after {timeout}s"
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "codex_exec",
+                        "preview": f"Error: {msg}",
+                        "elapsed": round(time.time() - started, 1),
+                    },
+                )
+                self._close_sse_with_error(msg)
+            else:
+                self._json_response({"error": msg}, 504)
+        except Exception as e:
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "codex_exec",
+                        "preview": f"Error: {str(e)[:160]}",
+                        "elapsed": round(time.time() - started, 1),
+                    },
+                )
+                self._close_sse_with_error(str(e))
+            else:
+                self._json_response({"error": f"Codex CLI error: {e}"}, 502)
+        finally:
+            try:
+                os.unlink(output_path)
+            except OSError:
+                pass
+
+    def _run_codex_json_process(self, proc, prompt: str, stream: bool, started: float, timeout: int):
+        """Feed Codex and translate its JSONL stdout into Maude trace events."""
+        if proc.stdin:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+
+        stdout_lines = []
+        stderr_lines = []
+        active_items = {}
+        deadline = started + timeout
+
+        def _read_stderr():
+            if not proc.stderr:
+                return
+            for line in proc.stderr:
+                stderr_lines.append(line)
+
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+        stderr_thread.start()
+
+        if proc.stdout:
+            while True:
+                if time.time() > deadline:
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+                line = proc.stdout.readline()
+                if line:
+                    stdout_lines.append(line)
+                    if stream:
+                        self._emit_codex_json_trace(line, active_items, started)
+                    continue
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+
+        proc.wait(timeout=max(0.1, deadline - time.time()))
+        stderr_thread.join(timeout=0.2)
+        return "".join(stdout_lines), "".join(stderr_lines)
+
+    def _emit_codex_json_trace(self, line: str, active_items: dict, started: float):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+
+        event_type = event.get("type", "")
+        item = event.get("item") or {}
+
+        if event_type == "turn.started":
+            return
+
+        if event_type == "thread.started":
+            self._send_trace_sse("keepalive", {"name": "codex_exec", "elapsed": round(time.time() - started, 1)})
+            return
+
+        if event_type == "turn.completed":
+            usage = event.get("usage") or {}
+            self._send_trace_sse(
+                "llm_call",
+                {
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "cache_read_tokens": usage.get("cached_input_tokens", 0),
+                    "elapsed": round(time.time() - started, 1),
+                },
+            )
+            return
+
+        if event_type == "item.started":
+            item_id = item.get("id") or f"codex-{len(active_items)}"
+            name = self._codex_item_name(item, event_type)
+            active_items[item_id] = name
+            self._send_trace_sse("tool_call", {"name": name, "args": json.dumps(self._codex_item_args(item, event_type))})
+            return
+
+        if event_type == "item.completed":
+            if item.get("type") == "agent_message":
+                return
+            item_id = item.get("id")
+            name = active_items.pop(item_id, None) or self._codex_item_name(item, event_type)
+            self._send_trace_sse(
+                "tool_result",
+                {
+                    "name": name,
+                    "preview": self._codex_item_preview(item, event_type),
+                    "elapsed": round(time.time() - started, 1),
+                },
+            )
+            return
+
+        if event_type.endswith(".started"):
+            name = event_type.removesuffix(".started").replace(".", "_")
+            active_items[event_type] = name
+            self._send_trace_sse("tool_call", {"name": name, "args": json.dumps(self._codex_event_args(event))})
+            return
+
+        if event_type.endswith(".completed"):
+            start_type = event_type.removesuffix(".completed") + ".started"
+            name = active_items.pop(start_type, event_type.removesuffix(".completed").replace(".", "_"))
+            self._send_trace_sse(
+                "tool_result",
+                {
+                    "name": name,
+                    "preview": self._codex_event_preview(event),
+                    "elapsed": round(time.time() - started, 1),
+                },
+            )
+            return
+
+        if event_type in ("error", "turn.failed"):
+            self._send_trace_sse("error", {"message": self._codex_event_preview(event)})
+
+    @staticmethod
+    def _codex_item_name(item: dict, event_type: str) -> str:
+        item_type = str(item.get("type") or event_type or "item").replace(".", "_")
+        if item_type in ("command_execution", "exec_command", "shell_command"):
+            return "codex_shell"
+        return f"codex_{item_type}"
+
+    @staticmethod
+    def _codex_item_args(item: dict, event_type: str) -> dict:
+        for key in ("command", "cmd", "args", "path", "text"):
+            if key in item:
+                return {key: item[key]}
+        return {"event": event_type, "type": item.get("type", "unknown")}
+
+    @staticmethod
+    def _codex_item_preview(item: dict, event_type: str) -> str:
+        for key in ("aggregated_output", "output", "stdout", "stderr", "text", "result", "message"):
+            value = item.get(key)
+            if value:
+                return str(value).replace("\n", " ").strip()[:160]
+        return event_type
+
+    @staticmethod
+    def _codex_event_args(event: dict) -> dict:
+        for key in ("command", "cmd", "args", "path"):
+            if key in event:
+                return {key: event[key]}
+        return {"event": event.get("type", "unknown")}
+
+    @staticmethod
+    def _codex_event_preview(event: dict) -> str:
+        for key in ("message", "error", "output", "text", "stderr", "stdout"):
+            value = event.get(key)
+            if value:
+                return str(value).replace("\n", " ").strip()[:160]
+        return json.dumps(event)[:160]
+
+    @staticmethod
+    def _last_codex_agent_message(stdout: str) -> str:
+        last = ""
+        for line in stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item = event.get("item") or {}
+            if event.get("type") == "item.completed" and item.get("type") == "agent_message":
+                last = item.get("text", "") or last
+        return last.strip()
 
     def _start_sse_headers(self):
         """Send SSE response headers for streaming. Call once before any SSE writes."""

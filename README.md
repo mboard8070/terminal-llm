@@ -222,11 +222,18 @@ This starts the inference server, gateway, and TUI. Use `/model switch mistral` 
 | `LLM_SERVER_URL` | `http://localhost:30080/v1` | llama.cpp server endpoint |
 | `MAUDE_MODEL` | `nemotron` | Default model name |
 | `MAUDE_NUM_CTX` | `32768` | Context window size (local models) |
+| `MAUDE_OPENAI_MODEL` | `gpt-4o` | OpenAI model used by `/model switch openai` |
+| `MAUDE_OPENAI_MAX_CONTEXT` | `128000` | Context limit used for OpenAI gateway requests |
+| `MAUDE_CODEX_MODEL` | Codex default | Optional model override used by `/model switch codex` via Codex CLI |
+| `MAUDE_CODEX_WORKDIR` | `/home/mboard76` | Working directory for Codex CLI requests |
+| `MAUDE_CODEX_SANDBOX` | `danger-full-access` | Codex CLI sandbox mode |
+| `MAUDE_CODEX_TIMEOUT` | `900` | Codex CLI timeout in seconds |
 | `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for LLaVA |
 | `MAUDE_VISION_MODEL` | `llava:13b` | Vision model name |
 | `MISTRAL_API_KEY` | — | Mistral API key (for cloud routing) |
 | `CODESTRAL_API_KEY` | — | Codestral API key (for cloud routing) |
 | `CLAUDE_API_KEY` | — | Anthropic API key (for Claude Opus/Sonnet) |
+| `OPENAI_API_KEY` | — | OpenAI API key (only for `/model switch openai`) |
 
 ## Project Structure
 

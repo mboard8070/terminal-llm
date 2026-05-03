@@ -102,6 +102,21 @@ MODEL_ROUTES = {
         "api_key_env": "MISTRAL_API_KEY",
         "max_context": 128000,
     },
+    # OpenAI API route. Requires OPENAI_API_KEY.
+    os.environ.get("MAUDE_OPENAI_MODEL", "gpt-4o"): {
+        "provider": "openai",
+        "base_url": "https://api.openai.com",
+        "api_key_env": "OPENAI_API_KEY",
+        "max_context": int(os.environ.get("MAUDE_OPENAI_MAX_CONTEXT", "128000")),
+    },
+    # Codex CLI route. Uses the locally authenticated Codex CLI account instead
+    # of an OpenAI API key.
+    "codex-cli": {
+        "provider": "codex-cli",
+        "base_url": "",
+        "api_key_env": None,
+        "max_context": int(os.environ.get("MAUDE_CODEX_MAX_CONTEXT", "128000")),
+    },
     # Nemotron 3 Super — cloud via OpenRouter (free)
     "nvidia/nemotron-3-super-120b-a12b:free": {
         "provider": "openrouter",
@@ -160,6 +175,8 @@ MODEL_ALIASES = {
     "devstral": "devstral-2512",
     "devstral-small": "devstral-small-latest",
     "devstral-medium": "devstral-medium-latest",
+    "openai": os.environ.get("MAUDE_OPENAI_MODEL", "gpt-4o"),
+    "codex": "codex-cli",
     "nemotron-super": "nvidia/nemotron-3-super-120b-a12b:free",
     "local": "nemotron",
     "vision": "llava",
