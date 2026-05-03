@@ -622,6 +622,36 @@ class CollabHub:
                 task["result"] = fail_msg
                 return task
 
+        # Validate explicit target_client_id / target_platform against presence —
+        # otherwise a hallucinated client_id just sits queued forever.
+        if target_client_id or target_platform:
+            presence = self.presence.get_all()
+            non_gateway = [p for p in presence if p.get("platform") not in ("gateway",)]
+            online_str = (
+                ", ".join(f"{p.get('hostname')} [{p.get('client_id')}] ({p.get('platform')})" for p in non_gateway)
+                or "none"
+            )
+            if target_client_id and not any(p.get("client_id") == target_client_id for p in presence):
+                task = self.tasks.create(
+                    prompt, target, capability, project_id, target_client_id="", target_platform=""
+                )
+                fail_msg = f"client_id '{target_client_id}' not found or offline. Online clients: {online_str}"
+                self.tasks.update_status(task["id"], "failed", fail_msg)
+                task["status"] = "failed"
+                task["result"] = fail_msg
+                return task
+            if target_platform and not any(
+                p.get("platform", "").lower() == target_platform.lower() for p in non_gateway
+            ):
+                task = self.tasks.create(
+                    prompt, target, capability, project_id, target_client_id="", target_platform=""
+                )
+                fail_msg = f"No '{target_platform}' client online. Online clients: {online_str}"
+                self.tasks.update_status(task["id"], "failed", fail_msg)
+                task["status"] = "failed"
+                task["result"] = fail_msg
+                return task
+
         is_client_targeted = bool(target_client_id or target_platform)
         task = self.tasks.create(
             prompt,

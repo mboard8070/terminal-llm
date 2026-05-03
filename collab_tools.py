@@ -23,7 +23,7 @@ COLLAB_TOOLS = [
         "type": "function",
         "function": {
             "name": "dispatch_task",
-            "description": "Dispatch a task to a specific device or platform on the mesh network. Use capability 'SHELL' for shell commands or 'LLM' for AI tasks. Target by client_id (e.g. 'MacBook-Pro-matt') or platform (e.g. 'windows', 'macos'). Client-targeted SHELL tasks are picked up by the client within ~10 seconds.",
+            "description": "Dispatch a task to a specific device or platform on the mesh network. Use capability 'SHELL' for shell commands or 'LLM' for AI tasks. IMPORTANT: do NOT invent a client_id — call mesh_status first to get the exact client_id of an online device, then pass it as target_client_id. For platform targeting, use target_platform with 'windows', 'macos', or 'linux'. Client-targeted SHELL tasks are picked up by the client within ~10 seconds.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -40,11 +40,11 @@ COLLAB_TOOLS = [
                     "project_id": {"type": "string", "description": "Optional project ID to associate with this task"},
                     "target_client_id": {
                         "type": "string",
-                        "description": "Target a specific client by its client_id (from mesh_status)",
+                        "description": "The exact client_id of an online device, obtained by calling mesh_status. Do not guess or invent this value — if you don't have the real client_id, call mesh_status first.",
                     },
                     "target_platform": {
                         "type": "string",
-                        "description": "Target a platform: 'windows', 'macos', or 'linux'",
+                        "description": "Target a platform: 'windows', 'macos', or 'linux'. Only use if at least one client of that platform is currently online (check with mesh_status).",
                     },
                 },
                 "required": ["prompt"],
