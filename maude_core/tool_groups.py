@@ -54,6 +54,8 @@ _TOOL_GROUPS = {
             "make image",
             "draw",
             "flux",
+            "flux 2",
+            "flux2",
             "generate a picture",
             "make a picture",
             "image of",
@@ -63,7 +65,7 @@ _TOOL_GROUPS = {
             "lora",
             "stillion",
         ],
-        "tools": {"generate_image", "share_file"},
+        "tools": {"generate_image", "generate_image_flux2", "share_file"},
     },
     "shared": {
         "keywords": [

@@ -146,7 +146,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate an image using Flux AI via ComfyUI. Saves the image to the shared folder and returns a download URL for display. Use markdown ![description](/download/filename.png) to show it in chat.",
+            "description": "Generate an image using Flux 1 Dev via local ComfyUI (free, slower). Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display. Use generate_image_flux2 for Flux 2 (cloud, higher quality).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -158,6 +158,42 @@ TOOLS = [
                     "lora": {"type": "string", "description": "Optional LoRA name: stillion-style, marker-mech-style"},
                 },
                 "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image_flux2",
+            "description": "Generate an image using Flux 2 via Replicate (cloud, paid, highest quality). Use this when the user asks for 'Flux 2' specifically or wants maximum quality. Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Text description of the image to generate"},
+                    "model": {"type": "string", "enum": ["pro", "dev", "klein"], "description": "Flux 2 variant: pro (best quality), dev (open weights), klein (cheapest). Default: pro"},
+                    "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "9:21"], "description": "Output aspect ratio. Default: 1:1"},
+                    "seed": {"type": "integer", "description": "Seed for reproducibility (-1 for random)"},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_3d",
+            "description": "Generate a 3D GLB model from an image using TRELLIS 2 (local, free) or Tripo (cloud, better topology). Returns file path to the GLB.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {"type": "string", "description": "Path to the input image file"},
+                    "engine": {"type": "string", "enum": ["trellis", "tripo", "both"], "description": "Which engine to use: trellis (free, local), tripo (cloud, costs credits), or both in parallel"},
+                    "resolution": {"type": "string", "enum": ["512", "1024", "1536"], "description": "TRELLIS resolution (default 1024)"},
+                    "seed": {"type": "integer", "description": "Random seed for TRELLIS generation"},
+                    "quad": {"type": "boolean", "description": "Enable quad remeshing for Tripo (cleaner topology)"},
+                    "face_limit": {"type": "integer", "description": "Target face count for Tripo (e.g. 50000, 100000)"},
+                },
+                "required": ["image_path"],
             },
         },
     },

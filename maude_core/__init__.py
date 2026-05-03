@@ -85,6 +85,10 @@ try:
     from . import tools_forge
 except ImportError:
     pass
+try:
+    from . import tools_forge3d
+except ImportError:
+    pass
 from . import (
     tools_command_center,
     tools_plan,
