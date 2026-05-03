@@ -261,6 +261,10 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._receive_file(TRANSFERS_DIR / parsed.path[len("/upload/") :])
         elif parsed.path.startswith("/share/"):
             self._receive_file(SHARED_DIR / parsed.path[len("/share/") :])
+        elif parsed.path.startswith("/delete/"):
+            self._delete_shared(parsed.path[len("/delete/") :])
+        elif parsed.path.startswith("/delete-transfer/"):
+            self._delete_transfer(parsed.path[len("/delete-transfer/") :])
         elif parsed.path == "/api/analyze-image":
             self._analyze_image()
         elif parsed.path.startswith("/v1"):

@@ -52,7 +52,6 @@ from maude_client.config import (
 )
 from maude_client.tool_router import ToolRouter
 from maude_client.heartbeat import start_heartbeat, stop_heartbeat, get_hostname, get_platform
-from maude_client.shared_sync import start_sync, stop_sync, sync_now
 from maude_client.task_executor import start_task_executor, stop_task_executor
 
 
@@ -885,14 +884,6 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    # Start shared folder sync
-    print("Starting shared folder sync...", end=" ", flush=True)
-    try:
-        start_sync()
-        print("OK")
-    except Exception as e:
-        print(f"Warning: {e}")
-
     # Start task executor
     print("Starting task executor...", end=" ", flush=True)
     try:
@@ -934,11 +925,11 @@ def main():
                     handle_voice_command(parts, stream_chat)
                     continue
 
-                # Handle /sync command
+                # Handle /sync command — pull all files from the server's shared folder
                 if user_input == "/sync":
-                    print("Syncing shared folder...", end=" ", flush=True)
-                    result = sync_now()
-                    print(result)
+                    print("Pulling shared folder from server...", end=" ", flush=True)
+                    from maude_client.client_tools import sync_shared
+                    print(sync_shared())
                     continue
 
                 # Handle /model command
@@ -1038,9 +1029,8 @@ Features:
             except EOFError:
                 break
     finally:
-        # Stop heartbeat, sync, and task executor on exit
+        # Stop heartbeat and task executor on exit
         stop_task_executor()
-        stop_sync()
         stop_heartbeat()
 
 

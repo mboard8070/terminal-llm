@@ -106,6 +106,7 @@ _LOCAL_TOOL_NAMES = {
     "run_server_command", "send_to_server_maude",
     # Shared folder tools — implemented locally
     "list_shared", "sync_shared", "pull_shared", "clean_shared",
+    "list_transfers", "clean_transfers",
 }
 
 # Minimal local-only catalog for offline mode
@@ -206,7 +207,7 @@ _OFFLINE_TOOLS = [t for t in CLIENT_ONLY_TOOLS] + [
         "type": "function",
         "function": {
             "name": "list_shared",
-            "description": "List files in the shared folder (auto-synced between client and server).",
+            "description": "List files in the server's shared folder.",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
@@ -214,7 +215,7 @@ _OFFLINE_TOOLS = [t for t in CLIENT_ONLY_TOOLS] + [
         "type": "function",
         "function": {
             "name": "sync_shared",
-            "description": "Trigger an immediate sync of the shared folder between client and server.",
+            "description": "Pull all files from the server's shared folder into the local cache (~/.maude/shared/).",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
@@ -222,7 +223,7 @@ _OFFLINE_TOOLS = [t for t in CLIENT_ONLY_TOOLS] + [
         "type": "function",
         "function": {
             "name": "pull_shared",
-            "description": "Pull/download a specific file from the server's shared folder.",
+            "description": "Download a specific file from the server's shared folder.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -237,7 +238,30 @@ _OFFLINE_TOOLS = [t for t in CLIENT_ONLY_TOOLS] + [
         "type": "function",
         "function": {
             "name": "clean_shared",
-            "description": "Remove files from the shared folder on both client and server.",
+            "description": "Delete files from the server's shared folder. Also clears the local cache copy if present.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Specific file to remove (omit to clean all files)"},
+                    "confirm": {"type": "boolean", "description": "Must be true to proceed with deletion"}
+                },
+                "required": ["confirm"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_transfers",
+            "description": "List files in the server's transfers folder (uploads from clients).",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clean_transfers",
+            "description": "Delete files from the server's transfers folder.",
             "parameters": {
                 "type": "object",
                 "properties": {

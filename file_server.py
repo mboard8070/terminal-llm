@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """
-MAUDE File Server - Simple HTTP server for shared folder access.
+MAUDE File Server - Simple HTTP server for the shared and transfers folders.
 
-Runs on port 30002. Clients tunnel to it the same way they tunnel to the LLM.
-Supports: list files, download files, upload files.
+Runs on port 30002. The server is the single source of truth for both folders;
+clients pull on demand and push when they want to share. There is no
+background sync — every operation is an explicit HTTP call.
+
+Routes:
+  GET  /list                     -> list shared folder
+  GET  /transfers                -> list transfers folder
+  GET  /download/<file>          -> download from shared
+  GET  /download-transfer/<file> -> download from transfers
+  GET  /health                   -> health check
+  POST /share/<file>             -> upload into shared
+  POST /upload/<file>            -> upload into transfers
+  POST /delete/<file>            -> delete from shared
+  POST /delete-transfer/<file>   -> delete from transfers
 """
 
 import json
-import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote
@@ -21,6 +31,10 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 TRANSFERS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _safe_name(name: str) -> bool:
+    return bool(name) and "/" not in name and "\\" not in name and not name.startswith(".")
+
+
 class FileHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Quiet logging
@@ -28,50 +42,52 @@ class FileHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = unquote(self.path)
 
-        # GET /list — list shared folder
         if path == "/list":
             self._list_dir(SHARED_DIR)
-
-        # GET /transfers — list transfers folder
         elif path == "/transfers":
             self._list_dir(TRANSFERS_DIR)
-
-        # GET /download/<filename> — download from shared
         elif path.startswith("/download/"):
-            filename = path[len("/download/") :]
-            self._send_file(SHARED_DIR / filename)
-
-        # GET /download-transfer/<filename> — download from transfers
+            self._send_file(SHARED_DIR / path[len("/download/") :])
         elif path.startswith("/download-transfer/"):
-            filename = path[len("/download-transfer/") :]
-            self._send_file(TRANSFERS_DIR / filename)
-
-        # GET /health — health check
+            self._send_file(TRANSFERS_DIR / path[len("/download-transfer/") :])
         elif path == "/health":
             self._json_response({"status": "ok"})
-
         else:
-            self._error(404, "Not found. Use /list, /download/<file>, or POST /upload")
+            self._error(404, "Not found")
 
     def do_POST(self):
         path = unquote(self.path)
 
-        # POST /upload — upload to transfers (client -> server)
         if path.startswith("/upload/"):
-            filename = path[len("/upload/") :]
-            self._receive_file(TRANSFERS_DIR / filename)
-
-        # POST /share — upload to shared folder
+            self._receive_file(TRANSFERS_DIR / path[len("/upload/") :])
         elif path.startswith("/share/"):
-            filename = path[len("/share/") :]
-            self._receive_file(SHARED_DIR / filename)
-
+            self._receive_file(SHARED_DIR / path[len("/share/") :])
+        elif path.startswith("/delete/"):
+            self._delete_in(SHARED_DIR, path[len("/delete/") :])
+        elif path.startswith("/delete-transfer/"):
+            self._delete_in(TRANSFERS_DIR, path[len("/delete-transfer/") :])
         else:
-            self._error(404, "Use POST /upload/<filename> or /share/<filename>")
+            self._error(404, "Not found")
 
-    def _list_dir(self, directory):
+    def _delete_in(self, base: Path, filename: str):
+        if not _safe_name(filename):
+            self._error(400, "Invalid filename")
+            return
+        target = base / filename
+        if not target.exists():
+            self._json_response({"status": "ok", "filename": filename, "existed": False})
+            return
+        try:
+            target.unlink()
+            self._json_response({"status": "ok", "filename": filename, "existed": True})
+        except Exception as e:
+            self._error(500, str(e))
+
+    def _list_dir(self, directory: Path):
         entries = []
         for entry in sorted(directory.iterdir()):
+            if entry.name.startswith("."):
+                continue
             stat = entry.stat()
             entries.append(
                 {
@@ -83,7 +99,7 @@ class FileHandler(BaseHTTPRequestHandler):
             )
         self._json_response({"path": str(directory), "files": entries})
 
-    def _send_file(self, filepath):
+    def _send_file(self, filepath: Path):
         if not filepath.exists():
             self._error(404, f"File not found: {filepath.name}")
             return
@@ -98,7 +114,10 @@ class FileHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._error(500, str(e))
 
-    def _receive_file(self, filepath):
+    def _receive_file(self, filepath: Path):
+        if not _safe_name(filepath.name):
+            self._error(400, "Invalid filename")
+            return
         try:
             length = int(self.headers.get("Content-Length", 0))
             data = self.rfile.read(length)
@@ -120,43 +139,10 @@ class FileHandler(BaseHTTPRequestHandler):
         self._json_response({"error": msg}, code)
 
 
-DELETIONS_FILE = SHARED_DIR / ".maude_deletions"
-
-
-def _scan_shared():
-    """Return set of non-hidden filenames in shared dir."""
-    return {
-        f.name for f in SHARED_DIR.iterdir()
-        if f.is_file() and not f.name.startswith(".")
-    }
-
-
-def _shared_watcher(interval=5):
-    """Background thread: detect files deleted from shared/ and record them."""
-    known = _scan_shared()
-    while True:
-        time.sleep(interval)
-        try:
-            current = _scan_shared()
-            deleted = known - current
-            if deleted:
-                with open(DELETIONS_FILE, "a") as f:
-                    for name in sorted(deleted):
-                        f.write(name + "\n")
-                print(f"  [watcher] Recorded deletions: {sorted(deleted)}")
-            known = current
-        except Exception as e:
-            print(f"  [watcher] Error: {e}")
-
-
 if __name__ == "__main__":
     print(f"MAUDE File Server on port {PORT}")
     print(f"  Shared:    {SHARED_DIR}")
     print(f"  Transfers: {TRANSFERS_DIR}")
-
-    # Start shared folder watcher (detects deletions for sync propagation)
-    threading.Thread(target=_shared_watcher, daemon=True).start()
-    print("  Watcher:   active (scanning every 5s)")
 
     server = HTTPServer(("0.0.0.0", PORT), FileHandler)
     try:

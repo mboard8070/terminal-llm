@@ -216,6 +216,8 @@ class RoutesMixin:
         entries = []
         try:
             for entry in sorted(directory.iterdir()):
+                if entry.name.startswith("."):
+                    continue
                 stat = entry.stat()
                 entries.append(
                     {
@@ -257,6 +259,30 @@ class RoutesMixin:
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_bytes(data)
             self._json_response({"status": "ok", "filename": filepath.name, "size": len(data)})
+        except Exception as e:
+            self._json_response({"error": str(e)}, 500)
+
+    def _delete_shared(self, filename: str):
+        """Delete a file from the shared folder."""
+        self._delete_in(SHARED_DIR, filename)
+
+    def _delete_transfer(self, filename: str):
+        """Delete a file from the transfers folder."""
+        from .state import TRANSFERS_DIR
+
+        self._delete_in(TRANSFERS_DIR, filename)
+
+    def _delete_in(self, base, filename: str):
+        if not filename or "/" in filename or "\\" in filename or filename.startswith("."):
+            self._json_response({"error": "Invalid filename"}, 400)
+            return
+        target = base / filename
+        if not target.exists():
+            self._json_response({"status": "ok", "filename": filename, "existed": False})
+            return
+        try:
+            target.unlink()
+            self._json_response({"status": "ok", "filename": filename, "existed": True})
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
 

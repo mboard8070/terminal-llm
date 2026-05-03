@@ -52,7 +52,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 │             ▼                        ▼                                │
 │  ┌──────────────────┐  ┌─────────────────────────────────────┐      │
 │  │ llama.cpp        │  │ Mistral / Codestral / Claude API    │      │
-│  │ (port 30080)     │  │ (tool loop + result caching)        │      │
+│  │ (port 30010)     │  │ (tool loop + result caching)        │      │
 │  │ Nemotron 30B     │  └─────────────────────────────────────┘      │
 │  └──────────────────┘                                                │
 │                                                                      │
@@ -78,7 +78,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Tool result caching**: TTL-based cache (30min web, 5min vision) to reduce redundant calls
 - **Pipeline trace**: Inline display of tool calls, args, result previews, timing, and parallel execution indicators
 - **Typewriter effects**: Word-by-word response reveal on server TUI and client CLI
-- **Shared folder**: Bidirectional rsync between server and clients (`~/.maude/shared/`)
+- **Shared folder**: Server-owned shared files in `shared/`, accessed by clients through HTTP routes
 - **Auto-routing**: Classifies messages and routes to specialized subagents
 - **Frontier delegation**: Escalates to cloud AI (Mistral, Codestral) for complex tasks
 - **Scheduled tasks**: Cron-based automation with natural language scheduling
@@ -126,14 +126,14 @@ Accessible from anywhere via Telegram. Runs as a systemd service on the server.
 
 ## Gateway
 
-The gateway (`gateway.py`) runs on port 30000 and is the single entry point for all remote clients.
+The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror on port 30080 for clients that need it. It is the single entry point for all remote clients.
 
 - **Model routing**: Routes requests to local llama.cpp or cloud APIs (Mistral, Codestral, Claude) based on model name
 - **Tool execution**: Runs server-side tool loops for cloud models with automatic tool selection
 - **SSE trace events**: Streams `tool_call`, `tool_result`, `llm_call`, and `parallel_start` trace events to clients
 - **Structured logging**: Uses Python `logging` module (`maude.gateway` logger) with timestamps and levels
 - **File serving**: Serves shared folder files, PWA assets, and generated images
-- **HTTPS**: Self-signed certs for Tailscale connections, HTTP mirror on port 30080
+- **HTTPS**: CA-signed certs for Tailscale connections, HTTP mirror on port 30080
 
 ## Tools
 
