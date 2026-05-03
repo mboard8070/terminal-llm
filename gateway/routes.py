@@ -45,6 +45,23 @@ class RoutesMixin:
                     "available": available,
                 }
             )
+        route_ids = {model["id"] for model in models}
+        for alias, target in MODEL_ALIASES.items():
+            if alias in route_ids:
+                continue
+            config = MODEL_ROUTES.get(target)
+            if not config:
+                continue
+            available = True
+            if config["api_key_env"]:
+                available = bool(os.environ.get(config["api_key_env"]))
+            models.append(
+                {
+                    "id": alias,
+                    "provider": config["provider"],
+                    "available": available,
+                }
+            )
         self._json_response({"models": models})
 
     def _serve_v1_models(self):

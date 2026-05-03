@@ -13,6 +13,7 @@ import os
 import ssl
 import struct
 import termios
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -99,17 +100,15 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         # HTTP chat SSE stream (iOS fallback — same pattern as terminal)
         if parsed.path == "/api/chat/stream":
             sid = query.get("sid", [None])[0]
+            offset = int(query.get("offset", ["0"])[0] or "0")
             if not sid:
                 self._json_response({"error": "missing sid"}, 400)
                 return
-            session = chat_sessions.pop(sid, None)
+            session = chat_sessions.get(sid)
             if not session:
                 self._json_response({"error": "session not found"}, 404)
                 return
-            req = session["req"]
-            req["stream"] = True
-            self._eventstream_mode = True  # traces as named events for EventSource
-            self._route_model_request(pre_parsed_req=req)
+            self._stream_chat_session(session, offset)
             return
 
         if parsed.path == "/list":
@@ -233,10 +232,21 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
                 self._json_response({"error": "invalid JSON"}, 400)
                 return
             sid = uuid.uuid4().hex[:12]
-            chat_sessions[sid] = {"req": req, "created": time.time()}
+            req["stream"] = True
+            session = {
+                "sid": sid,
+                "req": req,
+                "created": time.time(),
+                "events": [],
+                "done": False,
+                "error": None,
+                "cond": threading.Condition(),
+            }
+            chat_sessions[sid] = session
+            threading.Thread(target=self._run_chat_session, args=(sid,), daemon=True).start()
             # Cleanup stale sessions (>5 min)
-            cutoff = time.time() - 300
-            for k in [k for k, v in chat_sessions.items() if v["created"] < cutoff]:
+            cutoff = time.time() - 1800
+            for k in [k for k, v in chat_sessions.items() if v["created"] < cutoff and v.get("done")]:
                 del chat_sessions[k]
             self._json_response({"sid": sid})
             return
@@ -300,6 +310,10 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
 
         if not route:
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
+            return
+
+        if route["provider"] == "codex-cli":
+            self._codex_cli_response(req, resolved_name)
             return
 
         # Local models — tool-capable ones go through the same tool loop as cloud
@@ -416,6 +430,125 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._json_response({"error": f"Provider {route['provider']} connection refused"}, 503)
         except Exception as e:
             self._json_response({"error": f"Provider proxy error: {e}"}, 502)
+
+    def _run_chat_session(self, sid: str):
+        """Run an iOS/mobile chat request independently of any client connection."""
+        session = chat_sessions.get(sid)
+        if not session:
+            return
+        body = json.dumps(session["req"]).encode()
+        try:
+            conn = http.client.HTTPConnection("localhost", 30080, timeout=900)
+            conn.request(
+                "POST",
+                "/v1/chat/completions",
+                body=body,
+                headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+            )
+            resp = conn.getresponse()
+            if resp.status >= 400:
+                err = resp.read().decode(errors="replace")
+                self._append_chat_event(session, f"event: trace\ndata: {json.dumps({'type': 'error', 'message': err})}\n\n")
+                self._append_chat_event(session, "data: [DONE]\n\n")
+                return
+
+            block_lines = []
+            while True:
+                raw = resp.readline()
+                if not raw:
+                    break
+                line = raw.decode(errors="replace")
+                if line.strip() == "":
+                    if block_lines:
+                        event = self._normalize_chat_event_block("".join(block_lines) + "\n")
+                        if event:
+                            self._append_chat_event(session, event)
+                            if "data: [DONE]" in event:
+                                break
+                        block_lines = []
+                    continue
+                block_lines.append(line)
+            if block_lines:
+                event = self._normalize_chat_event_block("".join(block_lines) + "\n")
+                if event:
+                    self._append_chat_event(session, event)
+        except Exception as e:
+            self._append_chat_event(
+                session,
+                f"event: trace\ndata: {json.dumps({'type': 'error', 'message': f'Background chat failed: {e}'})}\n\n",
+            )
+            self._append_chat_event(session, "data: [DONE]\n\n")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with session["cond"]:
+                session["done"] = True
+                session["cond"].notify_all()
+
+    @staticmethod
+    def _normalize_chat_event_block(block: str) -> str:
+        """Convert gateway SSE comments into EventSource-visible trace events."""
+        stripped = block.strip()
+        if not stripped:
+            return ""
+        if stripped.startswith(": trace "):
+            payload = stripped[len(": trace ") :]
+            return f"event: trace\ndata: {payload}\n\n"
+        return block if block.endswith("\n\n") else block.rstrip("\n") + "\n\n"
+
+    @staticmethod
+    def _append_chat_event(session: dict, event: str):
+        with session["cond"]:
+            session["events"].append(event)
+            session["cond"].notify_all()
+
+    def _stream_chat_session(self, session: dict, offset: int):
+        """Attach/re-attach an EventSource client to a background chat session."""
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        idx = max(0, offset)
+        last_ping = time.time()
+        while True:
+            with session["cond"]:
+                while idx >= len(session["events"]) and not session["done"]:
+                    session["cond"].wait(timeout=10)
+                    if time.time() - last_ping >= 10:
+                        break
+                events = session["events"][idx:]
+                done = session["done"] and idx >= len(session["events"])
+
+            if events:
+                for event in events:
+                    try:
+                        self.wfile.write(f"id: {idx}\n".encode())
+                        self.wfile.write(event.encode())
+                        self.wfile.flush()
+                    except Exception:
+                        return
+                    idx += 1
+                    if "data: [DONE]" in event:
+                        self.close_connection = True
+                        return
+                last_ping = time.time()
+                continue
+
+            if done:
+                return
+
+            try:
+                self.wfile.write(b": keepalive\n\n")
+                self.wfile.flush()
+                last_ping = time.time()
+            except Exception:
+                return
 
     def _handle_image_stylize(self):
         """POST /api/image/stylize — img2img via Replicate Flux 2 Klein."""

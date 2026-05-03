@@ -12,6 +12,7 @@ const MODELS = [
   { id: "claude-sonnet-4-20250514", label: "Claude Sonnet", desc: "Fast" },
   { id: "mistral-large-latest", label: "Mistral Large", desc: "General" },
   { id: "codestral-latest", label: "Codestral", desc: "Code" },
+  { id: "codex", label: "Codex", desc: "CLI" },
   { id: "devstral-2512", label: "Devstral", desc: "Code Agent" },
   { id: "devstral-small-latest", label: "Devstral Small", desc: "Code Light" },
   { id: "devstral-medium-latest", label: "Devstral Medium", desc: "Code Mid" },
