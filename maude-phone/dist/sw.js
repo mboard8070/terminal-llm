@@ -1,5 +1,9 @@
 // MAUDE Service Worker — enables PWA "Add to Home Screen"
-const CACHE_NAME = 'maude-v4';
+const CACHE_NAME = 'maude-v5';
+
+// Always resolve to a real Response so respondWith() never sees null/undefined.
+const offlineResponse = () =>
+  new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
 
 // App shell files to pre-cache on install
 const APP_SHELL = [
@@ -73,7 +77,12 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
           return response;
         })
-        .catch(() => caches.match(event.request) || caches.match('/'))
+        .catch(async () => {
+          const cached = await caches.match(event.request);
+          if (cached) return cached;
+          const shell = await caches.match('/');
+          return shell || offlineResponse();
+        })
     );
     return;
   }
@@ -88,11 +97,13 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.match(event.request).then((cached) => {
         if (cached) return cached;
-        return fetch(event.request).then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return response;
-        });
+        return fetch(event.request)
+          .then((response) => {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            return response;
+          })
+          .catch(() => offlineResponse());
       })
     );
     return;
@@ -106,6 +117,9 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        return cached || offlineResponse();
+      })
   );
 });
