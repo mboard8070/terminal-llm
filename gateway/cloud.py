@@ -31,10 +31,22 @@ from .state import (
 class CloudMixin:
     """Mixin providing cloud model tool loop methods for GatewayHandler."""
 
+    CODEX_MAUDE_TOOL_BRIDGE = """MAUDE TOOL BRIDGE FOR CODEX:
+You are running inside MAUDE on the DGX Spark. Do not use Codex's own imagegen skill for image generation.
+When the user asks you to generate, draw, create, render, or make an image, call MAUDE's local Flux 1 / ComfyUI image tool through the local gateway:
+
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"generate_image","arguments":{"prompt":"PROMPT","width":1024,"height":1024,"steps":28,"seed":-1}}'
+
+Use this local Flux 1 tool by default. If the user specifically asks for Flux 2, use name "generate_image_flux2" with arguments {"prompt":"PROMPT","model":"pro","aspect_ratio":"1:1","seed":-1}.
+After the tool returns, include its markdown display link, usually like ![description](/download/file.png), so the mobile app can show the image.
+Do not claim the image was generated until the MAUDE tool response says it succeeded."""
+
     @staticmethod
     def _messages_to_codex_prompt(messages: list[dict]) -> str:
         """Flatten chat messages into a single prompt for `codex exec`."""
-        parts = []
+        parts = [CloudMixin.CODEX_MAUDE_TOOL_BRIDGE]
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
