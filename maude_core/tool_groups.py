@@ -50,8 +50,11 @@ _TOOL_GROUPS = {
     "image_gen": {
         "keywords": [
             "generate image",
+            "generate an image",
             "create image",
+            "create an image",
             "make image",
+            "make an image",
             "draw",
             "flux",
             "flux 2",
