@@ -29,7 +29,10 @@ function applyTheme(id: string) {
 export const Settings: FC = () => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [defaultModel, setDefaultModel] = useState(() => localStorage.getItem("maude-default-model") || "mistral-large-latest");
+  const [defaultModel, setDefaultModel] = useState(() => {
+    const stored = localStorage.getItem("maude-default-model");
+    return !stored || stored === "mistral-large-latest" ? "nemotron-super" : stored;
+  });
   const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem("maude-default-voice") || "NATF2.pt");
   const [theme, setTheme] = useState(() => localStorage.getItem("maude-theme") || "dark");
 

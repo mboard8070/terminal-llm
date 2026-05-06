@@ -38,7 +38,7 @@ export const Messages: FC = () => {
       const resp = await fetch(`${getGatewayUrl()}/v1/chat/completions`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "mistral-large-latest",
+          model: "nemotron-super",
           messages: [{ role: "system", content: "You are MAUDE. Respond briefly and helpfully, like a text message." }, { role: "user", content: text }],
           max_tokens: 500, stream: false,
         }),

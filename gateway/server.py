@@ -294,7 +294,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             except (json.JSONDecodeError, ValueError):
                 req = {}
 
-        model_name = req.get("model", "mistral-large-latest")
+        model_name = req.get("model", "nemotron-super")
         resolved_name, route = get_model_route(model_name)
         logger.debug("route requested=%s resolved=%s", model_name, resolved_name)
 

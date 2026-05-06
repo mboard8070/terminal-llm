@@ -109,9 +109,10 @@ export function useChat(conversationId: string | null = null) {
     conversationId ? loadMessages(conversationId) : [],
   );
   const [isStreaming, setIsStreaming] = useState(false);
-  const [currentModel, setCurrentModel] = useState(() =>
-    localStorage.getItem("maude-model") || "claude-opus-4-20250514",
-  );
+  const [currentModel, setCurrentModel] = useState(() => {
+    const stored = localStorage.getItem("maude-model");
+    return !stored || stored === "claude-opus-4-20250514" ? "nemotron-super" : stored;
+  });
   const [autoRoute, setAutoRoute] = useState(() =>
     localStorage.getItem("maude-autoroute") === "true",
   );

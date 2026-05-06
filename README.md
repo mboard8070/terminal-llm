@@ -222,7 +222,7 @@ This starts the inference server, gateway, and TUI. Use `/model switch mistral` 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `LLM_SERVER_URL` | `http://localhost:30080/v1` | llama.cpp server endpoint |
-| `MAUDE_MODEL` | `nemotron` | Default model name |
+| `MAUDE_MODEL` | `nemotron-super` | Default model name |
 | `MAUDE_NUM_CTX` | `32768` | Context window size (local models) |
 | `MAUDE_OPENAI_MODEL` | `gpt-4o` | OpenAI model used by `/model switch openai` |
 | `MAUDE_OPENAI_MAX_CONTEXT` | `128000` | Context limit used for OpenAI gateway requests |
