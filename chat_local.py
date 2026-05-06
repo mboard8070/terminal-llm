@@ -356,6 +356,7 @@ def chat(client, messages: list):
                         resp.read()
                         raise Exception(f"Gateway returned {resp.status_code}: {resp.text[:200]}")
                     buf = ""
+                    running_tasks = {}
                     for text_chunk in resp.iter_text():
                         buf += text_chunk
                         while "\n" in buf:
@@ -397,6 +398,7 @@ def chat(client, messages: list):
                                             if targs and targs != "{}" and len(targs) <= 60:
                                                 arg_hint = targs
                                         console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{task or tname}[/bold white]")
+                                        running_tasks[tname] = task or tname
                                         if task:
                                             console.print(f"[cyan]  │[/cyan]  [dim]{tname}[/dim]")
                                         if arg_hint:
@@ -412,6 +414,12 @@ def chat(client, messages: list):
                                         console.print(
                                             f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]"
                                         )
+                                        running_tasks.pop(tname, None)
+                                    elif ttype == "keepalive":
+                                        tname = trace.get("name", "")
+                                        elapsed = trace.get("elapsed", 0)
+                                        label = running_tasks.get(tname, tname or "task")
+                                        console.print(f"[dim cyan]  ⠿ still working: {label} ({elapsed:.1f}s)[/dim cyan]")
                                     elif ttype == "llm_call":
                                         prompt_tokens += trace.get("prompt_tokens", 0)
                                         token_count += trace.get("completion_tokens", 0)

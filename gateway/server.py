@@ -148,6 +148,8 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._redirect_vnc()
         elif parsed.path == "/api/tools":
             self._serve_tools(query)
+        elif parsed.path == "/api/tasks":
+            self._serve_tasks()
         elif parsed.path == "/models":
             self._serve_models()
         elif parsed.path.startswith("/proxy"):

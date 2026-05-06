@@ -81,6 +81,7 @@ def stream_response(messages: list, model_id: str) -> str:
     token_count = 0
     start_time = time.time()
     thinking = True
+    running_tasks = {}
 
     # Show thinking spinner until first content arrives
     spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -167,6 +168,7 @@ def stream_response(messages: list, model_id: str) -> str:
                                         arg_hint = targs
 
                                 console.print(f"  [bold cyan]╭─[/bold cyan] [bold white]{task or tname}[/bold white]")
+                                running_tasks[tname] = task or tname
                                 if task:
                                     console.print(f"  [cyan]│[/cyan]  [dim]{tname}[/dim]")
                                 if arg_hint:
@@ -180,6 +182,13 @@ def stream_response(messages: list, model_id: str) -> str:
                                 console.print(
                                     f"  [cyan]╰─[/cyan] [{color}]{preview}[/{color}] [dim]({elapsed:.1f}s)[/dim]"
                                 )
+                                running_tasks.pop(tname, None)
+
+                            elif ttype == "keepalive":
+                                tname = trace.get("name", "")
+                                elapsed = trace.get("elapsed", 0)
+                                label = running_tasks.get(tname, tname or "task")
+                                console.print(f"  [dim cyan]⠿ still working: {label} ({elapsed:.1f}s)[/dim cyan]")
 
                             elif ttype == "llm_call":
                                 prompt_tokens += trace.get("prompt_tokens", 0)
@@ -307,6 +316,10 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
         console.print(f"[dim]Saved to {p}[/dim]\n")
         return True
 
+    if command in ("/tasks", "/status"):
+        show_background_tasks()
+        return True
+
     if command == "/help":
         console.print(
             Panel(
@@ -314,6 +327,7 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
                 "[bold]/clear[/bold]         Clear conversation\n"
                 "[bold]/model switch[/bold] <name>  Switch model\n"
                 "[bold]/copy[/bold]          Copy last response\n"
+                "[bold]/tasks[/bold]         Show background MAUDE work\n"
                 "[bold]/help[/bold]          This help",
                 title="Commands",
                 border_style="dim",
@@ -323,6 +337,39 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
         return True
 
     return False
+
+
+def show_background_tasks():
+    """Show outstanding gateway-visible work after reconnect or on demand."""
+    try:
+        with httpx.Client(timeout=5.0) as http:
+            resp = http.get("http://localhost:30080/api/tasks")
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        console.print(f"[dim]Could not check background tasks: {e}[/dim]\n")
+        return
+
+    tasks = data.get("tasks", [])
+    outputs = data.get("recent_outputs", [])
+    if not tasks and not outputs:
+        console.print("[dim]No background MAUDE tasks or recent outputs detected.[/dim]\n")
+        return
+
+    lines = []
+    if tasks:
+        lines.append("[bold cyan]Still running[/bold cyan]")
+        for task in tasks:
+            lines.append(f"  [cyan]⠿[/cyan] {task.get('label', 'Task')} [dim]pid {task.get('pid')} · {task.get('elapsed')}[/dim]")
+    if outputs:
+        if lines:
+            lines.append("")
+        lines.append("[bold green]Recent outputs[/bold green]")
+        for item in outputs[:5]:
+            size_mb = (item.get("size", 0) or 0) / (1024 * 1024)
+            lines.append(f"  [green]•[/green] {item.get('filename')} [dim]{size_mb:.1f} MB[/dim]")
+    console.print(Panel("\n".join(lines), title="Background Work", border_style="cyan"))
+    console.print()
 
 
 def _system_prompt() -> dict:
@@ -393,6 +440,7 @@ def main():
         )
     )
     console.print()
+    show_background_tasks()
 
     while True:
         try:
