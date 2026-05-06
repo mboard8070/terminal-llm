@@ -69,6 +69,7 @@ from . import (
     tools_file,
     tools_github,
     tools_google,
+    tools_hyperframes,
     tools_media,
     tools_memory,
     tools_schedule,

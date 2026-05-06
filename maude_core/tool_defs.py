@@ -215,6 +215,77 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "hyperframes_doctor",
+            "description": "Run HyperFrames diagnostics for Node.js, FFmpeg, Chrome, Docker, and render readiness. Use before first HyperFrames render or when video rendering fails.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hyperframes_browser_ensure",
+            "description": "Install or verify the managed Chrome browser required by HyperFrames local rendering. Use when hyperframes_doctor reports Chrome is missing.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hyperframes_init",
+            "description": "Create a new HyperFrames HTML-to-video project under data/hyperframes using the HyperFrames CLI. Use when starting a new programmatic video composition.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Project name, e.g. product-intro"},
+                    "example": {"type": "string", "description": "Built-in HyperFrames example/template name. Default: blank"},
+                    "tailwind": {"type": "boolean", "description": "Create a Tailwind-enabled project if supported by the CLI."},
+                    "install_skills": {"type": "boolean", "description": "Allow HyperFrames to install its AI coding skills during init. Default: false"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hyperframes_lint",
+            "description": "Lint a HyperFrames project for missing timing attributes, adapter libraries, media issues, and other structural problems before rendering.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Path to the HyperFrames project directory"},
+                    "verbose": {"type": "boolean", "description": "Include informational lint findings."},
+                },
+                "required": ["project_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "hyperframes_render",
+            "description": "Render a HyperFrames project to MP4, MOV, or WebM via the HyperFrames CLI. Can share the finished video through Maude's shared download folder.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Path to the HyperFrames project directory"},
+                    "output": {"type": "string", "description": "Optional output path. Defaults to project/renders/<project>-timestamp.<format>"},
+                    "format": {"type": "string", "enum": ["mp4", "mov", "webm"], "description": "Output format. Default: mp4"},
+                    "fps": {"type": "integer", "enum": [24, 30, 60], "description": "Frame rate. Default: 30"},
+                    "quality": {"type": "string", "enum": ["draft", "standard", "high"], "description": "Encoding quality. Use draft for quick previews, high for final delivery."},
+                    "docker": {"type": "boolean", "description": "Use Docker mode for deterministic rendering."},
+                    "gpu": {"type": "boolean", "description": "Use hardware video encoding when available."},
+                    "workers": {"type": "string", "description": "Worker count, e.g. auto, 1, 2, 4. Default: auto"},
+                    "share": {"type": "boolean", "description": "Copy the rendered video to Maude's shared download folder. Default: true"},
+                    "timeout": {"type": "integer", "description": "Render timeout in seconds. Default: 900"},
+                },
+                "required": ["project_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_file",
             "description": "Search for text/pattern in a single file.",
             "parameters": {
