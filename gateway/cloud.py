@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import re
+import selectors
 import shutil
 import ssl
 import string
@@ -138,7 +139,7 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
         stream = bool(req.get("stream"))
         model = os.environ.get("MAUDE_CODEX_MODEL", "")
         workdir = os.environ.get("MAUDE_CODEX_WORKDIR", "/home/mboard76")
-        timeout = int(os.environ.get("MAUDE_CODEX_TIMEOUT", "900"))
+        timeout = int(os.environ.get("MAUDE_CODEX_TIMEOUT", "3600"))
 
         with tempfile.NamedTemporaryFile(prefix="maude-codex-", suffix=".txt", delete=False) as tmp:
             output_path = tmp.name
@@ -258,6 +259,10 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
             )
         except subprocess.TimeoutExpired:
             msg = f"Codex CLI timed out after {timeout}s"
+            try:
+                proc.kill()
+            except Exception:
+                pass
             if stream:
                 self._send_trace_sse(
                     "tool_result",
@@ -299,6 +304,7 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
         stderr_lines = []
         active_items = {}
         deadline = started + timeout
+        last_keepalive = started
 
         def _read_stderr():
             if not proc.stderr:
@@ -310,20 +316,41 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
         stderr_thread.start()
 
         if proc.stdout:
-            while True:
-                if time.time() > deadline:
-                    raise subprocess.TimeoutExpired(proc.args, timeout)
-                line = proc.stdout.readline()
-                if line:
-                    stdout_lines.append(line)
-                    if stream:
-                        self._emit_codex_json_trace(line, active_items, started)
-                    continue
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.05)
+            selector = selectors.DefaultSelector()
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            try:
+                while True:
+                    now = time.time()
+                    if now > deadline:
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
+                    if stream and now - last_keepalive >= 15:
+                        self._send_trace_sse(
+                            "keepalive",
+                            {"name": "codex_exec", "elapsed": round(now - started, 1)},
+                        )
+                        last_keepalive = now
 
-        proc.wait(timeout=max(0.1, deadline - time.time()))
+                    events = selector.select(timeout=0.5)
+                    if not events:
+                        if proc.poll() is not None:
+                            break
+                        continue
+
+                    line = proc.stdout.readline()
+                    if line:
+                        stdout_lines.append(line)
+                        if stream:
+                            self._emit_codex_json_trace(line, active_items, started)
+                        continue
+                    if proc.poll() is not None:
+                        break
+            finally:
+                selector.unregister(proc.stdout)
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        proc.wait(timeout=remaining)
         stderr_thread.join(timeout=0.2)
         return "".join(stdout_lines), "".join(stderr_lines)
 

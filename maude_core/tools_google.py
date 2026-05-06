@@ -384,7 +384,7 @@ def _dispatch_youtube_upload(args):
         title=args.get("title", ""),
         description=args.get("description", ""),
         tags=args.get("tags", ""),
-        privacy=args.get("privacy", "private"),
+        privacy=args.get("privacy", "public"),
         category=args.get("category", "22"),
         thumbnail_path=args.get("thumbnail_path", ""),
         playlist_id=args.get("playlist_id", ""),

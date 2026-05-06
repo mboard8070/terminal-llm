@@ -1120,7 +1120,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "youtube_upload",
-            "description": "Upload a video to YouTube. Defaults to private. Can set thumbnail and add to playlist in one call.",
+            "description": "Upload a video to YouTube. Defaults to public. Can set thumbnail and add to playlist in one call.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1130,7 +1130,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     "tags": {"type": "string", "description": "Comma-separated tags"},
                     "privacy": {
                         "type": "string",
-                        "description": "Privacy: 'public', 'private', or 'unlisted'. Default: 'private'",
+                        "description": "Privacy: 'public', 'private', or 'unlisted'. Default: 'public'",
                     },
                     "category": {
                         "type": "string",

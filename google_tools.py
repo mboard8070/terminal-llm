@@ -1896,7 +1896,7 @@ def youtube_upload(
     title: str,
     description: str = "",
     tags: str = "",
-    privacy: str = "private",
+    privacy: str = "public",
     category: str = "22",
     thumbnail_path: str = "",
     playlist_id: str = "",
@@ -1908,7 +1908,7 @@ def youtube_upload(
         title: Video title.
         description: Video description.
         tags: Comma-separated tags.
-        privacy: 'public', 'private', or 'unlisted'. Default: 'private'.
+        privacy: 'public', 'private', or 'unlisted'. Default: 'public'.
         category: YouTube category ID. Default: '22' (People & Blogs).
         thumbnail_path: Optional path to a custom thumbnail image.
         playlist_id: Optional playlist ID to add the video to after upload.

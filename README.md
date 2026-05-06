@@ -229,7 +229,7 @@ This starts the inference server, gateway, and TUI. Use `/model switch mistral` 
 | `MAUDE_CODEX_MODEL` | Codex default | Optional model override used by `/model switch codex` via Codex CLI |
 | `MAUDE_CODEX_WORKDIR` | `/home/mboard76` | Working directory for Codex CLI requests |
 | `MAUDE_CODEX_SANDBOX` | `danger-full-access` | Codex CLI sandbox mode |
-| `MAUDE_CODEX_TIMEOUT` | `900` | Codex CLI timeout in seconds |
+| `MAUDE_CODEX_TIMEOUT` | `3600` | Codex CLI timeout in seconds |
 | `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for LLaVA |
 | `MAUDE_VISION_MODEL` | `llava:13b` | Vision model name |
 | `MISTRAL_API_KEY` | — | Mistral API key (for cloud routing) |

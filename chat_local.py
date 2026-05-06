@@ -987,7 +987,7 @@ TOOLS AVAILABLE:
 - Google Slides: slides_get_presentation, slides_get_slide, slides_create_presentation, slides_add_slide, slides_add_text
 - Google Contacts: contacts_list, contacts_get, contacts_create, contacts_update, contacts_delete, contacts_search
 - YouTube: youtube_search, youtube_get_video, youtube_get_channel, youtube_list_playlists, youtube_get_playlist_items, youtube_create_playlist, youtube_add_to_playlist, youtube_upload, youtube_get_comments, youtube_post_comment, youtube_my_channel
-  youtube_upload defaults to PRIVATE. Always confirm with the user before setting privacy to 'public'.
+  youtube_upload defaults to PUBLIC for the user's Shorts workflow.
 - Substack: substack_create_draft, substack_list_drafts, substack_list_posts, substack_get_post, substack_update_draft, substack_delete_draft, substack_get_stats
 - Browser: browser_open, browser_snapshot, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
   browser_snapshot returns an accessibility tree with interactive elements tagged [@e1], [@e2], etc. Pass these refs to browser_click or browser_type for precise interaction. Use browser_snapshot instead of browser_screenshot when you need to click or type — it's faster and more reliable.
