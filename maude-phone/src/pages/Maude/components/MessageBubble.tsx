@@ -160,10 +160,14 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
             style={{ animation: streaming ? "fadeSlideIn 0.3s ease-out" : "none" }}
           >
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px]">{icon}</span>
+              {isRunning && streaming ? (
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-cyan-300/30 border-t-cyan-300" />
+              ) : (
+                <span className="text-[11px]">{icon}</span>
+              )}
               <span className="text-[11px] font-semibold text-cyan-300">{step.task || step.name}</span>
               {isRunning && (
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
+                <span className="animate-pulse text-[10px] font-medium text-cyan-300">still working</span>
               )}
               {step.elapsed !== undefined && (
                 <span className="ml-auto font-mono text-[10px] text-maude-muted">{step.elapsed.toFixed(1)}s</span>
@@ -174,14 +178,6 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
             )}
             {step.args && (
               <div className="truncate font-mono text-[10px] leading-tight text-maude-muted">{step.args}</div>
-            )}
-            {isRunning && streaming && (
-              <div className="mt-1 flex items-center gap-1.5 text-[10px] font-medium text-cyan-300">
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300" style={{ animationDelay: "0ms" }} />
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300" style={{ animationDelay: "120ms" }} />
-                <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300" style={{ animationDelay: "240ms" }} />
-                <span>Still working</span>
-              </div>
             )}
             {step.result && (
               <div className={`truncate font-mono text-[10px] leading-tight ${isError ? "text-red-400" : "text-green-400/80"}`}>

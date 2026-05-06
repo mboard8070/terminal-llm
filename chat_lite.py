@@ -83,19 +83,27 @@ def stream_response(messages: list, model_id: str) -> str:
     thinking = True
     running_tasks = {}
 
-    # Show thinking spinner until first content arrives
+    # Show a live spinner until first content arrives. Keep it running through
+    # long tool calls so a quiet task does not look hung.
     spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     spinner_idx = [0]
+    spinner_label = ["thinking"]
     stop_spinner = threading.Event()
 
     def _spinner():
         while not stop_spinner.is_set():
             frame = spinner_chars[spinner_idx[0] % len(spinner_chars)]
-            print(f"\r  {frame} thinking...", end="", flush=True)
+            label = spinner_label[0]
+            if len(label) > 76:
+                label = label[:73] + "..."
+            print(f"\r  {frame} {label}...", end="", flush=True)
             spinner_idx[0] += 1
             stop_spinner.wait(0.1)
         # Clear spinner line
-        print("\r" + " " * 30 + "\r", end="", flush=True)
+        print("\r" + " " * 100 + "\r", end="", flush=True)
+
+    def _clear_spinner_line():
+        print("\r" + " " * 100 + "\r", end="", flush=True)
 
     spinner_thread = threading.Thread(target=_spinner, daemon=True)
 
@@ -133,14 +141,10 @@ def stream_response(messages: list, model_id: str) -> str:
                             ttype = trace.get("type", "")
 
                             if ttype == "tool_call":
-                                # Stop spinner on first tool call
-                                if thinking:
-                                    stop_spinner.set()
-                                    thinking = False
-
                                 tname = trace.get("name", "?")
                                 targs = trace.get("args", "")
                                 task = trace.get("task", "")
+                                spinner_label[0] = task or tname or "working"
                                 arg_hint = ""
                                 try:
                                     parsed = json.loads(targs) if targs else {}
@@ -167,6 +171,7 @@ def stream_response(messages: list, model_id: str) -> str:
                                     if targs and targs != "{}" and len(targs) <= 60:
                                         arg_hint = targs
 
+                                _clear_spinner_line()
                                 console.print(f"  [bold cyan]╭─[/bold cyan] [bold white]{task or tname}[/bold white]")
                                 running_tasks[tname] = task or tname
                                 if task:
@@ -179,16 +184,18 @@ def stream_response(messages: list, model_id: str) -> str:
                                 preview = trace.get("preview", "")
                                 elapsed = trace.get("elapsed", 0)
                                 color = "green" if not preview.startswith("Error") else "red"
+                                _clear_spinner_line()
                                 console.print(
                                     f"  [cyan]╰─[/cyan] [{color}]{preview}[/{color}] [dim]({elapsed:.1f}s)[/dim]"
                                 )
                                 running_tasks.pop(tname, None)
+                                spinner_label[0] = next(reversed(running_tasks.values()), "thinking")
 
                             elif ttype == "keepalive":
                                 tname = trace.get("name", "")
                                 elapsed = trace.get("elapsed", 0)
                                 label = running_tasks.get(tname, tname or "task")
-                                console.print(f"  [dim cyan]⠿ still working: {label} ({elapsed:.1f}s)[/dim cyan]")
+                                spinner_label[0] = f"still working: {label} ({elapsed:.1f}s)"
 
                             elif ttype == "llm_call":
                                 prompt_tokens += trace.get("prompt_tokens", 0)
@@ -199,6 +206,7 @@ def stream_response(messages: list, model_id: str) -> str:
                                     stop_spinner.set()
                                     thinking = False
                                 err_msg = trace.get("message", "unknown error")
+                                _clear_spinner_line()
                                 console.print(f"  [red]✗ {err_msg}[/red]")
 
                         except (json.JSONDecodeError, KeyError):
