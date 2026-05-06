@@ -57,8 +57,6 @@ _TOOL_GROUPS = {
             "make an image",
             "draw",
             "flux",
-            "flux 2",
-            "flux2",
             "generate a picture",
             "make a picture",
             "image of",
@@ -68,7 +66,7 @@ _TOOL_GROUPS = {
             "lora",
             "stillion",
         ],
-        "tools": {"generate_image", "generate_image_flux2", "share_file"},
+        "tools": {"generate_image", "share_file"},
     },
     "shared": {
         "keywords": [
@@ -533,6 +531,11 @@ def get_tools_for_message(message: str) -> list:
             if kw in msg_lower:
                 active_names.update(group["tools"])
                 break
+
+    # Flux 2 is cloud/paid. Do not offer it as a fallback for normal image
+    # generation; only expose it when the user explicitly asks for Flux 2.
+    if "flux 2" in msg_lower or "flux2" in msg_lower:
+        active_names.add("generate_image_flux2")
 
     # Build filtered list preserving order
     return [t for t in TOOLS if t["function"]["name"] in active_names]

@@ -146,7 +146,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_image",
-            "description": "Generate an image using Flux 1 Dev via local ComfyUI (free, slower). Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display. Use generate_image_flux2 for Flux 2 (cloud, higher quality).",
+            "description": "Generate an image using Flux 1 Dev via local ComfyUI. This is MAUDE's default image path. Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -165,7 +165,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_image_flux2",
-            "description": "Generate an image using Flux 2 via Replicate (cloud, paid, highest quality). Use this when the user asks for 'Flux 2' specifically or wants maximum quality. Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display.",
+            "description": "Generate an image using Flux 2 via Replicate (cloud, paid). Only use when the user explicitly asks for Flux 2 / flux2. Do not use as a fallback for local ComfyUI failures. Saves to shared folder and returns a download URL. Use markdown ![desc](/download/filename.png) to display.",
             "parameters": {
                 "type": "object",
                 "properties": {

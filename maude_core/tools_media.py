@@ -214,6 +214,9 @@ def tool_generate_image_flux2(
     import random
     import urllib.request
 
+    if os.environ.get("MAUDE_ENABLE_FLUX2", "").lower() not in {"1", "true", "yes"}:
+        return "Error: Flux 2 is disabled by default. Use generate_image for local Flux 1 via ComfyUI, or set MAUDE_ENABLE_FLUX2=true to allow cloud Flux 2."
+
     token = os.environ.get("REPLICATE_API_TOKEN", "")
     if not token:
         return "Error: REPLICATE_API_TOKEN not set in environment."
