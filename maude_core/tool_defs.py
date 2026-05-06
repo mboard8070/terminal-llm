@@ -1120,7 +1120,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "youtube_upload",
-            "description": "Upload a video to YouTube. Defaults to public. Can set thumbnail and add to playlist in one call.",
+            "description": "Upload a video to YouTube using MAUDE's configured Google OAuth credentials. Defaults to public. Can set thumbnail and add to playlist in one call. Do not require a YouTube API key in the shell environment.",
             "parameters": {
                 "type": "object",
                 "properties": {

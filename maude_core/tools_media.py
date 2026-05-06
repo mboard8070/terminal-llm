@@ -5,6 +5,7 @@ Image generation tool — Flux via ComfyUI.
 import http.client
 import json
 import os
+import subprocess
 import ssl
 import time
 from pathlib import Path
@@ -48,16 +49,17 @@ def tool_generate_image(
 
     # Check if ComfyUI is reachable
     parsed = urlparse(comfyui_url)
-    try:
-        conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 8188, timeout=5)
-        conn.request("GET", "/system_stats")
-        resp = conn.getresponse()
-        resp.read()
-        conn.close()
-        if resp.status != 200:
-            return f"Error: ComfyUI not responding at {comfyui_url}. Start it with: cd ~/nvidia-workbench/ComfyUI && ./start.sh"
-    except Exception:
-        return f"Error: Cannot connect to ComfyUI at {comfyui_url}. Start it with: cd ~/nvidia-workbench/ComfyUI && ./start.sh"
+    if not _comfyui_ready(parsed):
+        _start_comfyui_service()
+        for _ in range(30):
+            time.sleep(1)
+            if _comfyui_ready(parsed):
+                break
+        else:
+            return (
+                f"Error: Cannot connect to ComfyUI at {comfyui_url}. "
+                "Start/check it with: systemctl --user status maude-comfyui"
+            )
 
     if seed == -1:
         seed = random.randint(0, 2**32 - 1)
@@ -183,6 +185,30 @@ def tool_generate_image(
             continue
 
     return f"Timeout waiting for image generation (prompt_id: {prompt_id}). Check ComfyUI at {comfyui_url}"
+
+
+def _comfyui_ready(parsed) -> bool:
+    try:
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 8188, timeout=5)
+        conn.request("GET", "/system_stats")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        return resp.status == 200
+    except Exception:
+        return False
+
+
+def _start_comfyui_service() -> None:
+    try:
+        subprocess.run(
+            ["systemctl", "--user", "start", "maude-comfyui.service"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception:
+        pass
 
 
 def _replicate_request(method: str, path: str, body: dict | None = None, token: str = "") -> dict:

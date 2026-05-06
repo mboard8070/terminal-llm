@@ -163,23 +163,23 @@ class SkillManager:
         """Get a skill by name."""
         return _skills.get(name)
 
-    def execute_skill(self, name: str, **kwargs) -> str:
+    def execute_skill(self, skill_name: str, **kwargs) -> str:
         """Execute a skill."""
-        skill = self.get_skill(name)
+        skill = self.get_skill(skill_name)
         if not skill:
             available = ", ".join(_skills.keys())
-            return f"Error: Skill '{name}' not found. Available: {available}"
+            return f"Error: Skill '{skill_name}' not found. Available: {available}"
         if not skill.enabled:
-            return f"Error: Skill '{name}' is disabled. Use /skills enable {name}"
+            return f"Error: Skill '{skill_name}' is disabled. Use /skills enable {skill_name}"
         try:
-            console.print(f"[dim cyan]  -> Running skill: {name}[/dim cyan]")
+            console.print(f"[dim cyan]  -> Running skill: {skill_name}[/dim cyan]")
             result = skill.execute(**kwargs)
             return result
         except TypeError as e:
             # Handle missing required parameters
-            return f"Error: Missing parameters for skill '{name}': {e}"
+            return f"Error: Missing parameters for skill '{skill_name}': {e}"
         except Exception as e:
-            return f"Error executing skill '{name}': {e}"
+            return f"Error executing skill '{skill_name}': {e}"
 
     def enable_skill(self, name: str) -> str:
         """Enable a skill."""

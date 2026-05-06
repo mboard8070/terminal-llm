@@ -43,6 +43,7 @@ curl -s -X POST http://localhost:30080/api/tools/execute \
 IMAGE GENERATION:
 When the user asks you to generate, draw, create, render, or make an image, call MAUDE's local Flux 1 / ComfyUI image tool through the local gateway using name "generate_image".
 Use this local Flux 1 tool by default. If the user specifically asks for Flux 2, use name "generate_image_flux2" with arguments {"prompt":"PROMPT","model":"pro","aspect_ratio":"1:1","seed":-1}.
+Do not start ComfyUI with "cd ~/nvidia-workbench/ComfyUI && ./start.sh" from inside MAUDE. ComfyUI must run as a separate user service: systemctl --user start maude-comfyui. The generate_image tool will start that service automatically if needed.
 After the tool returns, include its markdown display link, usually like ![description](/download/file.png), so the mobile app can show the image.
 Do not claim the image was generated until the MAUDE tool response says it succeeded.
 
@@ -69,7 +70,18 @@ curl -s -X POST http://localhost:30080/api/tools/execute \
   -H 'Content-Type: application/json' \
   -d '{"name":"skill_hyperframes","arguments":{"action":"render","project_path":"/path/to/project","format":"mp4","quality":"standard","share":true}}'
 
-HyperFrames is CLI-based; there is no long-running HyperFrames service to start. The rendered video is shared through /download/<file> when share is true."""
+HyperFrames is CLI-based; there is no long-running HyperFrames service to start. The rendered video is shared through /download/<file> when share is true.
+
+YOUTUBE PUBLISHING:
+Do not infer YouTube upload capability from shell environment variables. MAUDE uploads videos through its local gateway using Google OAuth credentials stored under ~/.config/maude, not a YouTube API key in the environment.
+If the user asks to post, publish, or upload a video to YouTube, call the MAUDE youtube_upload tool through the local gateway. It defaults to public.
+
+Example:
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"youtube_upload","arguments":{"file_path":"/path/to/video.mp4","title":"TITLE","description":"DESCRIPTION","tags":"AI, Shorts","privacy":"public","category":"28"}}'
+
+If the tool returns an OAuth or credential error, report that exact tool result. Do not preemptively refuse because API keys are not visible in the shell environment."""
 
     @staticmethod
     def _codex_available_tools_addendum(messages: list[dict]) -> str:
