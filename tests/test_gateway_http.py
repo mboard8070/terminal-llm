@@ -8,10 +8,11 @@ then exercises endpoints with stdlib urllib.
 import json
 import socket
 import threading
-import pytest
 from http.server import HTTPServer
-from urllib.request import urlopen, Request
 from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import pytest
 
 
 def _get_free_port():
@@ -63,11 +64,11 @@ class TestHealthHTTP:
     """GET /health — structured health report."""
 
     def test_health_returns_200(self, gateway_server):
-        status, body = _get(gateway_server, "/health")
+        status, _body = _get(gateway_server, "/health")
         assert status == 200
 
     def test_health_has_status(self, gateway_server):
-        status, body = _get(gateway_server, "/health")
+        _status, body = _get(gateway_server, "/health")
         assert body["status"] in ("ok", "degraded", "error")
 
     def test_health_has_structured_sections(self, gateway_server):
@@ -112,23 +113,19 @@ class TestToolExecuteHTTP:
         req = Request(url, data=b"not json", headers={"Content-Type": "application/json"}, method="POST")
         try:
             urlopen(req, timeout=10)
-            assert False, "Should have raised"
+            raise AssertionError("Should have raised")
         except HTTPError as e:
             assert e.code == 400
 
     def test_rejects_local_tool(self, gateway_server):
-        status, body = _post(gateway_server, "/api/tools/execute", {
-            "name": "read_file",
-            "arguments": {"path": "/tmp/test.txt"}
-        })
+        status, body = _post(
+            gateway_server, "/api/tools/execute", {"name": "read_file", "arguments": {"path": "/tmp/test.txt"}}
+        )
         assert status == 400
         assert "error" in body
 
     def test_executes_server_tool(self, gateway_server):
-        status, body = _post(gateway_server, "/api/tools/execute", {
-            "name": "get_working_directory",
-            "arguments": {}
-        })
+        status, body = _post(gateway_server, "/api/tools/execute", {"name": "get_working_directory", "arguments": {}})
         # Either succeeds or returns error (tool_catalog might classify it differently)
         assert status in (200, 400, 500)
         assert "result" in body or "error" in body

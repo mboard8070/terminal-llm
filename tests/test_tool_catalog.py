@@ -2,8 +2,7 @@
 Tests for tool_catalog.py — catalog structure, filtering, execution targets.
 """
 
-import pytest
-from tool_catalog import get_catalog, get_filtered_tools, execute_server_tool, _LOCAL_TOOLS, _CLIENT_ONLY_TOOLS
+from tool_catalog import _LOCAL_TOOLS, execute_server_tool, get_catalog, get_filtered_tools
 
 
 class TestCatalogStructure:
@@ -83,6 +82,14 @@ class TestCatalogFiltering:
         tools = get_filtered_tools("generate an image of a cat")
         names = {t["function"]["name"] for t in tools}
         assert "generate_image" in names
+
+    def test_hyperframes_keyword(self):
+        tools = get_filtered_tools("create a HyperFrames product video")
+        names = {t["function"]["name"] for t in tools}
+        assert "skill_hyperframes" in names
+        assert "hyperframes_init" in names
+        assert "hyperframes_browser_ensure" in names
+        assert "hyperframes_render" in names
 
 
 class TestExecutionTargets:

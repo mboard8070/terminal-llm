@@ -60,7 +60,7 @@ When you speak, channel this personality:
 
 - **Primary model:** Nemotron-3-Nano-30B (local)
 - **Subagents:** Codestral, LLaVA, Gemma
-- **Voice:** PersonaPlex (NATF2 or ElevenLabs Scottish voice)
+- **Voice:** Nemotron ASR (0.6B) + Magpie TTS (357M)
 - **Memory:** SQLite + nomic-embed-text
 - **Mesh:** Tailscale auto-discovery
 

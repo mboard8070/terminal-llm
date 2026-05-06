@@ -4,14 +4,15 @@ MAUDE Proactive Scheduler.
 Schedule MAUDE to run tasks and message you first.
 """
 
-import os
-import json
 import asyncio
+import json
 import uuid
-from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
-from typing import Callable, Optional, Dict, List, Any
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
+
 from rich.console import Console
 
 console = Console()
@@ -19,6 +20,7 @@ console = Console()
 # Try to import croniter
 try:
     from croniter import croniter
+
     CRONITER_AVAILABLE = True
 except ImportError:
     CRONITER_AVAILABLE = False
@@ -28,17 +30,18 @@ except ImportError:
 @dataclass
 class ScheduledTask:
     """A scheduled task."""
+
     id: str
     name: str
-    cron: str                    # Cron expression (or special: @hourly, @daily, etc.)
-    prompt: str                  # What to ask MAUDE
-    channel: str = "cli"         # Where to send result
+    cron: str  # Cron expression (or special: @hourly, @daily, etc.)
+    prompt: str  # What to ask MAUDE
+    channel: str = "cli"  # Where to send result
     channel_id: str = "default"  # Specific chat/channel
     enabled: bool = True
-    last_run: Optional[str] = None
-    next_run: Optional[str] = None
+    last_run: str | None = None
+    next_run: str | None = None
     run_count: int = 0
-    last_result: Optional[str] = None
+    last_result: str | None = None
 
 
 class ProactiveScheduler:
@@ -47,22 +50,22 @@ class ProactiveScheduler:
     CONFIG_FILE = Path.home() / ".config" / "maude" / "schedules.json"
 
     # Special schedule shortcuts
-    SPECIAL_SCHEDULES = {
+    SPECIAL_SCHEDULES: ClassVar[dict[str, str]] = {
         "@hourly": "0 * * * *",
-        "@daily": "0 9 * * *",      # 9 AM
-        "@weekly": "0 9 * * 1",     # Monday 9 AM
-        "@monthly": "0 9 1 * *",    # 1st of month 9 AM
-        "@morning": "0 8 * * *",    # 8 AM
-        "@evening": "0 18 * * *",   # 6 PM
-        "@workdays": "0 9 * * 1-5", # Weekdays 9 AM
+        "@daily": "0 9 * * *",  # 9 AM
+        "@weekly": "0 9 * * 1",  # Monday 9 AM
+        "@monthly": "0 9 1 * *",  # 1st of month 9 AM
+        "@morning": "0 8 * * *",  # 8 AM
+        "@evening": "0 18 * * *",  # 6 PM
+        "@workdays": "0 9 * * 1-5",  # Weekdays 9 AM
     }
 
     def __init__(self):
-        self.tasks: Dict[str, ScheduledTask] = {}
-        self.maude_callback: Optional[Callable] = None
+        self.tasks: dict[str, ScheduledTask] = {}
+        self.maude_callback: Callable | None = None
         self.gateway = None  # Channel gateway for sending messages
         self.running = False
-        self._loop_task: Optional[asyncio.Task] = None
+        self._loop_task: asyncio.Task | None = None
         self._load_tasks()
 
     def _load_tasks(self):
@@ -88,7 +91,7 @@ class ProactiveScheduler:
         """Resolve special schedule names to cron expressions."""
         return self.SPECIAL_SCHEDULES.get(cron, cron)
 
-    def _calculate_next_run(self, cron: str) -> Optional[str]:
+    def _calculate_next_run(self, cron: str) -> str | None:
         """Calculate next run time from cron expression."""
         if not CRONITER_AVAILABLE:
             return None
@@ -109,14 +112,7 @@ class ProactiveScheduler:
         """Set the channel gateway for sending messages."""
         self.gateway = gateway
 
-    def schedule(
-        self,
-        name: str,
-        cron: str,
-        prompt: str,
-        channel: str = "cli",
-        channel_id: str = "default"
-    ) -> str:
+    def schedule(self, name: str, cron: str, prompt: str, channel: str = "cli", channel_id: str = "default") -> str:
         """Schedule a new task."""
 
         # Validate cron
@@ -129,13 +125,7 @@ class ProactiveScheduler:
         task_id = str(uuid.uuid4())[:8]
 
         task = ScheduledTask(
-            id=task_id,
-            name=name,
-            cron=cron,
-            prompt=prompt,
-            channel=channel,
-            channel_id=channel_id,
-            next_run=next_run
+            id=task_id, name=name, cron=cron, prompt=prompt, channel=channel, channel_id=channel_id, next_run=next_run
         )
         self.tasks[task_id] = task
         self._save_tasks()
@@ -174,7 +164,7 @@ class ProactiveScheduler:
             return (
                 "No scheduled tasks.\n\n"
                 "Schedule a task:\n"
-                "  /schedule add \"Morning Brief\" @morning \"Give me a summary of my calendar and weather\"\n\n"
+                '  /schedule add "Morning Brief" @morning "Give me a summary of my calendar and weather"\n\n'
                 "Cron shortcuts: @hourly, @daily, @morning, @evening, @weekly, @workdays"
             )
 
@@ -210,10 +200,9 @@ class ProactiveScheduler:
             # Send result to channel
             if self.gateway and task.channel != "cli":
                 from channels import OutgoingMessage
+
                 await self.gateway.send(
-                    task.channel,
-                    task.channel_id,
-                    OutgoingMessage(text=f"**{task.name}**\n\n{result}")
+                    task.channel, task.channel_id, OutgoingMessage(text=f"**{task.name}**\n\n{result}")
                 )
             else:
                 # CLI output
@@ -249,7 +238,7 @@ class ProactiveScheduler:
                     next_run = datetime.fromisoformat(task.next_run)
                     if now >= next_run:
                         # Task is due
-                        asyncio.create_task(self.run_task(task))
+                        _task = asyncio.create_task(self.run_task(task))  # noqa: RUF006
                 except:
                     pass
 
@@ -278,7 +267,7 @@ class ProactiveScheduler:
 
 
 # Global scheduler instance
-_scheduler: Optional[ProactiveScheduler] = None
+_scheduler: ProactiveScheduler | None = None
 
 
 def get_scheduler() -> ProactiveScheduler:
@@ -287,66 +276,3 @@ def get_scheduler() -> ProactiveScheduler:
     if _scheduler is None:
         _scheduler = ProactiveScheduler()
     return _scheduler
-
-
-def handle_schedule_command(args: list) -> str:
-    """Handle /schedule command."""
-    scheduler = get_scheduler()
-
-    if not args:
-        return scheduler.list_tasks()
-
-    action = args[0].lower()
-
-    if action == "list":
-        return scheduler.list_tasks()
-
-    elif action == "add" and len(args) >= 4:
-        # /schedule add "name" @daily "prompt"
-        name = args[1].strip('"\'')
-        cron = args[2]
-        prompt = " ".join(args[3:]).strip('"\'')
-        return scheduler.schedule(name, cron, prompt)
-
-    elif action == "remove" and len(args) > 1:
-        return scheduler.unschedule(args[1])
-
-    elif action == "enable" and len(args) > 1:
-        return scheduler.enable_task(args[1])
-
-    elif action == "disable" and len(args) > 1:
-        return scheduler.disable_task(args[1])
-
-    elif action == "run" and len(args) > 1:
-        # Synchronous wrapper for async run
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Schedule it
-                asyncio.create_task(scheduler.run_task_by_id(args[1]))
-                return f"Running task {args[1]}..."
-            else:
-                return loop.run_until_complete(scheduler.run_task_by_id(args[1]))
-        except:
-            return "Task scheduled to run."
-
-    elif action == "test":
-        # Quick test task
-        return scheduler.schedule(
-            name="Test Task",
-            cron="*/5 * * * *",  # Every 5 minutes
-            prompt="Say hello and tell me the current time."
-        )
-
-    return (
-        f"Unknown schedule command: {action}\n\n"
-        "Usage:\n"
-        "  /schedule                           - List tasks\n"
-        "  /schedule add \"name\" @daily \"prompt\" - Add task\n"
-        "  /schedule remove <id>               - Remove task\n"
-        "  /schedule enable <id>               - Enable task\n"
-        "  /schedule disable <id>              - Disable task\n"
-        "  /schedule run <id>                  - Run task now\n\n"
-        "Cron shortcuts: @hourly, @daily, @morning, @evening, @weekly, @workdays"
-    )

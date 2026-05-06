@@ -5,8 +5,8 @@ const config: CapacitorConfig = {
   appName: 'MAUDE',
   webDir: 'dist',
   server: {
-    // Point to the Spark gateway — the app loads from the server, not bundled
-    url: 'https://100.107.132.16:30000',
+    // Point to the Spark gateway HTTP mirror — avoids self-signed cert issues in WKWebView
+    url: 'http://100.107.132.16:30080',
     cleartext: true,
     allowNavigation: ['100.107.132.16', '100.107.132.16:30000', '100.107.132.16:30080', '100.107.132.16:8998'],
   },

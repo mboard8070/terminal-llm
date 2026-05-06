@@ -7,6 +7,7 @@ Uses shared maude_core for full tool access.
 import asyncio
 import json
 import sys
+
 from dotenv import load_dotenv
 
 sys.stdout.reconfigure(line_buffering=True)
@@ -15,21 +16,33 @@ sys.stderr.reconfigure(line_buffering=True)
 load_dotenv()
 
 import os
+
 from openai import OpenAI
-from channels import get_gateway, IncomingMessage
-from channels.telegram import create_telegram_channel
 
 # Use shared MAUDE core
 import maude_core
-from maude_core import TOOLS, execute_tool, reset_rate_limits, append_chat_log, read_chat_log_since, get_tools_for_message, fast_dispatch
+from channels import IncomingMessage, get_gateway
+from channels.telegram import create_telegram_channel
+from maude_core import (
+    TOOLS,
+    append_chat_log,
+    execute_tool,
+    fast_dispatch,
+    get_tools_for_message,
+    read_chat_log_since,
+    reset_rate_limits,
+)
+from maude_core.tools_plan import PARALLEL_SAFE
 
 # Get config from maude_core
 LOCAL_URL = maude_core.LOCAL_URL
 MODEL = maude_core.MODEL
 
+
 # Set up logging callback
 def telegram_log(message: str):
     print(f">>> {message}", flush=True)
+
 
 maude_core.set_log_callback(telegram_log)
 
@@ -53,6 +66,9 @@ TOOLS AVAILABLE:
 - Browser: browser_open, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
 - Social media: skill_post_social (Twitter/X, LinkedIn, Bluesky), skill_social_status
 - Scheduling: schedule_task
+- Planning: execute_plan — run a multi-stage tool plan in one call. Stages run sequentially, tools within a stage run in parallel. Use $N.M to reference earlier results.
+
+EFFICIENCY: When you need multiple pieces of information, call ALL tools in one response. Batch reads, searches, etc. Only chain sequentially when a later call depends on an earlier result.
 
 STRATEGY:
 1. For current info: use web_search first
@@ -64,7 +80,7 @@ STRATEGY:
 def _escalate_to_frontier(user_question: str) -> str:
     """Escalate a question to Claude/Gemini when the local model can't handle it."""
     try:
-        from frontier import ask_frontier, list_available_providers, RateLimitError
+        from frontier import RateLimitError, ask_frontier, list_available_providers
 
         available = list_available_providers()
         if not available:
@@ -80,9 +96,12 @@ def _escalate_to_frontier(user_question: str) -> str:
                 response = ask_frontier(
                     query=user_question,
                     provider_name=provider,
-                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise — this is for Telegram."
+                    system_prompt="You are MAUDE, a capable AI assistant. Answer the user's question directly and helpfully. Be concise — this is for Telegram.",
                 )
-                print(f">>> ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})", flush=True)
+                print(
+                    f">>> ({response.provider} — {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f})",
+                    flush=True,
+                )
                 return response.content
             except RateLimitError:
                 errors.append(f"{provider}: rate limited")
@@ -114,14 +133,16 @@ async def maude_callback(msg: IncomingMessage) -> str:
                 print(f">>> → {tool_name}", flush=True)
                 client = get_client()
                 summary_messages = [
-                    {"role": "system", "content": "You are MAUDE. A tool was already called. Summarize the result concisely for mobile/Telegram."},
+                    {
+                        "role": "system",
+                        "content": "You are MAUDE. A tool was already called. Summarize the result concisely for mobile/Telegram.",
+                    },
                     {"role": "user", "content": msg.text},
-                    {"role": "user", "content": f"Tool result:\n{tool_result[:2000]}\n\nSummarize briefly."}
+                    {"role": "user", "content": f"Tool result:\n{tool_result[:2000]}\n\nSummarize briefly."},
                 ]
                 try:
                     summary = client.chat.completions.create(
-                        model=MODEL, messages=summary_messages,
-                        temperature=0.2, max_tokens=512
+                        model=MODEL, messages=summary_messages, temperature=0.2, max_tokens=512
                     )
                     reply = summary.choices[0].message.content or tool_result[:1000]
                 except Exception:
@@ -135,15 +156,13 @@ async def maude_callback(msg: IncomingMessage) -> str:
         # Auto-route: check if a subagent should handle this directly
         try:
             from auto_router import route_message
+
             decision = route_message(msg.text)
             if decision.subagent and decision.confidence >= 0.5:
                 print(f">>> routing → {decision.subagent} ({decision.intent}, {decision.confidence:.0%})", flush=True)
                 from execution import execute_subagent
-                reply = execute_subagent(
-                    decision.subagent,
-                    msg.text,
-                    prefer_cloud=decision.prefer_cloud
-                )
+
+                reply = execute_subagent(decision.subagent, msg.text, prefer_cloud=decision.prefer_cloud)
                 if reply and not reply.startswith("Error:"):
                     append_chat_log("telegram", "user", msg.text)
                     append_chat_log("telegram", "assistant", reply)
@@ -154,10 +173,7 @@ async def maude_callback(msg: IncomingMessage) -> str:
             pass  # Fall through to main loop
 
         client = get_client()
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": msg.text}
-        ]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": msg.text}]
 
         reset_rate_limits()  # Reset per-turn limits
         active_tools = get_tools_for_message(msg.text)
@@ -165,12 +181,7 @@ async def maude_callback(msg: IncomingMessage) -> str:
         # Allow up to 5 tool iterations
         for _ in range(5):
             response = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                tools=active_tools,
-                tool_choice="auto",
-                temperature=0.7,
-                max_tokens=1024
+                model=MODEL, messages=messages, tools=active_tools, tool_choice="auto", temperature=0.7, max_tokens=1024
             )
 
             assistant_msg = response.choices[0].message
@@ -187,28 +198,54 @@ async def maude_callback(msg: IncomingMessage) -> str:
                 return reply
 
             # Handle tool calls
-            messages.append({
-                "role": "assistant",
-                "content": assistant_msg.content or "",
-                "tool_calls": [
-                    {"id": tc.id, "type": "function",
-                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                    for tc in assistant_msg.tool_calls
-                ]
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in assistant_msg.tool_calls
+                    ],
+                }
+            )
 
+            # Parse tool calls
+            parsed_tcs = []
             for tc in assistant_msg.tool_calls:
                 print(f">>> [{tc.function.name}]", flush=True)
                 try:
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {}
-                result = execute_tool(tc.function.name, args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result
-                })
+                parsed_tcs.append((tc.id, tc.function.name, args))
+
+            # Split into parallel-safe and sequential
+            par = [(tid, fn, a) for tid, fn, a in parsed_tcs if fn in PARALLEL_SAFE]
+            seq = [(tid, fn, a) for tid, fn, a in parsed_tcs if fn not in PARALLEL_SAFE]
+
+            # Run parallel-safe tools concurrently
+            if len(par) > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                par_results = {}
+                with ThreadPoolExecutor(max_workers=min(len(par), 6)) as pool:
+                    futures = {pool.submit(execute_tool, fn, a): tid for tid, fn, a in par}
+                    for future in as_completed(futures):
+                        par_results[futures[future]] = future.result()
+                for tid, _fn, _a in par:
+                    messages.append({"role": "tool", "tool_call_id": tid, "content": par_results[tid]})
+            elif len(par) == 1:
+                tid, fn, a = par[0]
+                messages.append({"role": "tool", "tool_call_id": tid, "content": execute_tool(fn, a)})
+
+            # Run mutating tools sequentially
+            for tid, fn, a in seq:
+                result = execute_tool(fn, a)
+                messages.append({"role": "tool", "tool_call_id": tid, "content": result})
 
         # Local model exhausted tool iterations — escalate to frontier
         return _escalate_to_frontier(msg.text)
@@ -220,8 +257,9 @@ async def maude_callback(msg: IncomingMessage) -> str:
 
 async def sync_cli_messages(gateway):
     """Watch for CLI messages and push to Telegram."""
-    from channels import OutgoingMessage
     import os
+
+    from channels import OutgoingMessage
 
     # Start from end of file
     log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
@@ -301,7 +339,7 @@ async def main(standalone: bool = True):
     if standalone:
         if gateway.authorized:
             print("\nPaired users:", flush=True)
-            for key, auth in gateway.authorized.items():
+            for _key, auth in gateway.authorized.items():
                 print(f"  - {auth.username} ({auth.channel})", flush=True)
         else:
             code = gateway.generate_pairing_code()
@@ -316,6 +354,7 @@ async def main(standalone: bool = True):
     heartbeat_task = None
     try:
         from heartbeat import get_heartbeat
+
         hb = get_heartbeat()
         if hb.enabled:
             hb.set_tool_executor(execute_tool)

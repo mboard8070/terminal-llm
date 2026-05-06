@@ -17,10 +17,29 @@ import asyncio
 import tempfile
 import subprocess
 import threading
-try:
-    import readline  # Unix line editing; not available on Windows
-except ImportError:
-    pass
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
+    # Force-remove readline/pyreadline to prevent it from hooking input()
+    sys.modules.pop("readline", None)
+    # Enable ANSI/VT processing on Windows console
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+else:
+    try:
+        import readline
+        readline.set_completer(None)
+        _rl_doc = getattr(readline, "__doc__", None) or ""
+        if "libedit" in _rl_doc:
+            readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
+        else:
+            readline.parse_and_bind("tab: self-insert")   # GNU readline
+    except Exception:
+        pass
 import requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -33,7 +52,6 @@ from maude_client.config import (
 )
 from maude_client.tool_router import ToolRouter
 from maude_client.heartbeat import start_heartbeat, stop_heartbeat, get_hostname, get_platform
-from maude_client.shared_sync import start_sync, stop_sync, sync_now
 from maude_client.task_executor import start_task_executor, stop_task_executor
 
 
@@ -42,14 +60,16 @@ from maude_client.task_executor import start_task_executor, stop_task_executor
 # ─────────────────────────────────────────────────────────────────
 
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_ASCII_SPIN = "|/-\\"
 
 class Spinner:
-    """Braille spinner shown while waiting for first response chunk."""
+    """Spinner shown while waiting for first response chunk."""
 
     def __init__(self, label: str = "thinking"):
         self._label = label
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._frames = _ASCII_SPIN if _IS_WINDOWS else _BRAILLE
 
     def start(self):
         self._running = True
@@ -59,7 +79,7 @@ class Spinner:
     def _spin(self):
         i = 0
         while self._running:
-            frame = _BRAILLE[i % len(_BRAILLE)]
+            frame = self._frames[i % len(self._frames)]
             print(f"\r{frame} {self._label}...", end="", flush=True)
             time.sleep(0.1)
             i += 1
@@ -68,8 +88,9 @@ class Spinner:
         self._running = False
         if self._thread:
             self._thread.join(timeout=0.5)
-        # Clear spinner line: move to column 0, erase entire line
-        sys.stdout.write("\r\033[2K")
+        # Clear spinner line
+        label_len = len(self._label) + 6  # frame + space + label + "..."
+        sys.stdout.write("\r" + " " * label_len + "\r")
         sys.stdout.flush()
 
 
@@ -447,7 +468,18 @@ COLLABORATION TOOLS (cross-machine task dispatch):
 
 CROSS-MACHINE: You CAN run commands on other devices! Use mesh_status to find devices, then dispatch_task with target= to send shell commands. This works across Mac, Windows, and Linux clients.
 
-Note: Google Workspace tools (Gmail, Drive, Sheets, Calendar, etc.) are handled server-side by the gateway's tool loop. Just ask naturally and the gateway will call the right tools.
+BROWSER LOGIN (server-side):
+- browser_login: Opens a visible browser on Spark via VNC for manual login to any site.
+  Accepts shorthand names: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky" or any URL.
+  Returns a noVNC URL you open on any device to interact with the login page.
+  IMPORTANT: When the user asks to "log in", "login", or "sign in" to any website, USE browser_login — do NOT give text instructions.
+- browser_check_session: Check if a saved login is still valid for a site.
+
+BROWSER WORKFLOWS (server-side):
+- workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
+  Create repeatable browser automations with change detection and email notifications.
+
+Note: Google Workspace tools (Gmail, Drive, Sheets, Calendar, etc.) and browser tools are handled server-side by the gateway's tool loop. Just ask naturally and the gateway will call the right tools.
 
 Current client: {CLIENT_NAME} ({_MY_PLATFORM})
 Be concise and helpful."""
@@ -467,17 +499,19 @@ def check_server_connection() -> bool:
 
 def _format_trace(data: dict) -> str:
     """Format a trace event for terminal display (dim/muted)."""
+    _dim = "" if _IS_WINDOWS else "\033[2m"
+    _reset = "" if _IS_WINDOWS else "\033[0m"
     t = data.get("type", "")
     if t == "tool_call":
-        return f"\033[2m  [{data.get('name', '')}] {data.get('args', '')}\033[0m\n"
+        return f"{_dim}  [{data.get('name', '')}] {data.get('args', '')}{_reset}\n"
     elif t == "tool_result":
         elapsed = data.get("elapsed", 0)
-        return f"\033[2m    \u2192 {data.get('preview', '')} ({elapsed}s)\033[0m\n"
+        return f"{_dim}    -> {data.get('preview', '')} ({elapsed}s){_reset}\n"
     elif t == "llm_call":
         pt = data.get("prompt_tokens", 0)
         ct = data.get("completion_tokens", 0)
         elapsed = data.get("elapsed", 0)
-        return f"\033[2m  [{pt}+{ct} tokens, {elapsed}s]\033[0m\n"
+        return f"{_dim}  [{pt}+{ct} tokens, {elapsed}s]{_reset}\n"
     return ""
 
 
@@ -850,14 +884,6 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    # Start shared folder sync
-    print("Starting shared folder sync...", end=" ", flush=True)
-    try:
-        start_sync()
-        print("OK")
-    except Exception as e:
-        print(f"Warning: {e}")
-
     # Start task executor
     print("Starting task executor...", end=" ", flush=True)
     try:
@@ -871,7 +897,15 @@ def main():
     try:
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                if _IS_WINDOWS:
+                    sys.stdout.write("\nYou: ")
+                    sys.stdout.flush()
+                    user_input = sys.stdin.readline()
+                    if not user_input:
+                        break
+                    user_input = user_input.strip()
+                else:
+                    user_input = input("\nYou: ").strip()
 
                 if not user_input:
                     continue
@@ -891,11 +925,11 @@ def main():
                     handle_voice_command(parts, stream_chat)
                     continue
 
-                # Handle /sync command
+                # Handle /sync command — pull all files from the server's shared folder
                 if user_input == "/sync":
-                    print("Syncing shared folder...", end=" ", flush=True)
-                    result = sync_now()
-                    print(result)
+                    print("Pulling shared folder from server...", end=" ", flush=True)
+                    from maude_client.client_tools import sync_shared
+                    print(sync_shared())
                     continue
 
                 # Handle /model command
@@ -935,7 +969,7 @@ def main():
                     # Use tarball URL to avoid git clone entirely (bypasses hook issues)
                     result = subprocess.run(
                         [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir",
-                         "https://github.com/mboard8070/terminal-llm/archive/collaboration.tar.gz#subdirectory=maude-client"],
+                         "https://github.com/mboard8070/terminal-llm/archive/Astra.tar.gz#subdirectory=maude-client"],
                         capture_output=False
                     )
                     if result.returncode == 0:
@@ -995,9 +1029,8 @@ Features:
             except EOFError:
                 break
     finally:
-        # Stop heartbeat, sync, and task executor on exit
+        # Stop heartbeat and task executor on exit
         stop_task_executor()
-        stop_sync()
         stop_heartbeat()
 
 

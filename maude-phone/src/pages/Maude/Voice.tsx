@@ -3,12 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { encodeMessage, decodeMessage } from "../../protocol/encoder";
 import type { SocketStatus } from "../../protocol/types";
 
-// MAUDE system prompt for PersonaPlex voice
+// MAUDE system prompt for voice
 const MAUDE_TEXT_PROMPT =
   "You are MAUDE, a capable AI assistant with a warm Scottish accent. " +
-  "You are direct, competent, and quietly confident — like MAUDE’s design. "
+  "You are direct, competent, and quietly confident. " +
   "Keep responses concise and natural for voice conversation. " +
-  "You run locally on Matt's DGX Spark workstation.";
+  "You run locally on Matt’s DGX Spark workstation.";
 
 const DEFAULT_VOICE = "NATF2.pt";
 
@@ -16,7 +16,7 @@ function getGatewayUrl(): string {
   return `${window.location.protocol}//${window.location.host}`;
 }
 
-function getPersonaPlexUrl(imageContext?: string): string {
+function getVoiceUrl(imageContext?: string): string {
   // Route through the gateway WSS proxy (/api/chat) so iOS can reuse
   // the already-trusted TLS session instead of needing a second
   // self-signed cert trust for port 8998.
@@ -28,19 +28,8 @@ function getPersonaPlexUrl(imageContext?: string): string {
     prompt += "\n\n--- Image Context ---\n" + imageContext;
   }
 
-  const voice = localStorage.getItem("maude-default-voice") || DEFAULT_VOICE;
   const params = new URLSearchParams({
-    text_temperature: "0.7",
-    text_topk: "25",
-    audio_temperature: "0.8",
-    audio_topk: "250",
-    pad_mult: "0",
-    text_seed: String(Math.round(Math.random() * 1000000)),
-    audio_seed: String(Math.round(Math.random() * 1000000)),
-    repetition_penalty_context: "64",
-    repetition_penalty: "1.0",
     text_prompt: prompt,
-    voice_prompt: voice,
   });
 
   return `${base}/api/chat?${params}`;
@@ -305,15 +294,15 @@ export const Voice: FC = () => {
       micAnalyserRef.current = mAnalyser;
 
       // 5. Connect WebSocket
-      const url = getPersonaPlexUrl(imageContextRef.current ?? undefined);
-      console.log("Connecting to PersonaPlex:", url);
+      const url = getVoiceUrl(imageContextRef.current ?? undefined);
+      console.log("Connecting to voice server:", url);
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       socketRef.current = ws;
       setStatus("connecting");
 
       ws.onopen = () => {
-        console.log("PersonaPlex WS open, waiting for handshake");
+        console.log("voice server WS open, waiting for handshake");
       };
 
       ws.onmessage = (e: MessageEvent) => {
@@ -324,7 +313,7 @@ export const Voice: FC = () => {
 
           if (kind === 0x00) {
             // Handshake
-            console.log("PersonaPlex handshake received");
+            console.log("voice server handshake received");
             setStatus("connected");
             startRecording(ws, stream, ctx);
             timerRef.current = window.setInterval(() => {
@@ -365,15 +354,15 @@ export const Voice: FC = () => {
       };
 
       ws.onclose = (e) => {
-        console.log("PersonaPlex WS closed:", e.code, e.reason);
+        console.log("voice server WS closed:", e.code, e.reason);
         setStatus("disconnected");
         stopRecording();
         clearInterval(timerRef.current);
       };
 
       ws.onerror = (e) => {
-        console.error("PersonaPlex WS error:", e);
-        setError("WebSocket connection failed. Is PersonaPlex running?");
+        console.error("voice server WS error:", e);
+        setError("WebSocket connection failed. Is voice server running?");
         setStatus("disconnected");
       };
     } catch (err: unknown) {
@@ -572,7 +561,7 @@ export const Voice: FC = () => {
             {isConnected
               ? `Connected \u2022 ${formatTime(duration)}`
               : isConnecting
-              ? "Connecting to PersonaPlex..."
+              ? "Connecting to MAUDE Voice..."
               : "Tap to start voice chat"}
           </span>
         </div>
@@ -714,7 +703,7 @@ export const Voice: FC = () => {
         {/* Voice info */}
         <div className="text-center text-[10px] text-maude-muted">
           Voice: {(localStorage.getItem("maude-default-voice") || DEFAULT_VOICE).replace(".pt", "")}
-          {" \u2022 "}PersonaPlex
+          {" \u2022 "}MAUDE Voice
         </div>
 
         {/* Audio debug info */}

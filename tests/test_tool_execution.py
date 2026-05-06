@@ -3,7 +3,7 @@ Tests for tool execution — core file/shell tools via maude_core.execute_tool.
 """
 
 import os
-import pytest
+
 from maude_core import execute_tool
 
 
@@ -29,7 +29,8 @@ class TestWriteFile:
         result = execute_tool("write_file", {"path": path, "content": "hello world"})
         assert "Successfully wrote" in result
         assert os.path.exists(path)
-        assert open(path).read() == "hello world"
+        with open(path) as f:
+            assert f.read() == "hello world"
 
     def test_write_creates_directories(self, tmp_path):
         path = str(tmp_path / "sub" / "dir" / "file.txt")
@@ -40,12 +41,9 @@ class TestWriteFile:
 
 class TestEditFile:
     def test_edit_replaces_lines(self, tmp_file):
-        result = execute_tool("edit_file", {
-            "path": str(tmp_file),
-            "start_line": 2,
-            "end_line": 2,
-            "new_content": "replaced line two"
-        })
+        result = execute_tool(
+            "edit_file", {"path": str(tmp_file), "start_line": 2, "end_line": 2, "new_content": "replaced line two"}
+        )
         assert "dited" in result  # matches "Edited" or "Successfully edited"
         content = tmp_file.read_text()
         assert "replaced line two" in content
@@ -85,11 +83,13 @@ class TestPreFlight:
 
     def test_read_file_always_ready(self):
         from health import check_tool_ready
+
         ready, reason = check_tool_ready("read_file")
         assert ready is True
         assert reason == ""
 
     def test_unknown_tool_assumed_ready(self):
         from health import check_tool_ready
-        ready, reason = check_tool_ready("totally_fake_tool")
+
+        ready, _reason = check_tool_ready("totally_fake_tool")
         assert ready is True

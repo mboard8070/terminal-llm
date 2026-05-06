@@ -1,0 +1,130 @@
+[project]
+name = "maude"
+version = "1.8.7"
+description = "MAUDE AI assistant — TUI, gateway, tools, and autonomous builder"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv",
+    "rich",
+    "pyfiglet",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "ddgs>=7.0.0",
+    "playwright>=1.40.0",
+    "httpx>=0.25.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+cloud = [
+    "anthropic>=0.39.0",
+    "google-generativeai>=0.8.0",
+]
+voice = [
+    "sounddevice>=0.4.6",
+    "scipy>=1.11.0",
+    "faster-whisper>=1.0.0",
+]
+telegram = [
+    "python-telegram-bot>=20.0",
+]
+scheduler = [
+    "croniter>=2.0",
+]
+google = [
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.1.0",
+]
+palace = [
+    "mempalace>=3.1.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.1",
+    "ruff",
+    "ty",
+]
+all = [
+    "maude[cloud,voice,telegram,scheduler,google,palace,dev]",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter + formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# Only lint our own code
+include = ["*.py", "maude_core/**/*.py", "tests/**/*.py"]
+exclude = ["venv", "llama.cpp", "maude-client", "maude-phone", "__pycache__"]
+
+[tool.ruff.lint]
+# Start lenient — errors and important warnings only
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "I",     # isort (import sorting)
+    "UP",    # pyupgrade (modernize syntax for 3.12)
+    "B",     # flake8-bugbear (common bugs)
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long — formatter handles this
+    "E402",   # module-import-not-at-top — intentional lazy/conditional imports throughout
+    "E722",   # bare-except — used heavily for resilient tool execution
+    "E741",   # ambiguous variable name
+    "B008",   # function call in default arg (used intentionally in tools)
+    "B023",   # function-uses-loop-variable — common in callback registration
+    "SIM105", # suppressible-exception — try/except pass is clearer here
+    "SIM108", # ternary instead of if-else (readability preference)
+    "RUF001", # ambiguous unicode — too noisy
+    "RUF002", # ambiguous unicode in docstring
+    "RUF003", # ambiguous unicode in comment
+    "RUF013", # implicit-optional — large codebase, fix gradually
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Re-export packages — imports are the public API
+"maude_core/__init__.py" = ["F401"]
+"channels/__init__.py" = ["F401"]
+"skills/__init__.py" = ["F401"]
+# Conditional try/except imports for optional deps
+"gateway.py" = ["F401"]
+"google_tools.py" = ["F401"]
+"voice.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["maude_core"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# ty — type checker
+# ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+# Start lenient — surface clear errors, warn on everything else
+possibly-unbound-attribute = "warn"
+invalid-argument-type = "warn"
+invalid-parameter-default = "warn"  # 162 cases of `x: str = None` — fix with RUF013 gradually
+unresolved-attribute = "warn"       # 121 cases — needs None-narrowing, fix gradually
+invalid-assignment = "warn"         # 42 cases
+unresolved-import = "ignore"        # optional deps not always installed
+missing-argument = "error"
+unknown-argument = "error"
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 30

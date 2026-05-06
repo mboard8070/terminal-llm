@@ -12,12 +12,12 @@ Set TELEGRAM_BOT_TOKEN in .env or environment.
 """
 
 import asyncio
-import os
-import sys
-import signal
 import json
+import os
+import signal
+import sys
 from datetime import datetime
-from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Ensure unbuffered output for logging
@@ -28,11 +28,12 @@ sys.stderr.reconfigure(line_buffering=True)
 load_dotenv()
 
 from openai import OpenAI
-from channels import get_gateway, IncomingMessage, OutgoingMessage
+
+from channels import IncomingMessage, get_gateway
 from channels.telegram import create_telegram_channel
+from memory import MaudeMemory
 from scheduler import get_scheduler
 from skills import get_skill_manager
-from memory import MaudeMemory
 
 # Configuration
 LOCAL_URL = os.environ.get("LLM_SERVER_URL", "http://localhost:30000/v1")
@@ -94,12 +95,10 @@ def get_tools():
                 "description": "Search the web for current information",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"}
-                    },
-                    "required": ["query"]
-                }
-            }
+                    "properties": {"query": {"type": "string", "description": "Search query"}},
+                    "required": ["query"],
+                },
+            },
         },
         {
             "type": "function",
@@ -110,12 +109,12 @@ def get_tools():
                     "type": "object",
                     "properties": {
                         "key": {"type": "string", "description": "Memory key/name"},
-                        "value": {"type": "string", "description": "Information to remember"}
+                        "value": {"type": "string", "description": "Information to remember"},
                     },
-                    "required": ["key", "value"]
-                }
-            }
-        }
+                    "required": ["key", "value"],
+                },
+            },
+        },
     ]
 
     # Add skill tools
@@ -133,6 +132,7 @@ def execute_tool(name: str, arguments: dict) -> str:
     if name == "web_search":
         try:
             from ddgs import DDGS
+
             with DDGS() as ddgs:
                 results = list(ddgs.text(arguments.get("query", ""), max_results=5))
             if not results:
@@ -171,10 +171,7 @@ async def process_message(msg: IncomingMessage) -> str:
     log(f"Processing: {msg.text[:50]}... from {msg.username}")
 
     # Build conversation
-    messages = [
-        {"role": "system", "content": get_system_prompt(msg.text)},
-        {"role": "user", "content": msg.text}
-    ]
+    messages = [{"role": "system", "content": get_system_prompt(msg.text)}, {"role": "user", "content": msg.text}]
 
     try:
         # Get available tools
@@ -188,28 +185,27 @@ async def process_message(msg: IncomingMessage) -> str:
             max_tokens=1024,
             tools=tools if tools else None,
             tool_choice="auto" if tools else None,
-            extra_body={"num_ctx": NUM_CTX}
+            extra_body={"num_ctx": NUM_CTX},
         )
 
         assistant_msg = response.choices[0].message
 
         # Handle tool calls
         if assistant_msg.tool_calls:
-            messages.append({
-                "role": "assistant",
-                "content": assistant_msg.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_msg.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                         }
-                    }
-                    for tc in assistant_msg.tool_calls
-                ]
-            })
+                        for tc in assistant_msg.tool_calls
+                    ],
+                }
+            )
 
             # Execute tools
             for tc in assistant_msg.tool_calls:
@@ -218,19 +214,11 @@ async def process_message(msg: IncomingMessage) -> str:
                 except:
                     args = {}
                 result = execute_tool(tc.function.name, args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result
-                })
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
             # Get final response
             response = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=1024,
-                extra_body={"num_ctx": NUM_CTX}
+                model=MODEL, messages=messages, temperature=0.7, max_tokens=1024, extra_body={"num_ctx": NUM_CTX}
             )
             result = response.choices[0].message.content
 
@@ -250,6 +238,7 @@ async def process_message(msg: IncomingMessage) -> str:
     except Exception as e:
         log(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
         return f"Sorry, I encountered an error: {str(e)[:100]}"
 
@@ -263,7 +252,7 @@ async def process_scheduled_prompt(prompt: str) -> str:
         user_id="scheduler",
         username="Scheduler",
         text=prompt,
-        timestamp=datetime.now().isoformat()
+        timestamp=datetime.now().isoformat(),
     )
     return await process_message(msg)
 
@@ -318,7 +307,7 @@ async def main():
     # Show paired users
     if gateway.authorized:
         log(f"Paired users: {len(gateway.authorized)}")
-        for key, auth in gateway.authorized.items():
+        for _key, auth in gateway.authorized.items():
             log(f"  - {auth.username} ({auth.channel})")
     else:
         code = gateway.generate_pairing_code()

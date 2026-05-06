@@ -3,15 +3,16 @@ AI delegation tool implementations — ask_frontier, send_to_claude.
 """
 
 import subprocess
-from .log import log
 
 from tool_registry import register_tool
+
+from .log import log
 
 
 def tool_ask_frontier(question: str, context: str = None, provider: str = None) -> str:
     """Escalate a question to a frontier cloud model."""
     try:
-        from frontier import ask_frontier, list_available_providers, RateLimitError
+        from frontier import RateLimitError, ask_frontier, list_available_providers
 
         available = list_available_providers()
         if not available:
@@ -24,7 +25,7 @@ def tool_ask_frontier(question: str, context: str = None, provider: str = None) 
             query=question,
             context=context,
             provider_name=provider_name,
-            system_prompt="You are an expert assistant. Be thorough but concise."
+            system_prompt="You are an expert assistant. Be thorough but concise.",
         )
 
         log(f"{response.provider}: {response.input_tokens}+{response.output_tokens} tokens, ${response.cost_usd:.4f}")
@@ -49,39 +50,24 @@ def tool_send_to_claude(message: str, session: str = "claude") -> str:
         return "Error: tmux is not installed"
 
     # Check if the session exists
-    result = subprocess.run(
-        ["tmux", "has-session", "-t", session],
-        capture_output=True
-    )
+    result = subprocess.run(["tmux", "has-session", "-t", session], capture_output=True)
     if result.returncode != 0:
         return f"Error: tmux session '{session}' not found. Start Claude with: ./start_claude.sh"
 
     # Capture pane content before sending (to know what's new)
-    before = subprocess.run(
-        ["tmux", "capture-pane", "-t", session, "-p"],
-        capture_output=True,
-        text=True
-    ).stdout
+    _before = subprocess.run(["tmux", "capture-pane", "-t", session, "-p"], capture_output=True, text=True).stdout
 
     # Send the message using -l (literal) flag to avoid interpretation issues
     log(f"Sending to Claude: {message[:50]}...")
 
     # First send the message text literally
-    result = subprocess.run(
-        ["tmux", "send-keys", "-t", session, "-l", message],
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(["tmux", "send-keys", "-t", session, "-l", message], capture_output=True, text=True)
     if result.returncode != 0:
         return f"Error sending to Claude: {result.stderr}"
 
     # Small delay then send Enter key separately
     time.sleep(0.1)
-    result = subprocess.run(
-        ["tmux", "send-keys", "-t", session, "Enter"],
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], capture_output=True, text=True)
 
     if result.returncode != 0:
         return f"Error sending Enter: {result.stderr}"
@@ -99,35 +85,27 @@ def tool_send_to_claude(message: str, session: str = "claude") -> str:
 
         # Capture current pane content
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
-            capture_output=True,
-            text=True
+            ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"], capture_output=True, text=True
         )
         current = result.stdout
 
         # Check if Claude is done (prompt visible and content stopped changing)
-        if "\u276f" in current.split("\n")[-5:] or ">" in current.split("\n")[-3:]:
-            # Prompt appeared, check if content stabilized
-            if current == last_content:
-                break
+        if ("\u276f" in current.split("\n")[-5:] or ">" in current.split("\n")[-3:]) and current == last_content:
+            break
         last_content = current
 
         # Also break if we've been waiting and content hasn't changed
         if waited > 5 and current == last_content:
             time.sleep(2)  # One more pause to be sure
             final_check = subprocess.run(
-                ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
-                capture_output=True,
-                text=True
+                ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"], capture_output=True, text=True
             ).stdout
             if final_check == current:
                 break
 
     # Extract new content (what appeared after our message)
     after = subprocess.run(
-        ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"],
-        capture_output=True,
-        text=True
+        ["tmux", "capture-pane", "-t", session, "-p", "-S", "-500"], capture_output=True, text=True
     ).stdout
 
     # Find the response - everything after our message
@@ -179,9 +157,11 @@ def tool_send_to_claude(message: str, session: str = "claude") -> str:
 
 # ── Registry wrappers ──────────────────────────────────────────
 
+
 @register_tool("ask_frontier")
 def _dispatch_ask_frontier(args):
     return tool_ask_frontier(args.get("question", ""), args.get("context"), args.get("provider"))
+
 
 @register_tool("send_to_claude")
 def _dispatch_send_to_claude(args):

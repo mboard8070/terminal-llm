@@ -1,9 +1,9 @@
 """System information skill - cross-platform (Linux/macOS)."""
 
-import os
 import platform
-import subprocess
 import re
+import subprocess
+
 from skills import skill
 
 
@@ -37,10 +37,10 @@ def _is_linux() -> bool:
                 "type": "string",
                 "enum": ["all", "cpu", "memory", "disk", "gpu", "network", "os"],
                 "description": "Which component to query (default: all)",
-                "default": "all"
+                "default": "all",
             }
-        }
-    }
+        },
+    },
 )
 def system_info(component: str = "all") -> str:
     """Get system information."""
@@ -79,7 +79,7 @@ def _get_os_info() -> str:
     # Uptime
     if _is_linux():
         try:
-            with open("/proc/uptime", "r") as f:
+            with open("/proc/uptime") as f:
                 uptime_seconds = float(f.read().split()[0])
                 days = int(uptime_seconds // 86400)
                 hours = int((uptime_seconds % 86400) // 3600)
@@ -92,9 +92,10 @@ def _get_os_info() -> str:
         output = _run_cmd(["sysctl", "-n", "kern.boottime"])
         if output:
             # Format: { sec = 1234567890, usec = 0 }
-            match = re.search(r'sec = (\d+)', output)
+            match = re.search(r"sec = (\d+)", output)
             if match:
                 import time
+
                 boot_time = int(match.group(1))
                 uptime_seconds = time.time() - boot_time
                 days = int(uptime_seconds // 86400)
@@ -111,7 +112,7 @@ def _get_cpu_info() -> str:
 
     if _is_linux():
         try:
-            with open("/proc/cpuinfo", "r") as f:
+            with open("/proc/cpuinfo") as f:
                 cpuinfo = f.read()
 
             for line in cpuinfo.split("\n"):
@@ -122,7 +123,7 @@ def _get_cpu_info() -> str:
             cores = cpuinfo.count("processor")
             lines.append(f"  Cores: {cores}")
 
-            with open("/proc/loadavg", "r") as f:
+            with open("/proc/loadavg") as f:
                 load = f.read().split()[:3]
                 lines.append(f"  Load: {', '.join(load)} (1m, 5m, 15m)")
 
@@ -150,7 +151,7 @@ def _get_cpu_info() -> str:
         load = _run_cmd(["sysctl", "-n", "vm.loadavg"])
         if load:
             # Format: { 1.23 1.45 1.67 }
-            match = re.search(r'\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)', load)
+            match = re.search(r"\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)", load)
             if match:
                 lines.append(f"  Load: {match.group(1)}, {match.group(2)}, {match.group(3)} (1m, 5m, 15m)")
 
@@ -163,7 +164,7 @@ def _get_memory_info() -> str:
 
     if _is_linux():
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo") as f:
                 meminfo = {}
                 for line in f:
                     parts = line.split(":")
@@ -196,7 +197,7 @@ def _get_memory_info() -> str:
         # Total memory
         mem_bytes = _run_cmd(["sysctl", "-n", "hw.memsize"])
         if mem_bytes:
-            total_gb = int(mem_bytes) / (1024 ** 3)
+            total_gb = int(mem_bytes) / (1024**3)
             lines.append(f"  Total: {total_gb:.1f} GB")
 
         # Memory usage via vm_stat
@@ -221,12 +222,12 @@ def _get_memory_info() -> str:
             wired = stats.get("Pages wired down", 0) * page_size
             active = stats.get("Pages active", 0) * page_size
             compressed = stats.get("Pages occupied by compressor", 0) * page_size
-            used_gb = (wired + active + compressed) / (1024 ** 3)
+            used_gb = (wired + active + compressed) / (1024**3)
 
             if mem_bytes:
-                total_gb = int(mem_bytes) / (1024 ** 3)
+                total_gb = int(mem_bytes) / (1024**3)
                 free_gb = total_gb - used_gb
-                usage_pct = (used_gb / total_gb * 100)
+                usage_pct = used_gb / total_gb * 100
                 lines.append(f"  Used: {used_gb:.1f} GB ({usage_pct:.1f}%)")
                 lines.append(f"  Available: {free_gb:.1f} GB")
 
@@ -241,13 +242,15 @@ def _get_disk_info() -> str:
         try:
             result = subprocess.run(
                 ["df", "-h", "--output=target,size,used,avail,pcent", "-x", "tmpfs", "-x", "devtmpfs"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 for line in result.stdout.strip().split("\n")[1:]:
                     parts = line.split()
                     if len(parts) >= 5:
-                        mount, size, used, avail, pct = parts[:5]
+                        mount, size, used, _avail, pct = parts[:5]
                         if mount.startswith("/"):
                             lines.append(f"  {mount}: {used}/{size} ({pct})")
         except Exception as e:
@@ -261,7 +264,7 @@ def _get_disk_info() -> str:
                 parts = line.split()
                 if len(parts) >= 5 and parts[0].startswith("/dev/"):
                     # Filesystem Size Used Avail Capacity Mounted
-                    size, used, avail, pct = parts[1:5]
+                    size, used, _avail, pct = parts[1:5]
                     mount = parts[-1] if len(parts) > 5 else parts[5]
                     if mount in ("/", "/System/Volumes/Data") or mount.startswith("/Volumes"):
                         lines.append(f"  {mount}: {used}/{size} ({pct})")
@@ -276,15 +279,20 @@ def _get_gpu_info() -> str:
     if _is_linux():
         try:
             result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 for i, line in enumerate(result.stdout.strip().split("\n")):
                     parts = [p.strip() for p in line.split(",")]
                     if len(parts) >= 6:
-                        name, mem_total, mem_used, mem_free, temp, util = parts[:6]
+                        name, mem_total, mem_used, _mem_free, temp, util = parts[:6]
                         lines.append(f"  GPU {i}: {name}")
                         lines.append(f"    Memory: {mem_used}/{mem_total} MB")
                         lines.append(f"    Temp: {temp}C, Utilization: {util}%")
@@ -337,10 +345,7 @@ def _get_network_info() -> str:
 
     if _is_linux():
         try:
-            result = subprocess.run(
-                ["ip", "-4", "addr", "show"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["ip", "-4", "addr", "show"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 for line in result.stdout.split("\n"):
                     if "inet " in line and "127.0.0.1" not in line:
@@ -368,12 +373,10 @@ def _get_network_info() -> str:
 
     # Check Tailscale (works on both platforms)
     try:
-        ts_result = subprocess.run(
-            ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5
-        )
+        ts_result = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5)
         if ts_result.returncode == 0:
             import json
+
             ts_data = json.loads(ts_result.stdout)
             if ts_data.get("Self", {}).get("TailscaleIPs"):
                 ts_ip = ts_data["Self"]["TailscaleIPs"][0]

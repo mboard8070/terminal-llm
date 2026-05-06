@@ -3,8 +3,9 @@
 
 import asyncio
 import sys
+
 from telegram import Update
-from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 # Ensure unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
@@ -12,16 +13,19 @@ sys.stderr.reconfigure(line_buffering=True)
 
 TOKEN = "REDACTED_TOKEN"
 
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Echo the message."""
     print(f">>> Got message: {update.message.text}", flush=True)
     await update.message.reply_text(f"Echo: {update.message.text}")
     print(">>> Sent reply", flush=True)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start."""
     print(">>> Got /start command", flush=True)
     await update.message.reply_text("Hello! Send me a message.")
+
 
 async def main():
     print("Starting bot...", flush=True)
@@ -48,6 +52,7 @@ async def main():
     await app.updater.stop()
     await app.stop()
     await app.shutdown()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

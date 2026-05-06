@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" type="image/svg+xml" href="/assets/maude-icon.svg">
+    <link rel="apple-touch-icon" href="/assets/maude-icon-180.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="/assets/maude-icon-120.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="/assets/maude-icon-152.png">
+    <link rel="apple-touch-icon" sizes="167x167" href="/assets/maude-icon-167.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/maude-icon-180.png">
+    <link rel="manifest" href="/manifest.json" />
+    <title>MAUDE</title>
+    <script>
+      // Apply saved theme before render to prevent flash
+      (function() {
+        var t = localStorage.getItem('maude-theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-DIKYivWE.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DG_sGYD-.css">
+  </head>
+  <body>
+    <div id="root" />
+    <script>
+      // Register service worker for PWA "Add to Home Screen" on iOS Safari
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(function() {});
+      }
+    </script>
+  </body>
+</html>

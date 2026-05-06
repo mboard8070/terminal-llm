@@ -1,24 +1,64 @@
 """Weather skill using Open-Meteo (free, no API key required)."""
 
-import requests
 import re
+
+import requests
+
 from skills import skill
 
 # US state abbreviations
 US_STATES = {
-    'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas',
-    'CA': 'California', 'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware',
-    'FL': 'Florida', 'GA': 'Georgia', 'HI': 'Hawaii', 'ID': 'Idaho',
-    'IL': 'Illinois', 'IN': 'Indiana', 'IA': 'Iowa', 'KS': 'Kansas',
-    'KY': 'Kentucky', 'LA': 'Louisiana', 'ME': 'Maine', 'MD': 'Maryland',
-    'MA': 'Massachusetts', 'MI': 'Michigan', 'MN': 'Minnesota', 'MS': 'Mississippi',
-    'MO': 'Missouri', 'MT': 'Montana', 'NE': 'Nebraska', 'NV': 'Nevada',
-    'NH': 'New Hampshire', 'NJ': 'New Jersey', 'NM': 'New Mexico', 'NY': 'New York',
-    'NC': 'North Carolina', 'ND': 'North Dakota', 'OH': 'Ohio', 'OK': 'Oklahoma',
-    'OR': 'Oregon', 'PA': 'Pennsylvania', 'RI': 'Rhode Island', 'SC': 'South Carolina',
-    'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah',
-    'VT': 'Vermont', 'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia',
-    'WI': 'Wisconsin', 'WY': 'Wyoming', 'DC': 'District of Columbia'
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+    "DC": "District of Columbia",
 }
 
 
@@ -29,9 +69,9 @@ def find_location(location: str):
 
     # First check for state abbreviations at end (e.g., "Charleston, WV")
     for abbrev, full_name in US_STATES.items():
-        pattern = rf'[,\s]+{abbrev}$'
+        pattern = rf"[,\s]+{abbrev}$"
         if re.search(pattern, location, re.IGNORECASE):
-            location = re.sub(pattern, '', location, flags=re.IGNORECASE).strip()
+            location = re.sub(pattern, "", location, flags=re.IGNORECASE).strip()
             state_filter = full_name
             break
 
@@ -41,12 +81,12 @@ def find_location(location: str):
         for full_name in sorted(US_STATES.values(), key=len, reverse=True):
             if full_name.lower() in location.lower():
                 state_filter = full_name
-                location = re.sub(rf'[,\s]*{full_name}[,\s]*', ' ', location, flags=re.IGNORECASE).strip()
+                location = re.sub(rf"[,\s]*{full_name}[,\s]*", " ", location, flags=re.IGNORECASE).strip()
                 break
 
     # Clean up location
-    location = re.sub(r'\s+', ' ', location).strip()
-    location = location.rstrip(',').strip()
+    location = re.sub(r"\s+", " ", location).strip()
+    location = location.rstrip(",").strip()
 
     if not location:
         location = original  # Fallback if we stripped too much
@@ -87,15 +127,12 @@ def find_location(location: str):
     parameters={
         "type": "object",
         "properties": {
-            "location": {
-                "type": "string",
-                "description": "City name or location (e.g., 'New York', 'Charleston, WV')"
-            }
+            "location": {"type": "string", "description": "City name or location (e.g., 'New York', 'Charleston, WV')"}
         },
-        "required": ["location"]
-    }
+        "required": ["location"],
+    },
 )
-def weather(location: str, forecast_days: int = 1) -> str:
+def weather(location: str) -> str:
     """Get weather for a location using Open-Meteo API."""
     try:
         # Find the location
@@ -132,12 +169,32 @@ def weather(location: str, forecast_days: int = 1) -> str:
 
         # Weather code descriptions
         weather_codes = {
-            0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast",
-            45: "Foggy", 48: "Foggy", 51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
-            61: "Light rain", 63: "Rain", 65: "Heavy rain", 66: "Freezing rain", 67: "Freezing rain",
-            71: "Light snow", 73: "Snow", 75: "Heavy snow", 77: "Snow grains",
-            80: "Rain showers", 81: "Rain showers", 82: "Heavy showers",
-            85: "Snow showers", 86: "Heavy snow", 95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm"
+            0: "Clear",
+            1: "Mostly clear",
+            2: "Partly cloudy",
+            3: "Overcast",
+            45: "Foggy",
+            48: "Foggy",
+            51: "Light drizzle",
+            53: "Drizzle",
+            55: "Heavy drizzle",
+            61: "Light rain",
+            63: "Rain",
+            65: "Heavy rain",
+            66: "Freezing rain",
+            67: "Freezing rain",
+            71: "Light snow",
+            73: "Snow",
+            75: "Heavy snow",
+            77: "Snow grains",
+            80: "Rain showers",
+            81: "Rain showers",
+            82: "Heavy showers",
+            85: "Snow showers",
+            86: "Heavy snow",
+            95: "Thunderstorm",
+            96: "Thunderstorm",
+            99: "Thunderstorm",
         }
 
         code = current.get("weather_code", 0)

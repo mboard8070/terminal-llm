@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { uuid } from "./uuid";
 import {
   Conversation,
   loadConversations,
@@ -39,7 +40,7 @@ export function useConversations() {
 
   const createConversation = useCallback(
     (firstMessage: string, model: string): string => {
-      const id = crypto.randomUUID();
+      const id = uuid();
       const now = Date.now();
       const conv: Conversation = {
         id,

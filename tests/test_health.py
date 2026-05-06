@@ -2,8 +2,7 @@
 Tests for health.py — HealthChecker.
 """
 
-import pytest
-from health import HealthChecker, check_tool_ready, _ALWAYS_READY
+from health import _ALWAYS_READY, HealthChecker, check_tool_ready
 
 
 class TestCheckDependencies:
@@ -34,7 +33,7 @@ class TestCheckToolReady:
             assert reason == ""
 
     def test_read_file_ready(self):
-        ready, reason = check_tool_ready("read_file")
+        ready, _reason = check_tool_ready("read_file")
         assert ready is True
 
     def test_web_search_depends_on_ddgs(self):
@@ -45,7 +44,7 @@ class TestCheckToolReady:
             assert "ddgs" in reason
 
     def test_unknown_tool_assumed_ready(self):
-        ready, reason = check_tool_ready("totally_made_up_tool")
+        ready, _reason = check_tool_ready("totally_made_up_tool")
         assert ready is True
 
     def test_browser_tools_check_playwright(self):
@@ -60,12 +59,12 @@ class TestCheckServices:
         checker = HealthChecker()
         services = checker.check_services()
         assert "llama_server" in services
-        assert "personaplex" in services
+        assert "voice_server" in services
 
     def test_each_service_has_status(self):
         checker = HealthChecker()
         services = checker.check_services()
-        for name, info in services.items():
+        for _name, info in services.items():
             assert "status" in info
             assert info["status"] in ("ok", "down")
             assert "port" in info

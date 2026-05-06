@@ -10,15 +10,12 @@ atomic writes (write to .tmp then rename).
 """
 
 import json
-import os
 import socket
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ── Storage helpers ──────────────────────────────────────────────
 
@@ -49,6 +46,7 @@ def _read_json(path: Path, default=None):
 
 # ── Presence Manager ─────────────────────────────────────────────
 
+
 class PresenceManager:
     """Tracks client heartbeats. Prunes stale entries (>90s)."""
 
@@ -57,7 +55,7 @@ class PresenceManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._file = COLLAB_DIR / "presence.json"
-        self._clients: Dict[str, dict] = {}
+        self._clients: dict[str, dict] = {}
         self._load()
 
     def _load(self):
@@ -68,10 +66,16 @@ class PresenceManager:
                 if cid:
                     self._clients[cid] = entry
 
-    def heartbeat(self, client_id: str, client_type: str = "tui",
-                  activity: str = "", conversation_id: str = "",
-                  project_id: str = "", hostname: str = "",
-                  platform: str = ""):
+    def heartbeat(
+        self,
+        client_id: str,
+        client_type: str = "tui",
+        activity: str = "",
+        conversation_id: str = "",
+        project_id: str = "",
+        hostname: str = "",
+        platform: str = "",
+    ):
         with self._lock:
             self._clients[client_id] = {
                 "client_id": client_id,
@@ -87,26 +91,25 @@ class PresenceManager:
             self._prune()
             self._save()
 
-    def get_all(self) -> List[dict]:
+    def get_all(self) -> list[dict]:
         with self._lock:
             self._prune()
             return list(self._clients.values())
 
     def _prune(self):
         now = time.time()
-        stale = [k for k, v in self._clients.items()
-                 if now - v.get("last_seen", 0) > self.STALE_THRESHOLD]
+        stale = [k for k, v in self._clients.items() if now - v.get("last_seen", 0) > self.STALE_THRESHOLD]
         for k in stale:
             del self._clients[k]
 
     def _save(self):
         _atomic_write(self._file, list(self._clients.values()))
 
-    def get_bundle(self) -> List[dict]:
+    def get_bundle(self) -> list[dict]:
         """Return presence data for gossip."""
         return self.get_all()
 
-    def merge_peer(self, entries: List[dict]):
+    def merge_peer(self, entries: list[dict]):
         """Merge peer presence entries (peer is authoritative for its hostname)."""
         with self._lock:
             for entry in entries:
@@ -120,6 +123,7 @@ class PresenceManager:
 
 # ── Activity Feed ────────────────────────────────────────────────
 
+
 class ActivityFeed:
     """Append-only JSONL activity log. Daily rotation, capped gossip (last 100)."""
 
@@ -131,9 +135,15 @@ class ActivityFeed:
     def _today_file(self) -> Path:
         return COLLAB_DIR / f"activity-{time.strftime('%Y-%m-%d')}.jsonl"
 
-    def emit(self, event_type: str, summary: str, data: dict = None,
-             client_id: str = "", conversation_id: str = "",
-             project_id: str = ""):
+    def emit(
+        self,
+        event_type: str,
+        summary: str,
+        data: dict = None,
+        client_id: str = "",
+        conversation_id: str = "",
+        project_id: str = "",
+    ):
         event = {
             "id": f"evt-{uuid.uuid4().hex[:12]}",
             "ts": time.time(),
@@ -148,11 +158,10 @@ class ActivityFeed:
         if project_id:
             event["data"]["project_id"] = project_id
 
-        with self._lock:
-            with open(self._today_file(), "a") as f:
-                f.write(json.dumps(event, default=str) + "\n")
+        with self._lock, open(self._today_file(), "a") as f:
+            f.write(json.dumps(event, default=str) + "\n")
 
-    def get_recent(self, since: float = 0, limit: int = 50) -> List[dict]:
+    def get_recent(self, since: float = 0, limit: int = 50) -> list[dict]:
         """Get recent events, optionally since a timestamp."""
         events = []
         # Read today's and yesterday's files
@@ -172,24 +181,24 @@ class ActivityFeed:
         events.sort(key=lambda e: e.get("ts", 0), reverse=True)
         return events[:limit]
 
-    def get_bundle(self) -> List[dict]:
+    def get_bundle(self) -> list[dict]:
         """Return last N events for gossip."""
         return self.get_recent(limit=self.MAX_GOSSIP_EVENTS)
 
-    def merge_peer(self, events: List[dict]):
+    def merge_peer(self, events: list[dict]):
         """Merge peer events — only add events from their hostname we haven't seen."""
         existing_ids = set()
         for evt in self.get_recent(limit=500):
             existing_ids.add(evt.get("id"))
 
-        with self._lock:
-            with open(self._today_file(), "a") as f:
-                for evt in events:
-                    if evt.get("id") not in existing_ids and evt.get("hostname") != MY_HOSTNAME:
-                        f.write(json.dumps(evt, default=str) + "\n")
+        with self._lock, open(self._today_file(), "a") as f:
+            for evt in events:
+                if evt.get("id") not in existing_ids and evt.get("hostname") != MY_HOSTNAME:
+                    f.write(json.dumps(evt, default=str) + "\n")
 
 
 # ── Project Manager ──────────────────────────────────────────────
+
 
 class ProjectManager:
     """CRUD for projects. Each project links conversations + files."""
@@ -197,8 +206,7 @@ class ProjectManager:
     def __init__(self):
         self._lock = threading.Lock()
 
-    def create(self, name: str, description: str = "",
-               tags: List[str] = None) -> dict:
+    def create(self, name: str, description: str = "", tags: list[str] = None) -> dict:
         proj = {
             "id": f"proj-{uuid.uuid4().hex[:12]}",
             "name": name,
@@ -214,11 +222,11 @@ class ProjectManager:
             _atomic_write(PROJECTS_DIR / f"{proj['id']}.json", proj)
         return proj
 
-    def get(self, project_id: str) -> Optional[dict]:
+    def get(self, project_id: str) -> dict | None:
         safe_id = project_id.replace("/", "").replace("..", "")
         return _read_json(PROJECTS_DIR / f"{safe_id}.json", None)
 
-    def update(self, project_id: str, **kwargs) -> Optional[dict]:
+    def update(self, project_id: str, **kwargs) -> dict | None:
         proj = self.get(project_id)
         if not proj:
             return None
@@ -238,7 +246,7 @@ class ProjectManager:
             return True
         return False
 
-    def list_all(self) -> List[dict]:
+    def list_all(self) -> list[dict]:
         projects = []
         for f in PROJECTS_DIR.glob("proj-*.json"):
             proj = _read_json(f, None)
@@ -269,10 +277,10 @@ class ProjectManager:
                 _atomic_write(PROJECTS_DIR / f"{project_id}.json", proj)
         return True
 
-    def get_bundle(self) -> List[dict]:
+    def get_bundle(self) -> list[dict]:
         return self.list_all()
 
-    def merge_peer(self, projects: List[dict]):
+    def merge_peer(self, projects: list[dict]):
         """Merge peer projects — peer is authoritative for its own projects."""
         with self._lock:
             for proj in projects:
@@ -288,15 +296,23 @@ class ProjectManager:
 
 # ── Task Dispatcher ──────────────────────────────────────────────
 
+
 class TaskDispatcher:
     """Creates tasks, forwards to remote gateways, tracks state."""
 
     def __init__(self):
         self._lock = threading.Lock()
 
-    def create(self, prompt: str, target: str = "", capability: str = "LLM",
-               project_id: str = "", source: str = "",
-               target_client_id: str = "", target_platform: str = "") -> dict:
+    def create(
+        self,
+        prompt: str,
+        target: str = "",
+        capability: str = "LLM",
+        project_id: str = "",
+        source: str = "",
+        target_client_id: str = "",
+        target_platform: str = "",
+    ) -> dict:
         # Client-targeted tasks start as "queued" (picked up by polling clients)
         is_client_targeted = bool(target_client_id or target_platform)
         task = {
@@ -317,22 +333,21 @@ class TaskDispatcher:
             _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
         return task
 
-    def get_queued_for_client(self, client_id: str) -> List[dict]:
+    def get_queued_for_client(self, client_id: str) -> list[dict]:
         """Return tasks with status='queued' targeting this client_id."""
         tasks = []
         for f in TASKS_DIR.glob("task-*.json"):
             task = _read_json(f, None)
-            if task and task.get("status") == "queued":
-                if task.get("target_client_id") == client_id:
-                    tasks.append(task)
+            if task and task.get("status") == "queued" and task.get("target_client_id") == client_id:
+                tasks.append(task)
         tasks.sort(key=lambda t: t.get("created_at", 0))
         return tasks
 
-    def resolve_platform_targets(self, presence_clients: List[dict]):
+    def resolve_platform_targets(self, presence_clients: list[dict]):
         """For queued tasks with target_platform but no target_client_id,
         assign to the first active client on that platform."""
         # Build platform → client_id map
-        platform_map: Dict[str, str] = {}
+        platform_map: dict[str, str] = {}
         for client in presence_clients:
             plat = client.get("platform", "")
             cid = client.get("client_id", "")
@@ -342,20 +357,23 @@ class TaskDispatcher:
         with self._lock:
             for f in TASKS_DIR.glob("task-*.json"):
                 task = _read_json(f, None)
-                if (task and task.get("status") == "queued"
-                        and task.get("target_platform")
-                        and not task.get("target_client_id")):
+                if (
+                    task
+                    and task.get("status") == "queued"
+                    and task.get("target_platform")
+                    and not task.get("target_client_id")
+                ):
                     target_plat = task["target_platform"]
                     if target_plat in platform_map:
                         task["target_client_id"] = platform_map[target_plat]
                         task["updated_at"] = time.time()
                         _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
 
-    def get(self, task_id: str) -> Optional[dict]:
+    def get(self, task_id: str) -> dict | None:
         safe_id = task_id.replace("/", "").replace("..", "")
         return _read_json(TASKS_DIR / f"{safe_id}.json", None)
 
-    def update_status(self, task_id: str, status: str, result: str = None) -> Optional[dict]:
+    def update_status(self, task_id: str, status: str, result: str = None) -> dict | None:
         task = self.get(task_id)
         if not task:
             return None
@@ -367,7 +385,7 @@ class TaskDispatcher:
             _atomic_write(TASKS_DIR / f"{task_id}.json", task)
         return task
 
-    def list_all(self, status: str = None) -> List[dict]:
+    def list_all(self, status: str = None) -> list[dict]:
         tasks = []
         for f in TASKS_DIR.glob("task-*.json"):
             task = _read_json(f, None)
@@ -394,9 +412,8 @@ class TaskDispatcher:
             if capability == "SHELL":
                 # Execute shell command
                 import subprocess
-                result = subprocess.run(
-                    prompt, shell=True, capture_output=True, text=True, timeout=60
-                )
+
+                result = subprocess.run(prompt, shell=True, capture_output=True, text=True, timeout=60)
                 output = result.stdout or result.stderr or "(no output)"
                 self.update_status(task_id, "completed", output)
                 return output
@@ -404,6 +421,7 @@ class TaskDispatcher:
                 # Use local LLM via maude_core
                 try:
                     from maude_core import execute_tool
+
                     result = execute_tool("run_command", {"command": prompt})
                     self.update_status(task_id, "completed", str(result))
                     return str(result)
@@ -417,11 +435,11 @@ class TaskDispatcher:
             self.update_status(task_id, "failed", str(e))
             return f"Error: {e}"
 
-    def get_bundle(self) -> List[dict]:
+    def get_bundle(self) -> list[dict]:
         """Return recent tasks for gossip (last 50)."""
         return self.list_all()[:50]
 
-    def merge_peer(self, tasks: List[dict]):
+    def merge_peer(self, tasks: list[dict]):
         """Merge peer tasks — update local cache of remote task states."""
         with self._lock:
             for task in tasks:
@@ -441,8 +459,9 @@ PEERS_CACHE = COLLAB_DIR / "peers_cache.json"
 class GossipSync:
     """Produces and consumes gossip state bundles for peer exchange."""
 
-    def __init__(self, presence: PresenceManager, activity: ActivityFeed,
-                 projects: ProjectManager, tasks: TaskDispatcher):
+    def __init__(
+        self, presence: PresenceManager, activity: ActivityFeed, projects: ProjectManager, tasks: TaskDispatcher
+    ):
         self.presence = presence
         self.activity = activity
         self.projects = projects
@@ -482,6 +501,7 @@ class GossipSync:
 
 # ── CollabHub (Singleton) ────────────────────────────────────────
 
+
 class CollabHub:
     """Main collaboration hub composing all managers."""
 
@@ -490,39 +510,50 @@ class CollabHub:
         self.activity = ActivityFeed()
         self.projects = ProjectManager()
         self.tasks = TaskDispatcher()
-        self.gossip = GossipSync(
-            self.presence, self.activity, self.projects, self.tasks
-        )
+        self.gossip = GossipSync(self.presence, self.activity, self.projects, self.tasks)
 
     # ── Presence ──
 
-    def heartbeat(self, client_id: str, client_type: str = "tui",
-                  activity: str = "", conversation_id: str = "",
-                  project_id: str = "", hostname: str = "",
-                  platform: str = ""):
-        self.presence.heartbeat(client_id, client_type, activity,
-                                conversation_id, project_id,
-                                hostname, platform)
+    def heartbeat(
+        self,
+        client_id: str,
+        client_type: str = "tui",
+        activity: str = "",
+        conversation_id: str = "",
+        project_id: str = "",
+        hostname: str = "",
+        platform: str = "",
+    ):
+        self.presence.heartbeat(client_id, client_type, activity, conversation_id, project_id, hostname, platform)
 
     # ── Activity ──
 
-    def emit(self, event_type: str, summary: str, data: dict = None,
-             client_id: str = "", conversation_id: str = "",
-             project_id: str = ""):
-        self.activity.emit(event_type, summary, data, client_id,
-                           conversation_id, project_id)
+    def emit(
+        self,
+        event_type: str,
+        summary: str,
+        data: dict = None,
+        client_id: str = "",
+        conversation_id: str = "",
+        project_id: str = "",
+    ):
+        self.activity.emit(event_type, summary, data, client_id, conversation_id, project_id)
 
     # ── Status (merged view) ──
 
     def get_status(self) -> dict:
-        """Return full merged dashboard view for clients."""
+        """Return merged dashboard view for clients (truncated for mobile)."""
+        tasks = self.tasks.list_all()[:50]  # Cap at 50 most recent
+        for t in tasks:
+            if t.get("result") and len(t["result"]) > 300:
+                t["result"] = t["result"][:300] + "..."
         return {
             "hostname": MY_HOSTNAME,
             "ts": time.time(),
             "presence": self.presence.get_all(),
             "activity": self.activity.get_recent(),
             "projects": self.projects.list_all(),
-            "tasks": self.tasks.list_all(),
+            "tasks": tasks,
         }
 
     # ── Gossip ──
@@ -535,9 +566,15 @@ class CollabHub:
 
     # ── Task dispatch ──
 
-    def dispatch_task(self, prompt: str, target: str = "",
-                      capability: str = "LLM", project_id: str = "",
-                      target_client_id: str = "", target_platform: str = "") -> dict:
+    def dispatch_task(
+        self,
+        prompt: str,
+        target: str = "",
+        capability: str = "LLM",
+        project_id: str = "",
+        target_client_id: str = "",
+        target_platform: str = "",
+    ) -> dict:
         # Resolve target: check if it matches a client_id, hostname, or platform
         explicitly_targeted = bool(target or target_client_id or target_platform)
         if target and not target_client_id and not target_platform:
@@ -565,13 +602,19 @@ class CollabHub:
             # If target was specified but couldn't be resolved, fail fast
             if not target_client_id and not target_platform:
                 # List who IS online for the LLM
-                online = [f"{p.get('hostname')} ({p.get('platform')})"
-                          for p in presence
-                          if p.get("platform") not in ("gateway",)]
+                online = [
+                    f"{p.get('hostname')} ({p.get('platform')})"
+                    for p in presence
+                    if p.get("platform") not in ("gateway",)
+                ]
                 online_str = ", ".join(online) if online else "none"
                 task = self.tasks.create(
-                    prompt, target, capability, project_id,
-                    target_client_id="", target_platform="",
+                    prompt,
+                    target,
+                    capability,
+                    project_id,
+                    target_client_id="",
+                    target_platform="",
                 )
                 fail_msg = f"Device '{target}' not found or offline. Online clients: {online_str}"
                 self.tasks.update_status(task["id"], "failed", fail_msg)
@@ -579,56 +622,81 @@ class CollabHub:
                 task["result"] = fail_msg
                 return task
 
+        # Validate explicit target_client_id / target_platform against presence —
+        # otherwise a hallucinated client_id just sits queued forever.
+        if target_client_id or target_platform:
+            presence = self.presence.get_all()
+            non_gateway = [p for p in presence if p.get("platform") not in ("gateway",)]
+            online_str = (
+                ", ".join(f"{p.get('hostname')} [{p.get('client_id')}] ({p.get('platform')})" for p in non_gateway)
+                or "none"
+            )
+            if target_client_id and not any(p.get("client_id") == target_client_id for p in presence):
+                task = self.tasks.create(
+                    prompt, target, capability, project_id, target_client_id="", target_platform=""
+                )
+                fail_msg = f"client_id '{target_client_id}' not found or offline. Online clients: {online_str}"
+                self.tasks.update_status(task["id"], "failed", fail_msg)
+                task["status"] = "failed"
+                task["result"] = fail_msg
+                return task
+            if target_platform and not any(
+                p.get("platform", "").lower() == target_platform.lower() for p in non_gateway
+            ):
+                task = self.tasks.create(
+                    prompt, target, capability, project_id, target_client_id="", target_platform=""
+                )
+                fail_msg = f"No '{target_platform}' client online. Online clients: {online_str}"
+                self.tasks.update_status(task["id"], "failed", fail_msg)
+                task["status"] = "failed"
+                task["result"] = fail_msg
+                return task
+
         is_client_targeted = bool(target_client_id or target_platform)
         task = self.tasks.create(
-            prompt, target, capability, project_id,
+            prompt,
+            target,
+            capability,
+            project_id,
             target_client_id=target_client_id,
             target_platform=target_platform,
         )
 
         dest = target_client_id or target_platform or target or "local"
-        self.emit("task_dispatched", f"Dispatched task to {dest}",
-                  {"task_id": task["id"], "target": dest})
+        self.emit("task_dispatched", f"Dispatched task to {dest}", {"task_id": task["id"], "target": dest})
 
         if is_client_targeted:
             # Client-targeted: stays queued, client polls for it
             pass
         elif not explicitly_targeted:
             # No target specified — execute locally
-            threading.Thread(
-                target=self.tasks.execute, args=(task,), daemon=True
-            ).start()
+            threading.Thread(target=self.tasks.execute, args=(task,), daemon=True).start()
         else:
             # Forward to remote gateway via mesh
-            threading.Thread(
-                target=self._forward_task, args=(target, task), daemon=True
-            ).start()
+            threading.Thread(target=self._forward_task, args=(target, task), daemon=True).start()
 
         return task
 
     def _forward_task(self, target: str, task: dict):
         """Forward task to a remote gateway for execution."""
         import requests
+
         try:
             from mesh import get_mesh
+
             mesh = get_mesh()
             node = mesh.nodes.get(target)
             if not node:
-                self.tasks.update_status(task["id"], "failed",
-                                         f"Node {target} not found in mesh")
+                self.tasks.update_status(task["id"], "failed", f"Node {target} not found in mesh")
                 return
             host = node.tailscale_ip or node.ip or node.hostname
             url = f"http://{host}:{node.api_port}/api/collab/tasks/execute"
             resp = requests.post(url, json=task, timeout=120)
             if resp.status_code == 200:
                 result = resp.json()
-                self.tasks.update_status(
-                    task["id"], result.get("status", "completed"),
-                    result.get("result", "")
-                )
+                self.tasks.update_status(task["id"], result.get("status", "completed"), result.get("result", ""))
             else:
-                self.tasks.update_status(task["id"], "failed",
-                                         f"Remote error: {resp.status_code}")
+                self.tasks.update_status(task["id"], "failed", f"Remote error: {resp.status_code}")
         except Exception as e:
             self.tasks.update_status(task["id"], "failed", str(e))
 
@@ -644,27 +712,24 @@ class CollabHub:
 
     # ── Project CRUD ──
 
-    def create_project(self, name: str, description: str = "",
-                       tags: List[str] = None) -> dict:
+    def create_project(self, name: str, description: str = "", tags: list[str] = None) -> dict:
         proj = self.projects.create(name, description, tags)
-        self.emit("project_created", f"Created project: {name}",
-                  {"project_id": proj["id"]})
+        self.emit("project_created", f"Created project: {name}", {"project_id": proj["id"]})
         return proj
 
-    def update_project(self, project_id: str, **kwargs) -> Optional[dict]:
+    def update_project(self, project_id: str, **kwargs) -> dict | None:
         return self.projects.update(project_id, **kwargs)
 
-    def list_projects(self) -> List[dict]:
+    def list_projects(self) -> list[dict]:
         return self.projects.list_all()
 
-    def get_project(self, project_id: str) -> Optional[dict]:
+    def get_project(self, project_id: str) -> dict | None:
         return self.projects.get(project_id)
 
     def delete_project(self, project_id: str) -> bool:
         return self.projects.delete(project_id)
 
-    def add_to_project(self, project_id: str, conversation_id: str = "",
-                       file_path: str = "") -> bool:
+    def add_to_project(self, project_id: str, conversation_id: str = "", file_path: str = "") -> bool:
         if conversation_id:
             return self.projects.add_conversation(project_id, conversation_id)
         if file_path:
@@ -674,7 +739,7 @@ class CollabHub:
 
 # ── Module-level singleton ───────────────────────────────────────
 
-_hub: Optional[CollabHub] = None
+_hub: CollabHub | None = None
 _hub_lock = threading.Lock()
 
 

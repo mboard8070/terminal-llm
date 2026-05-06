@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
+import { uuid } from "./uuid";
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -44,7 +45,8 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   model?: string;
-  imageUrl?: string;
+  imageUrl?: string;       // Legacy single image (backward compat with stored messages)
+  imageUrls?: string[];    // Multiple images
   timestamp: number;
   trace?: TraceInfo;
   toolSteps?: ToolStep[];
@@ -153,8 +155,9 @@ export function useChat(conversationId: string | null = null) {
   }, [messages]);
 
   const sendMessage = useCallback(
-    async (content: string, imageUrl?: string) => {
-      if ((!content.trim() && !imageUrl) || isStreaming) return;
+    async (content: string, imageUrls?: string[]) => {
+      const hasImages = imageUrls && imageUrls.length > 0;
+      if ((!content.trim() && !hasImages) || isStreaming) return;
 
       if (content.startsWith("/")) {
         const cmd = content.trim().toLowerCase();
@@ -162,10 +165,10 @@ export function useChat(conversationId: string | null = null) {
         if (cmd.startsWith("/model ")) { setCurrentModel(cmd.slice(7).trim()); return; }
       }
 
-      const displayContent = content || (imageUrl ? "What do you see in this image?" : "");
+      const displayContent = content || (hasImages ? "What do you see in this image?" : "");
 
       const userMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: "user", content: displayContent, imageUrl, timestamp: Date.now(),
+        id: uuid(), role: "user", content: displayContent, imageUrls: hasImages ? imageUrls : undefined, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, userMsg]);
       setIsStreaming(true);
@@ -173,7 +176,7 @@ export function useChat(conversationId: string | null = null) {
       const model = modelRef.current;
 
       const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(), role: "assistant", content: "", model, timestamp: Date.now(),
+        id: uuid(), role: "assistant", content: "", model, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
@@ -185,11 +188,16 @@ export function useChat(conversationId: string | null = null) {
         const history = messages.filter((m) => m.role !== "system").slice(-20)
           .map((m) => ({ role: m.role, content: m.content }));
 
-        // Build the API content — prepend image context if an image is attached
+        // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
-        if (imageUrl) {
-          const sharedPath = `/home/mboard76/nvidia-workbench/terminal-llm/shared/${imageUrl.split("/").pop()}`;
-          apiContent = `[Image attached: ${sharedPath} — analyze it with view_image tool]\n\n${displayContent}`;
+        if (hasImages) {
+          const imagePaths = imageUrls.map((u) => `/home/mboard76/nvidia-workbench/terminal-llm/shared/${u.split("/").pop()}`);
+          if (imagePaths.length === 1) {
+            apiContent = `[Image attached: ${imagePaths[0]} — analyze it with view_image tool]\n\n${displayContent}`;
+          } else {
+            const listing = imagePaths.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
+            apiContent = `[${imagePaths.length} images attached — analyze each with view_image tool:\n${listing}]\n\n${displayContent}`;
+          }
         }
 
         // Fetch device location (non-blocking, cached)
@@ -228,7 +236,9 @@ export function useChat(conversationId: string | null = null) {
           const { sid } = await createResp.json();
 
           await new Promise<void>((resolve) => {
-            const es = new EventSource(`${getGatewayUrl()}/api/chat/stream?sid=${sid}`);
+            let es: EventSource | null = null;
+            let eventOffset = 0;
+            let finished = false;
             let fullContent = "";
             const trace: TraceInfo = {
               tools: [], promptTokens: 0, completionTokens: 0,
@@ -237,7 +247,9 @@ export function useChat(conversationId: string | null = null) {
             const toolSteps: ToolStep[] = [];
 
             const finish = () => {
-              es.close();
+              if (finished) return;
+              finished = true;
+              es?.close();
               if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = 0; }
               const finalUpdates: Partial<ChatMessage> = { content: fullContent };
               if (actualModel) finalUpdates.model = actualModel;
@@ -252,6 +264,11 @@ export function useChat(conversationId: string | null = null) {
             };
 
             controller.signal.addEventListener("abort", () => finish());
+
+            const markEvent = (event: MessageEvent) => {
+              const id = Number(event.lastEventId);
+              eventOffset = Number.isFinite(id) ? id + 1 : eventOffset + 1;
+            };
 
             // Schedule RAF-based UI update (same pattern as fetch path)
             const scheduleUpdate = () => {
@@ -270,7 +287,8 @@ export function useChat(conversationId: string | null = null) {
             };
 
             let inReasoning = false;
-            es.onmessage = (event) => {
+            const handleMessage = (event: MessageEvent) => {
+              markEvent(event);
               if (event.data === "[DONE]") { finish(); return; }
               try {
                 const parsed = JSON.parse(event.data);
@@ -288,51 +306,60 @@ export function useChat(conversationId: string | null = null) {
               } catch { /* skip malformed */ }
             };
 
-            es.addEventListener("trace", ((event: MessageEvent) => {
+            const handleTrace = ((event: MessageEvent) => {
+              markEvent(event);
               try {
-                const t = JSON.parse(event.data);
-                if (t.type === "tool_call" && t.name) {
-                  trace.tools.push(t.name);
-                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
-                  scheduleUpdate();
-                } else if (t.type === "tool_result") {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].result = (t.preview || "").slice(0, 60);
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      toolSteps[i].status = (toolSteps[i].result || "").startsWith("Error") ? "error" : "done";
-                      break;
+                  const t = JSON.parse(event.data);
+                  if (t.type === "tool_call" && t.name) {
+                    trace.tools.push(t.name);
+                    const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+                    toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                    scheduleUpdate();
+                  } else if (t.type === "tool_result") {
+                    for (let i = toolSteps.length - 1; i >= 0; i--) {
+                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                        toolSteps[i].result = (t.preview || "").slice(0, 60);
+                        toolSteps[i].elapsed = t.elapsed || 0;
+                        toolSteps[i].status = (toolSteps[i].result || "").startsWith("Error") ? "error" : "done";
+                        break;
+                      }
                     }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "keepalive" && t.name) {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].elapsed = t.elapsed || 0; break;
+                    scheduleUpdate();
+                  } else if (t.type === "keepalive" && t.name) {
+                    for (let i = toolSteps.length - 1; i >= 0; i--) {
+                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+                        toolSteps[i].elapsed = t.elapsed || 0; break;
+                      }
                     }
+                    scheduleUpdate();
+                  } else if (t.type === "llm_call") {
+                    trace.promptTokens += t.prompt_tokens || 0;
+                    trace.completionTokens += t.completion_tokens || 0;
+                    trace.cacheReadTokens += t.cache_read_tokens || 0;
+                    trace.cacheCreateTokens += t.cache_create_tokens || 0;
+                    trace.elapsed += t.elapsed || 0;
+                  } else if (t.type === "error") {
+                    fullContent += `\n\n*Error: ${t.message || "Unknown error"}*`;
+                    contentRef.current = fullContent;
+                    scheduleUpdate();
                   }
-                  scheduleUpdate();
-                } else if (t.type === "llm_call") {
-                  trace.promptTokens += t.prompt_tokens || 0;
-                  trace.completionTokens += t.completion_tokens || 0;
-                  trace.cacheReadTokens += t.cache_read_tokens || 0;
-                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                  trace.elapsed += t.elapsed || 0;
-                } else if (t.type === "error") {
-                  fullContent += `\n\n*Error: ${t.message || "Unknown error"}*`;
-                  contentRef.current = fullContent;
-                  scheduleUpdate();
-                }
-              } catch { /* skip */ }
-            }) as EventListener);
+                } catch { /* skip */ }
+            }) as EventListener;
 
-            es.onerror = () => {
-              if (!fullContent) {
-                fullContent = "Connection interrupted — send your message again to retry.";
+            const connect = () => {
+              if (finished || controller.signal.aborted) return;
+              es?.close();
+              es = new EventSource(`${getGatewayUrl()}/api/chat/stream?sid=${sid}&offset=${eventOffset}`);
+              es.onmessage = handleMessage;
+              es.addEventListener("trace", handleTrace);
+              es.onerror = () => {
+                es?.close();
+                if (!finished && !controller.signal.aborted) {
+                  window.setTimeout(connect, document.visibilityState === "visible" ? 1000 : 3000);
+                }
               }
-              finish();
             };
+            connect();
           });
           return;
         }

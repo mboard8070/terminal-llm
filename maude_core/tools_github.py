@@ -3,8 +3,8 @@ GitHub tool implementations — repos, issues, PRs, branches, commits,
 workflow runs, releases, and search via gh CLI.
 """
 
-import subprocess
 import json
+import subprocess
 
 from tool_registry import register_tool
 
@@ -14,7 +14,9 @@ def _run_gh(*args: str, timeout: int = 30) -> tuple[int, str]:
     try:
         result = subprocess.run(
             ["gh", *args],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         output = result.stdout.strip() or result.stderr.strip()
         return result.returncode, output
@@ -26,10 +28,19 @@ def _run_gh(*args: str, timeout: int = 30) -> tuple[int, str]:
 
 # ── Pull Requests ──────────────────────────────────────────────
 
+
 def tool_github_list_prs(repo: str = "", state: str = "open", limit: int = 10) -> str:
     """List pull requests for a repository."""
-    args = ["pr", "list", "--state", state, "--limit", str(limit), "--json",
-            "number,title,state,author,headRefName,baseRefName,createdAt,mergeable"]
+    args = [
+        "pr",
+        "list",
+        "--state",
+        state,
+        "--limit",
+        str(limit),
+        "--json",
+        "number,title,state,author,headRefName,baseRefName,createdAt,mergeable",
+    ]
     if repo:
         args.extend(["--repo", repo])
     rc, output = _run_gh(*args)
@@ -55,9 +66,14 @@ def tool_github_list_prs(repo: str = "", state: str = "open", limit: int = 10) -
 
 def tool_github_view_pr(pr_number: int, repo: str = "") -> str:
     """View details of a specific pull request."""
-    args = ["pr", "view", str(pr_number), "--json",
-            "number,title,state,body,author,headRefName,baseRefName,"
-            "mergeable,reviewDecision,statusCheckRollup,additions,deletions,changedFiles"]
+    args = [
+        "pr",
+        "view",
+        str(pr_number),
+        "--json",
+        "number,title,state,body,author,headRefName,baseRefName,"
+        "mergeable,reviewDecision,statusCheckRollup,additions,deletions,changedFiles",
+    ]
     if repo:
         args.extend(["--repo", repo])
     rc, output = _run_gh(*args)
@@ -83,8 +99,9 @@ def tool_github_view_pr(pr_number: int, repo: str = "") -> str:
     )
 
 
-def tool_github_create_pr(title: str, body: str = "", base: str = "", head: str = "",
-                           repo: str = "", draft: bool = False) -> str:
+def tool_github_create_pr(
+    title: str, body: str = "", base: str = "", head: str = "", repo: str = "", draft: bool = False
+) -> str:
     """Create a pull request."""
     args = ["pr", "create", "--title", title]
     if body:
@@ -103,8 +120,7 @@ def tool_github_create_pr(title: str, body: str = "", base: str = "", head: str 
     return f"Pull request created: {output}"
 
 
-def tool_github_merge_pr(pr_number: int, repo: str = "", method: str = "merge",
-                         delete_branch: bool = True) -> str:
+def tool_github_merge_pr(pr_number: int, repo: str = "", method: str = "merge", delete_branch: bool = True) -> str:
     """Merge a pull request."""
     if method not in ("merge", "squash", "rebase"):
         return f"Error: Invalid merge method '{method}'. Use merge, squash, or rebase."
@@ -122,8 +138,7 @@ def tool_github_merge_pr(pr_number: int, repo: str = "", method: str = "merge",
 def tool_github_close_pr(pr_number: int, repo: str = "", comment: str = "") -> str:
     """Close a pull request without merging."""
     if comment:
-        _run_gh("pr", "comment", str(pr_number), "--body", comment,
-                *(["--repo", repo] if repo else []))
+        _run_gh("pr", "comment", str(pr_number), "--body", comment, *(["--repo", repo] if repo else []))
     args = ["pr", "close", str(pr_number)]
     if repo:
         args.extend(["--repo", repo])
@@ -186,11 +201,19 @@ def tool_github_comment_pr(pr_number: int, body: str, repo: str = "") -> str:
 
 # ── Issues ─────────────────────────────────────────────────────
 
-def tool_github_list_issues(repo: str = "", state: str = "open", labels: str = "",
-                             limit: int = 10) -> str:
+
+def tool_github_list_issues(repo: str = "", state: str = "open", labels: str = "", limit: int = 10) -> str:
     """List issues for a repository."""
-    args = ["issue", "list", "--state", state, "--limit", str(limit),
-            "--json", "number,title,state,author,labels,createdAt,assignees"]
+    args = [
+        "issue",
+        "list",
+        "--state",
+        state,
+        "--limit",
+        str(limit),
+        "--json",
+        "number,title,state,author,labels,createdAt,assignees",
+    ]
     if labels:
         args.extend(["--label", labels])
     if repo:
@@ -217,8 +240,13 @@ def tool_github_list_issues(repo: str = "", state: str = "open", labels: str = "
 
 def tool_github_view_issue(issue_number: int, repo: str = "") -> str:
     """View details of a specific issue."""
-    args = ["issue", "view", str(issue_number), "--json",
-            "number,title,state,body,author,labels,assignees,comments,createdAt,closedAt"]
+    args = [
+        "issue",
+        "view",
+        str(issue_number),
+        "--json",
+        "number,title,state,body,author,labels,assignees,comments,createdAt,closedAt",
+    ]
     if repo:
         args.extend(["--repo", repo])
     rc, output = _run_gh(*args)
@@ -235,10 +263,7 @@ def tool_github_view_issue(issue_number: int, repo: str = "") -> str:
     body = iss.get("body") or "(no description)"
     if len(body) > 3000:
         body = body[:3000] + "\n... (truncated)"
-    result = (
-        f"Issue #{iss['number']}: {iss['title']}\n"
-        f"  state: {iss['state']}  by {author}\n"
-    )
+    result = f"Issue #{iss['number']}: {iss['title']}\n  state: {iss['state']}  by {author}\n"
     if labels:
         result += f"  labels: {', '.join(labels)}\n"
     if assignees:
@@ -247,8 +272,7 @@ def tool_github_view_issue(issue_number: int, repo: str = "") -> str:
     return result
 
 
-def tool_github_create_issue(title: str, body: str = "", labels: str = "",
-                              assignee: str = "", repo: str = "") -> str:
+def tool_github_create_issue(title: str, body: str = "", labels: str = "", assignee: str = "", repo: str = "") -> str:
     """Create a new issue."""
     args = ["issue", "create", "--title", title]
     if body:
@@ -268,8 +292,7 @@ def tool_github_create_issue(title: str, body: str = "", labels: str = "",
 def tool_github_close_issue(issue_number: int, comment: str = "", repo: str = "") -> str:
     """Close an issue."""
     if comment:
-        _run_gh("issue", "comment", str(issue_number), "--body", comment,
-                *(["--repo", repo] if repo else []))
+        _run_gh("issue", "comment", str(issue_number), "--body", comment, *(["--repo", repo] if repo else []))
     args = ["issue", "close", str(issue_number)]
     if repo:
         args.extend(["--repo", repo])
@@ -292,13 +315,15 @@ def tool_github_comment_issue(issue_number: int, body: str, repo: str = "") -> s
 
 # ── Repos ──────────────────────────────────────────────────────
 
+
 def tool_github_list_repos(owner: str = "", limit: int = 10) -> str:
     """List repositories for a user/org or the authenticated user."""
     args = ["repo", "list"]
     if owner:
         args.append(owner)
-    args.extend(["--limit", str(limit),
-                 "--json", "name,description,visibility,updatedAt,primaryLanguage,stargazerCount"])
+    args.extend(
+        ["--limit", str(limit), "--json", "name,description,visibility,updatedAt,primaryLanguage,stargazerCount"]
+    )
     rc, output = _run_gh(*args)
     if rc != 0:
         return f"Error listing repos: {output}"
@@ -332,10 +357,14 @@ def tool_github_list_repos(owner: str = "", limit: int = 10) -> str:
 
 def tool_github_view_repo(repo: str = "") -> str:
     """View detailed info about a repository."""
-    args = ["repo", "view", "--json",
-            "name,owner,description,url,visibility,defaultBranchRef,"
-            "stargazerCount,forkCount,languages,createdAt,updatedAt,"
-            "hasIssuesEnabled,hasWikiEnabled,isArchived,licenseInfo"]
+    args = [
+        "repo",
+        "view",
+        "--json",
+        "name,owner,description,url,visibility,defaultBranchRef,"
+        "stargazerCount,forkCount,languages,createdAt,updatedAt,"
+        "hasIssuesEnabled,hasWikiEnabled,isArchived,licenseInfo",
+    ]
     if repo:
         args.insert(2, repo)
     rc, output = _run_gh(*args)
@@ -348,7 +377,9 @@ def tool_github_view_repo(repo: str = "") -> str:
     owner = r.get("owner", {}).get("login", "unknown")
     branch = r.get("defaultBranchRef", {}).get("name", "unknown") if r.get("defaultBranchRef") else "unknown"
     langs = r.get("languages", [])
-    lang_str = ", ".join(l.get("node", {}).get("name", "") for l in (langs.get("edges", []) if isinstance(langs, dict) else []))
+    lang_str = ", ".join(
+        l.get("node", {}).get("name", "") for l in (langs.get("edges", []) if isinstance(langs, dict) else [])
+    )
     license_name = ""
     if r.get("licenseInfo"):
         license_name = r["licenseInfo"].get("name", "")
@@ -370,13 +401,24 @@ def tool_github_view_repo(repo: str = "") -> str:
 
 # ── Branches ───────────────────────────────────────────────────
 
+
 def tool_github_list_branches(repo: str = "", limit: int = 20) -> str:
     """List branches in a repository."""
-    args = ["api", "repos/{owner}/{repo}/branches", "--paginate", "--jq",
-            '.[] | "\\(.name)  \\(if .protected then "[protected]" else "" end)"']
+    args = [
+        "api",
+        "repos/{owner}/{repo}/branches",
+        "--paginate",
+        "--jq",
+        '.[] | "\\(.name)  \\(if .protected then "[protected]" else "" end)"',
+    ]
     if repo:
-        args = ["api", f"repos/{repo}/branches", "--paginate", "--jq",
-                '.[] | "\\(.name)  \\(if .protected then "[protected]" else "" end)"']
+        args = [
+            "api",
+            f"repos/{repo}/branches",
+            "--paginate",
+            "--jq",
+            '.[] | "\\(.name)  \\(if .protected then "[protected]" else "" end)"',
+        ]
     rc, output = _run_gh(*args)
     if rc != 0:
         return f"Error listing branches: {output}"
@@ -389,10 +431,15 @@ def tool_github_list_branches(repo: str = "", limit: int = 20) -> str:
 
 # ── Commits ────────────────────────────────────────────────────
 
+
 def tool_github_list_commits(repo: str = "", branch: str = "", limit: int = 10) -> str:
     """List recent commits."""
-    args = ["api", "repos/{owner}/{repo}/commits",
-            "--jq", '.[] | "\\(.sha[:7])  \\(.commit.author.name)  \\(.commit.message | split("\\n")[0])"']
+    args = [
+        "api",
+        "repos/{owner}/{repo}/commits",
+        "--jq",
+        '.[] | "\\(.sha[:7])  \\(.commit.author.name)  \\(.commit.message | split("\\n")[0])"',
+    ]
     if repo:
         args[1] = f"repos/{repo}/commits"
     params = ["-f", f"per_page={limit}"]
@@ -402,9 +449,9 @@ def tool_github_list_commits(repo: str = "", branch: str = "", limit: int = 10) 
     rc, output = _run_gh(*args)
     if rc != 0:
         # Fallback to git log for current repo
-        args2 = ["log", f"--oneline", f"-{limit}"]
+        args2 = ["log", "--oneline", f"-{limit}"]
         try:
-            result = subprocess.run(["git"] + args2, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(["git", *args2], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 return result.stdout.strip()
         except Exception:
@@ -415,10 +462,17 @@ def tool_github_list_commits(repo: str = "", branch: str = "", limit: int = 10) 
 
 # ── Workflow Runs ──────────────────────────────────────────────
 
+
 def tool_github_list_runs(repo: str = "", limit: int = 10, status: str = "") -> str:
     """List recent workflow runs (CI/CD)."""
-    args = ["run", "list", "--limit", str(limit),
-            "--json", "databaseId,name,status,conclusion,headBranch,event,createdAt"]
+    args = [
+        "run",
+        "list",
+        "--limit",
+        str(limit),
+        "--json",
+        "databaseId,name,status,conclusion,headBranch,event,createdAt",
+    ]
     if status:
         args.extend(["--status", status])
     if repo:
@@ -436,18 +490,19 @@ def tool_github_list_runs(repo: str = "", limit: int = 10, status: str = "") -> 
     for r in runs:
         conclusion = r.get("conclusion", "") or r.get("status", "")
         branch = r.get("headBranch", "")
-        lines.append(
-            f"#{r['databaseId']}  {r['name']}  {conclusion}  "
-            f"branch={branch}  trigger={r.get('event', '')}"
-        )
+        lines.append(f"#{r['databaseId']}  {r['name']}  {conclusion}  branch={branch}  trigger={r.get('event', '')}")
     return "\n".join(lines)
 
 
 def tool_github_view_run(run_id: int, repo: str = "") -> str:
     """View details of a specific workflow run."""
-    args = ["run", "view", str(run_id),
-            "--json", "databaseId,name,status,conclusion,headBranch,event,"
-            "createdAt,updatedAt,jobs,url"]
+    args = [
+        "run",
+        "view",
+        str(run_id),
+        "--json",
+        "databaseId,name,status,conclusion,headBranch,event,createdAt,updatedAt,jobs,url",
+    ]
     if repo:
         args.extend(["--repo", repo])
     rc, output = _run_gh(*args)
@@ -486,6 +541,7 @@ def tool_github_rerun(run_id: int, repo: str = "", failed_only: bool = False) ->
 
 # ── Releases ───────────────────────────────────────────────────
 
+
 def tool_github_list_releases(repo: str = "", limit: int = 5) -> str:
     """List releases."""
     args = ["release", "list", "--limit", str(limit)]
@@ -497,9 +553,9 @@ def tool_github_list_releases(repo: str = "", limit: int = 5) -> str:
     return output if output else "No releases found."
 
 
-def tool_github_create_release(tag: str, title: str = "", notes: str = "",
-                                draft: bool = False, prerelease: bool = False,
-                                repo: str = "") -> str:
+def tool_github_create_release(
+    tag: str, title: str = "", notes: str = "", draft: bool = False, prerelease: bool = False, repo: str = ""
+) -> str:
     """Create a new release."""
     args = ["release", "create", tag]
     if title:
@@ -522,11 +578,19 @@ def tool_github_create_release(tag: str, title: str = "", notes: str = "",
 
 # ── Search ─────────────────────────────────────────────────────
 
+
 def tool_github_search(query: str, type: str = "repos", limit: int = 10) -> str:
     """Search GitHub for repos, issues, PRs, or code."""
     if type == "repos":
-        args = ["search", "repos", query, "--limit", str(limit),
-                "--json", "fullName,description,stargazersCount,language,updatedAt"]
+        args = [
+            "search",
+            "repos",
+            query,
+            "--limit",
+            str(limit),
+            "--json",
+            "fullName,description,stargazersCount,language,updatedAt",
+        ]
         rc, output = _run_gh(*args)
         if rc != 0:
             return f"Error searching: {output}"
@@ -551,8 +615,7 @@ def tool_github_search(query: str, type: str = "repos", limit: int = 10) -> str:
             lines.append("  ".join(parts))
         return "\n".join(lines) if lines else "No results."
     elif type == "issues":
-        args = ["search", "issues", query, "--limit", str(limit),
-                "--json", "repository,number,title,state,author"]
+        args = ["search", "issues", query, "--limit", str(limit), "--json", "repository,number,title,state,author"]
         rc, output = _run_gh(*args)
         if rc != 0:
             return f"Error searching: {output}"
@@ -567,8 +630,7 @@ def tool_github_search(query: str, type: str = "repos", limit: int = 10) -> str:
             lines.append(f"{repo_name}#{r.get('number')}  {r.get('title')}  [{r.get('state')}] by {author}")
         return "\n".join(lines) if lines else "No results."
     elif type == "prs":
-        args = ["search", "prs", query, "--limit", str(limit),
-                "--json", "repository,number,title,state,author"]
+        args = ["search", "prs", query, "--limit", str(limit), "--json", "repository,number,title,state,author"]
         rc, output = _run_gh(*args)
         if rc != 0:
             return f"Error searching: {output}"
@@ -583,8 +645,7 @@ def tool_github_search(query: str, type: str = "repos", limit: int = 10) -> str:
             lines.append(f"{repo_name}#{r.get('number')}  {r.get('title')}  [{r.get('state')}] by {author}")
         return "\n".join(lines) if lines else "No results."
     elif type == "code":
-        args = ["search", "code", query, "--limit", str(limit),
-                "--json", "repository,path"]
+        args = ["search", "code", query, "--limit", str(limit), "--json", "repository,path"]
         rc, output = _run_gh(*args)
         if rc != 0:
             return f"Error searching: {output}"
@@ -603,11 +664,19 @@ def tool_github_search(query: str, type: str = "repos", limit: int = 10) -> str:
 
 # ── Notifications ──────────────────────────────────────────────
 
+
 def tool_github_notifications(limit: int = 10) -> str:
     """List unread GitHub notifications."""
-    args = ["api", "notifications", "--method", "GET", "--jq",
-            '.[] | "\\(.subject.type): \\(.subject.title)  [\\(.repository.full_name)]"',
-            "-f", f"per_page={limit}"]
+    args = [
+        "api",
+        "notifications",
+        "--method",
+        "GET",
+        "--jq",
+        '.[] | "\\(.subject.type): \\(.subject.title)  [\\(.repository.full_name)]"',
+        "-f",
+        f"per_page={limit}",
+    ]
     rc, output = _run_gh(*args)
     if rc != 0:
         return f"Error fetching notifications: {output}"
@@ -615,6 +684,7 @@ def tool_github_notifications(limit: int = 10) -> str:
 
 
 # ── Registry wrappers ──────────────────────────────────────────
+
 
 @register_tool("github_list_prs")
 def _dispatch_list_prs(args):
@@ -624,12 +694,14 @@ def _dispatch_list_prs(args):
         limit=args.get("limit", 10),
     )
 
+
 @register_tool("github_view_pr")
 def _dispatch_view_pr(args):
     return tool_github_view_pr(
         pr_number=args.get("pr_number"),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_create_pr")
 def _dispatch_create_pr(args):
@@ -642,6 +714,7 @@ def _dispatch_create_pr(args):
         draft=args.get("draft", False),
     )
 
+
 @register_tool("github_merge_pr")
 def _dispatch_merge_pr(args):
     return tool_github_merge_pr(
@@ -651,6 +724,7 @@ def _dispatch_merge_pr(args):
         delete_branch=args.get("delete_branch", True),
     )
 
+
 @register_tool("github_close_pr")
 def _dispatch_close_pr(args):
     return tool_github_close_pr(
@@ -659,12 +733,14 @@ def _dispatch_close_pr(args):
         comment=args.get("comment", ""),
     )
 
+
 @register_tool("github_pr_diff")
 def _dispatch_pr_diff(args):
     return tool_github_pr_diff(
         pr_number=args.get("pr_number"),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_pr_comments")
 def _dispatch_pr_comments(args):
@@ -673,6 +749,7 @@ def _dispatch_pr_comments(args):
         repo=args.get("repo", ""),
     )
 
+
 @register_tool("github_comment_pr")
 def _dispatch_comment_pr(args):
     return tool_github_comment_pr(
@@ -680,6 +757,7 @@ def _dispatch_comment_pr(args):
         body=args.get("body", ""),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_list_issues")
 def _dispatch_list_issues(args):
@@ -690,12 +768,14 @@ def _dispatch_list_issues(args):
         limit=args.get("limit", 10),
     )
 
+
 @register_tool("github_view_issue")
 def _dispatch_view_issue(args):
     return tool_github_view_issue(
         issue_number=args.get("issue_number"),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_create_issue")
 def _dispatch_create_issue(args):
@@ -707,6 +787,7 @@ def _dispatch_create_issue(args):
         repo=args.get("repo", ""),
     )
 
+
 @register_tool("github_close_issue")
 def _dispatch_close_issue(args):
     return tool_github_close_issue(
@@ -714,6 +795,7 @@ def _dispatch_close_issue(args):
         comment=args.get("comment", ""),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_comment_issue")
 def _dispatch_comment_issue(args):
@@ -723,6 +805,7 @@ def _dispatch_comment_issue(args):
         repo=args.get("repo", ""),
     )
 
+
 @register_tool("github_list_repos")
 def _dispatch_list_repos(args):
     return tool_github_list_repos(
@@ -730,11 +813,13 @@ def _dispatch_list_repos(args):
         limit=args.get("limit", 10),
     )
 
+
 @register_tool("github_view_repo")
 def _dispatch_view_repo(args):
     return tool_github_view_repo(
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_list_branches")
 def _dispatch_list_branches(args):
@@ -742,6 +827,7 @@ def _dispatch_list_branches(args):
         repo=args.get("repo", ""),
         limit=args.get("limit", 20),
     )
+
 
 @register_tool("github_list_commits")
 def _dispatch_list_commits(args):
@@ -751,6 +837,7 @@ def _dispatch_list_commits(args):
         limit=args.get("limit", 10),
     )
 
+
 @register_tool("github_list_runs")
 def _dispatch_list_runs(args):
     return tool_github_list_runs(
@@ -759,12 +846,14 @@ def _dispatch_list_runs(args):
         status=args.get("status", ""),
     )
 
+
 @register_tool("github_view_run")
 def _dispatch_view_run(args):
     return tool_github_view_run(
         run_id=args.get("run_id"),
         repo=args.get("repo", ""),
     )
+
 
 @register_tool("github_rerun")
 def _dispatch_rerun(args):
@@ -774,12 +863,14 @@ def _dispatch_rerun(args):
         failed_only=args.get("failed_only", False),
     )
 
+
 @register_tool("github_list_releases")
 def _dispatch_list_releases(args):
     return tool_github_list_releases(
         repo=args.get("repo", ""),
         limit=args.get("limit", 5),
     )
+
 
 @register_tool("github_create_release")
 def _dispatch_create_release(args):
@@ -792,6 +883,7 @@ def _dispatch_create_release(args):
         repo=args.get("repo", ""),
     )
 
+
 @register_tool("github_search")
 def _dispatch_search(args):
     return tool_github_search(
@@ -799,6 +891,7 @@ def _dispatch_search(args):
         type=args.get("type", "repos"),
         limit=args.get("limit", 10),
     )
+
 
 @register_tool("github_notifications")
 def _dispatch_notifications(args):

@@ -55,12 +55,28 @@ cover/
 # Workbench Project Layout
 data/scratch/*
 !data/scratch/.gitkeep
+data/collab/
+data/conversations/
+data/sandbox/
+data/workflow_runs/
+data/workflows/
 
 # Local LLM setup
 venv/
+.venv/
 llama.cpp/
 models/
 *.gguf
+
+# Local runtime/service state
+.claude/
+.ruff_cache/
+logs/
+certs/
+shared/*
+!shared/.gitkeep
+transfers/
+maude-phone/node_modules/
 
 # Environment files with secrets
 variables.env

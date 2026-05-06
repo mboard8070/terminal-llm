@@ -6,11 +6,11 @@ carry across devices. The gateway stores JSON files in data/conversations/.
 """
 
 import json
+import threading
 import time
 import uuid
-import threading
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 GATEWAY_API = "http://localhost:30080"
 
@@ -26,29 +26,21 @@ def _api_get(path: str):
 
 def _api_post(path: str, data):
     """POST JSON to gateway API (fire-and-forget in background thread)."""
+
     def _do():
         try:
             body = json.dumps(data).encode()
-            req = Request(f"{GATEWAY_API}{path}", data=body,
-                          headers={"Content-Type": "application/json"}, method="POST")
+            req = Request(
+                f"{GATEWAY_API}{path}", data=body, headers={"Content-Type": "application/json"}, method="POST"
+            )
             urlopen(req, timeout=3)
         except (URLError, Exception):
             pass
+
     threading.Thread(target=_do, daemon=True).start()
 
 
-def list_conversations() -> list[dict]:
-    """Get all conversations from the server."""
-    return _api_get("/api/conversations") or []
-
-
-def load_messages(conv_id: str) -> list[dict]:
-    """Load messages for a conversation from the server."""
-    return _api_get(f"/api/conversations/{conv_id}/messages") or []
-
-
-def save_conversation(conv_id: str, title: str, model: str, messages: list[dict],
-                      project_id: str = ""):
+def save_conversation(conv_id: str, title: str, model: str, messages: list[dict], project_id: str = ""):
     """Save a conversation's metadata and messages to the server.
 
     Updates the conversation index and saves messages. Skips system messages.
@@ -59,13 +51,15 @@ def save_conversation(conv_id: str, title: str, model: str, messages: list[dict]
     for m in messages:
         if m.get("role") == "system":
             continue
-        stored_msgs.append({
-            "id": m.get("id", str(uuid.uuid4())),
-            "role": m["role"],
-            "content": m["content"],
-            "model": m.get("model", model),
-            "timestamp": m.get("timestamp", int(time.time() * 1000)),
-        })
+        stored_msgs.append(
+            {
+                "id": m.get("id", str(uuid.uuid4())),
+                "role": m["role"],
+                "content": m["content"],
+                "model": m.get("model", model),
+                "timestamp": m.get("timestamp", int(time.time() * 1000)),
+            }
+        )
 
     # Update index
     now = int(time.time() * 1000)
@@ -77,13 +71,16 @@ def save_conversation(conv_id: str, title: str, model: str, messages: list[dict]
         existing["title"] = title
         existing["model"] = model
     else:
-        index.insert(0, {
-            "id": conv_id,
-            "title": title,
-            "createdAt": now,
-            "updatedAt": now,
-            "model": model,
-        })
+        index.insert(
+            0,
+            {
+                "id": conv_id,
+                "title": title,
+                "createdAt": now,
+                "updatedAt": now,
+                "model": model,
+            },
+        )
 
     # Sort newest first
     index.sort(key=lambda c: c.get("updatedAt", 0), reverse=True)
@@ -95,6 +92,7 @@ def save_conversation(conv_id: str, title: str, model: str, messages: list[dict]
     if project_id:
         try:
             from collab import get_hub
+
             get_hub().add_to_project(project_id, conversation_id=conv_id)
         except Exception:
             pass

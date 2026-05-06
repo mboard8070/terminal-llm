@@ -1,7 +1,9 @@
 """Cross-machine clipboard skill - copy/paste text across devices."""
 
 import base64
+
 from skills import skill
+from skills.utils import _is_dispatch_error
 
 
 def _dispatch_shell(command: str, target: str) -> str:
@@ -10,6 +12,7 @@ def _dispatch_shell(command: str, target: str) -> str:
     Only passes `target` — lets collab resolve hostname/client_id/platform.
     """
     from collab_tools import execute_collab_tool
+
     args = {
         "prompt": command,
         "capability": "SHELL",
@@ -17,22 +20,6 @@ def _dispatch_shell(command: str, target: str) -> str:
     if target:
         args["target"] = target
     return execute_collab_tool("dispatch_task", args)
-
-
-def _is_dispatch_error(result: str) -> bool:
-    """Check if a dispatch result indicates failure."""
-    if not result:
-        return True
-    r = result.strip()
-    if r.startswith("ERROR"):
-        return True
-    if "not found or offline" in r:
-        return True
-    if "no result yet" in r:
-        return True
-    if r.startswith("Task failed"):
-        return True
-    return False
 
 
 def _extract_output(result: str) -> str:
@@ -46,7 +33,7 @@ def _extract_output(result: str) -> str:
         if result.startswith(prefix):
             newline = result.find("\n")
             if newline != -1:
-                return result[newline + 1:].strip()
+                return result[newline + 1 :].strip()
     return result.strip()
 
 
@@ -63,10 +50,7 @@ def _platform_hint(target: str) -> str:
 def _build_copy_command(b64_text: str, platform: str) -> str:
     """Build a platform-aware clipboard copy command."""
     if platform == "windows":
-        return (
-            f'[System.Text.Encoding]::UTF8.GetString('
-            f'[Convert]::FromBase64String("{b64_text}")) | Set-Clipboard'
-        )
+        return f'[System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("{b64_text}")) | Set-Clipboard'
     # macOS / Linux universal bash
     # Try pbcopy (macOS), then xclip, xsel, wl-copy (Linux)
     return (
@@ -85,10 +69,10 @@ def _build_paste_command(platform: str) -> str:
         return "Get-Clipboard"
     # macOS / Linux fallback chain
     return (
-        '{ pbpaste 2>/dev/null; } || '
-        '{ xclip -selection clipboard -o 2>/dev/null; } || '
-        '{ xsel --clipboard --output 2>/dev/null; } || '
-        '{ wl-paste 2>/dev/null; } || '
+        "{ pbpaste 2>/dev/null; } || "
+        "{ xclip -selection clipboard -o 2>/dev/null; } || "
+        "{ xsel --clipboard --output 2>/dev/null; } || "
+        "{ wl-paste 2>/dev/null; } || "
         'echo "ERROR: no clipboard utility found (install xclip, xsel, or wl-clipboard)"'
     )
 
@@ -102,18 +86,15 @@ def _build_paste_command(platform: str) -> str:
     parameters={
         "type": "object",
         "properties": {
-            "text": {
-                "type": "string",
-                "description": "The text to copy to the clipboard"
-            },
+            "text": {"type": "string", "description": "The text to copy to the clipboard"},
             "target": {
                 "type": "string",
                 "description": "Target device — hostname, client_id, or platform (e.g. 'windows', 'macos', 'macbook'). Leave empty for default.",
-                "default": ""
-            }
+                "default": "",
+            },
         },
-        "required": ["text"]
-    }
+        "required": ["text"],
+    },
 )
 def copy_clipboard(text: str, target: str = "") -> str:
     """Copy text to a remote device's clipboard."""
@@ -134,7 +115,7 @@ def copy_clipboard(text: str, target: str = "") -> str:
         return f"Clipboard copy failed:\n{result}"
 
     preview = text[:80] + "..." if len(text) > 80 else text
-    return f"Copied to clipboard on {target or 'target device'}:\n\"{preview}\""
+    return f'Copied to clipboard on {target or "target device"}:\n"{preview}"'
 
 
 @skill(
@@ -149,10 +130,10 @@ def copy_clipboard(text: str, target: str = "") -> str:
             "target": {
                 "type": "string",
                 "description": "Target device — hostname, client_id, or platform (e.g. 'windows', 'macos', 'macbook'). Leave empty for default.",
-                "default": ""
+                "default": "",
             }
-        }
-    }
+        },
+    },
 )
 def paste_clipboard(target: str = "") -> str:
     """Read clipboard contents from a remote device."""

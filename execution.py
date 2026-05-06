@@ -5,47 +5,48 @@ Handles routing to local (Ollama), remote (mesh), and cloud (API) providers.
 """
 
 import os
-from typing import Optional
+
 from openai import OpenAI
 from rich.console import Console
 
-from providers import PROVIDERS, Provider, get_api_key
-from subagents import SUBAGENTS, SubAgent, AgentProvider
 from cost_tracker import get_tracker
+from providers import PROVIDERS, Provider, get_api_key
+from subagents import SUBAGENTS, AgentProvider, SubAgent
 
 # Lazy imports to avoid circular dependency
 _mesh = None
 _router = None
+
 
 def _get_mesh():
     global _mesh
     if _mesh is None:
         try:
             from mesh import get_mesh
+
             _mesh = get_mesh()
         except ImportError:
             pass
     return _mesh
+
 
 def _get_router():
     global _router
     if _router is None:
         try:
             from routing import get_router
+
             _router = get_router()
         except ImportError:
             pass
     return _router
 
+
 console = Console()
 
 
 def execute_subagent(
-    agent_name: str,
-    task: str,
-    context: str = None,
-    image_base64: str = None,
-    prefer_cloud: bool = False
+    agent_name: str, task: str, context: str = None, image_base64: str = None, prefer_cloud: bool = False
 ) -> str:
     """
     Execute a task using a specialized subagent.
@@ -95,11 +96,7 @@ def execute_subagent(
 
 
 def _execute_local(
-    agent: SubAgent,
-    provider: AgentProvider,
-    task: str,
-    context: str = None,
-    image_base64: str = None
+    agent: SubAgent, provider: AgentProvider, task: str, context: str = None, image_base64: str = None
 ) -> str:
     """Execute against a local or remote Ollama model."""
 
@@ -124,7 +121,7 @@ def _execute_local(
             if remote_url:
                 url = remote_url
                 source = "mesh"
-                console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+                console.print("[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
             else:
                 # Fall back to legacy mesh lookup
                 mesh = _get_mesh()
@@ -133,7 +130,7 @@ def _execute_local(
                     if remote_url:
                         url = remote_url
                         source = "mesh"
-                        console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+                        console.print("[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
                     else:
                         return f"Error: {provider.model}: Not available locally or on mesh"
                 else:
@@ -146,7 +143,7 @@ def _execute_local(
                 if remote_url:
                     url = remote_url
                     source = "mesh"
-                    console.print(f"[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
+                    console.print("[dim cyan]  -> Model not local, using mesh node...[/dim cyan]")
                 else:
                     return f"Error: {provider.model}: Not available locally or on mesh"
             else:
@@ -163,7 +160,7 @@ def _execute_local(
     if image_base64 and "llava" in provider.model.lower():
         user_content = [
             {"type": "text", "text": _build_user_content(task, context)},
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
         ]
         messages.append({"role": "user", "content": user_content})
     else:
@@ -171,10 +168,7 @@ def _execute_local(
 
     try:
         response = client.chat.completions.create(
-            model=provider.model,
-            messages=messages,
-            temperature=agent.temperature,
-            max_tokens=agent.max_tokens
+            model=provider.model, messages=messages, temperature=agent.temperature, max_tokens=agent.max_tokens
         )
         result = response.choices[0].message.content
         console.print(f"[dim cyan]  -> {agent.name} completed ({source})[/dim cyan]")
@@ -184,11 +178,7 @@ def _execute_local(
 
 
 def _execute_cloud(
-    agent: SubAgent,
-    provider: AgentProvider,
-    task: str,
-    context: str = None,
-    image_base64: str = None
+    agent: SubAgent, provider: AgentProvider, task: str, context: str = None, image_base64: str = None
 ) -> str:
     """Execute against a cloud API provider."""
 
@@ -231,7 +221,7 @@ def _execute_cloud(
             input_tokens=usage.get("input", 0),
             output_tokens=usage.get("output", 0),
             agent_type=agent.name,
-            task=task
+            task=task,
         )
 
         console.print(f"[dim cyan]  -> {agent.name} completed (${cost:.4f})[/dim cyan]")
@@ -257,23 +247,17 @@ def _call_anthropic(config, api_key, agent, user_content, image_base64=None):
 
     content = []
     if image_base64:
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/png", "data": image_base64}
-        })
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": image_base64}})
     content.append({"type": "text", "text": user_content})
 
     response = client.messages.create(
         model=config.default_model,
         max_tokens=agent.max_tokens,
         system=agent.system_prompt,
-        messages=[{"role": "user", "content": content}]
+        messages=[{"role": "user", "content": content}],
     )
 
-    usage = {
-        "input": response.usage.input_tokens,
-        "output": response.usage.output_tokens
-    }
+    usage = {"input": response.usage.input_tokens, "output": response.usage.output_tokens}
     return response.content[0].text, usage
 
 
@@ -284,40 +268,34 @@ def _call_openai(config, api_key, agent, user_content, image_base64=None):
     messages = [{"role": "system", "content": agent.system_prompt}]
 
     if image_base64:
-        messages.append({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": user_content},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
-            ]
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_content},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
+                ],
+            }
+        )
     else:
         messages.append({"role": "user", "content": user_content})
 
     response = client.chat.completions.create(
-        model=config.default_model,
-        messages=messages,
-        temperature=agent.temperature,
-        max_tokens=agent.max_tokens
+        model=config.default_model, messages=messages, temperature=agent.temperature, max_tokens=agent.max_tokens
     )
 
-    usage = {
-        "input": response.usage.prompt_tokens,
-        "output": response.usage.completion_tokens
-    }
+    usage = {"input": response.usage.prompt_tokens, "output": response.usage.completion_tokens}
     return response.choices[0].message.content, usage
 
 
 def _call_google(config, api_key, agent, user_content, image_base64=None):
     """Call Google Gemini API."""
-    import google.generativeai as genai
     import base64
 
+    import google.generativeai as genai
+
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        config.default_model,
-        system_instruction=agent.system_prompt
-    )
+    model = genai.GenerativeModel(config.default_model, system_instruction=agent.system_prompt)
 
     content = [user_content]
     if image_base64:
@@ -325,18 +303,14 @@ def _call_google(config, api_key, agent, user_content, image_base64=None):
         content.append({"mime_type": "image/png", "data": image_bytes})
 
     response = model.generate_content(
-        content,
-        generation_config={
-            "temperature": agent.temperature,
-            "max_output_tokens": agent.max_tokens
-        }
+        content, generation_config={"temperature": agent.temperature, "max_output_tokens": agent.max_tokens}
     )
 
     # Gemini doesn't always provide token counts
     usage = {"input": 0, "output": 0}
-    if hasattr(response, 'usage_metadata'):
-        usage["input"] = getattr(response.usage_metadata, 'prompt_token_count', 0)
-        usage["output"] = getattr(response.usage_metadata, 'candidates_token_count', 0)
+    if hasattr(response, "usage_metadata"):
+        usage["input"] = getattr(response.usage_metadata, "prompt_token_count", 0)
+        usage["output"] = getattr(response.usage_metadata, "candidates_token_count", 0)
 
     return response.text, usage
 
@@ -349,15 +323,12 @@ def _call_xai(config, api_key, agent, user_content, image_base64=None):
     messages.append({"role": "user", "content": user_content})
 
     response = client.chat.completions.create(
-        model=config.default_model,
-        messages=messages,
-        temperature=agent.temperature,
-        max_tokens=agent.max_tokens
+        model=config.default_model, messages=messages, temperature=agent.temperature, max_tokens=agent.max_tokens
     )
 
     usage = {
         "input": response.usage.prompt_tokens if response.usage else 0,
-        "output": response.usage.completion_tokens if response.usage else 0
+        "output": response.usage.completion_tokens if response.usage else 0,
     }
     return response.choices[0].message.content, usage
 
@@ -370,14 +341,11 @@ def _call_mistral(config, api_key, agent, user_content):
     messages.append({"role": "user", "content": user_content})
 
     response = client.chat.completions.create(
-        model=config.default_model,
-        messages=messages,
-        temperature=agent.temperature,
-        max_tokens=agent.max_tokens
+        model=config.default_model, messages=messages, temperature=agent.temperature, max_tokens=agent.max_tokens
     )
 
     usage = {
         "input": response.usage.prompt_tokens if response.usage else 0,
-        "output": response.usage.completion_tokens if response.usage else 0
+        "output": response.usage.completion_tokens if response.usage else 0,
     }
     return response.choices[0].message.content, usage

@@ -4,12 +4,11 @@ API Cost Tracking for MAUDE.
 Logs all API calls and tracks daily spending with configurable limits.
 """
 
-import os
 import json
+import os
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
 from pathlib import Path
-from datetime import datetime, date
-from dataclasses import dataclass, asdict
-from typing import Optional
 
 from providers import PROVIDERS
 
@@ -17,6 +16,7 @@ from providers import PROVIDERS
 @dataclass
 class APICall:
     """Record of a single API call."""
+
     timestamp: str
     provider: str
     model: str
@@ -35,8 +35,8 @@ class CostTracker:
     def __init__(self, daily_limit: float = None):
         self.daily_limit = daily_limit or float(os.environ.get("MAUDE_COST_LIMIT", "5.00"))
         self.LOG_DIR.mkdir(parents=True, exist_ok=True)
-        self._today_cache: Optional[float] = None
-        self._cache_date: Optional[str] = None
+        self._today_cache: float | None = None
+        self._cache_date: str | None = None
 
     def _get_log_file(self, for_date: date = None) -> Path:
         """Get log file path for a specific date."""
@@ -44,23 +44,14 @@ class CostTracker:
         return self.LOG_DIR / f"costs_{d.isoformat()}.jsonl"
 
     def log_call(
-        self,
-        provider: str,
-        model: str,
-        input_tokens: int,
-        output_tokens: int,
-        agent_type: str,
-        task: str = ""
+        self, provider: str, model: str, input_tokens: int, output_tokens: int, agent_type: str, task: str = ""
     ) -> float:
         """Log an API call and return its cost."""
         config = PROVIDERS.get(provider)
         if not config:
             return 0.0
 
-        cost = (
-            input_tokens / 1000 * config.cost_per_1k_input +
-            output_tokens / 1000 * config.cost_per_1k_output
-        )
+        cost = input_tokens / 1000 * config.cost_per_1k_input + output_tokens / 1000 * config.cost_per_1k_output
 
         call = APICall(
             timestamp=datetime.now().isoformat(),
@@ -70,7 +61,7 @@ class CostTracker:
             output_tokens=output_tokens,
             cost_usd=cost,
             agent_type=agent_type,
-            task_preview=task[:50] if task else ""
+            task_preview=task[:50] if task else "",
         )
 
         log_file = self._get_log_file()
@@ -157,20 +148,9 @@ class CostTracker:
 
         return breakdown
 
-    def warn_if_over_limit(self) -> Optional[str]:
-        """Return warning message if over limit, None otherwise."""
-        if not self.check_limit():
-            return f"⚠ Daily cost limit (${self.daily_limit:.2f}) reached. Cloud agents disabled until tomorrow."
-
-        remaining = self.get_remaining()
-        if remaining < 1.0:
-            return f"⚠ Low budget: ${remaining:.2f} remaining today"
-
-        return None
-
 
 # Global tracker instance
-_tracker: Optional[CostTracker] = None
+_tracker: CostTracker | None = None
 
 
 def get_tracker() -> CostTracker:
@@ -179,8 +159,3 @@ def get_tracker() -> CostTracker:
     if _tracker is None:
         _tracker = CostTracker()
     return _tracker
-
-
-def handle_cost_command() -> str:
-    """Handle /cost command."""
-    return get_tracker().get_summary()

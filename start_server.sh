@@ -23,21 +23,21 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-# Start PersonaPlex (moshi) voice server on port 8998
-echo "Starting PersonaPlex voice server on port 8998..."
-python -m moshi.server --ssl ./certs &
-MOSHI_PID=$!
+# Start Voice server (Nemotron ASR + Magpie TTS) on port 8998
+echo "Starting Voice server on port 8998..."
+python voice_server.py --ssl ./certs &
+VOICE_PID=$!
 
-# Wait for PersonaPlex to be ready
-echo "Waiting for PersonaPlex..."
+# Wait for Voice server to be ready
+echo "Waiting for Voice server..."
 for i in $(seq 1 120); do
-    curl -sk https://localhost:8998/ > /dev/null 2>&1 && break
+    curl -sk https://localhost:8998/api/status > /dev/null 2>&1 && break
     sleep 2
 done
 
 # Start gateway on port 30000 (LLM + file server)
 echo "Starting Gateway on port 30000 (LLM + files)..."
-./venv/bin/python gateway.py &
+./venv/bin/python -m gateway &
 GW_PID=$!
 
 echo ""
@@ -46,10 +46,10 @@ echo "  /v1/*       -> LLM (Nemotron)"
 echo "  /list       -> shared folder"
 echo "  /download/* -> pull files"
 echo "  /upload/*   -> push files"
-echo "  wss://:8998 -> PersonaPlex voice"
+echo "  wss://:8998 -> Voice (Nemotron ASR + Magpie TTS)"
 echo ""
 echo "Client connects via Tailscale to spark-e26c:30000"
 echo ""
 
-trap "kill $LLM_PID $GW_PID $MOSHI_PID 2>/dev/null" EXIT
+trap "kill $LLM_PID $GW_PID $VOICE_PID 2>/dev/null" EXIT
 wait

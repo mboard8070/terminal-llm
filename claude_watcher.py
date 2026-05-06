@@ -4,12 +4,11 @@ Claude Permission Watcher - Monitors Claude Code for permission prompts
 and forwards them to MAUDE for approval.
 """
 
+import re
 import subprocess
 import time
-import re
-import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 # Configuration
 CLAUDE_SESSION = "claude"
@@ -55,10 +54,7 @@ def get_tmux_content(session: str, lines: int = 50) -> str:
     """Capture recent content from a tmux session."""
     try:
         result = subprocess.run(
-            ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            ["tmux", "capture-pane", "-t", session, "-p", "-S", f"-{lines}"], capture_output=True, text=True, timeout=5
         )
         return result.stdout if result.returncode == 0 else ""
     except Exception:
@@ -68,18 +64,10 @@ def get_tmux_content(session: str, lines: int = 50) -> str:
 def send_to_tmux(session: str, text: str, send_enter: bool = True):
     """Send text to a tmux session."""
     try:
-        subprocess.run(
-            ["tmux", "send-keys", "-t", session, "-l", text],
-            capture_output=True,
-            timeout=5
-        )
+        subprocess.run(["tmux", "send-keys", "-t", session, "-l", text], capture_output=True, timeout=5)
         if send_enter:
             time.sleep(0.1)
-            subprocess.run(
-                ["tmux", "send-keys", "-t", session, "Enter"],
-                capture_output=True,
-                timeout=5
-            )
+            subprocess.run(["tmux", "send-keys", "-t", session, "Enter"], capture_output=True, timeout=5)
     except Exception as e:
         log_activity(f"Error sending to {session}: {e}")
 
@@ -183,7 +171,7 @@ def watch_for_maude_response(timeout: int = 300) -> str | None:
 
 def main():
     """Main watcher loop."""
-    print(f"Claude Permission Watcher starting...")
+    print("Claude Permission Watcher starting...")
     print(f"Monitoring session: {CLAUDE_SESSION}")
     print(f"Forwarding to: {MAUDE_SESSION}")
     print(f"Activity log: {ACTIVITY_LOG}")
@@ -205,10 +193,7 @@ def main():
                 break
 
             # Check if Claude session exists
-            result = subprocess.run(
-                ["tmux", "has-session", "-t", CLAUDE_SESSION],
-                capture_output=True
-            )
+            result = subprocess.run(["tmux", "has-session", "-t", CLAUDE_SESSION], capture_output=True)
             if result.returncode != 0:
                 time.sleep(2)
                 continue
@@ -237,9 +222,7 @@ def main():
                     if response == "Escape":
                         # Send actual Escape key
                         subprocess.run(
-                            ["tmux", "send-keys", "-t", CLAUDE_SESSION, "Escape"],
-                            capture_output=True,
-                            timeout=5
+                            ["tmux", "send-keys", "-t", CLAUDE_SESSION, "Escape"], capture_output=True, timeout=5
                         )
                     else:
                         send_to_tmux(CLAUDE_SESSION, response)

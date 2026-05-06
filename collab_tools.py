@@ -4,8 +4,8 @@ MAUDE Collaboration Tools — LLM-callable tool definitions for the collab syste
 Lets MAUDE manage presence, projects, tasks, and activity through natural language.
 """
 
-import json
 import time
+
 from collab import get_hub
 
 # ── Tool definitions (OpenAI function-calling format) ────────────
@@ -16,31 +16,40 @@ COLLAB_TOOLS = [
         "function": {
             "name": "mesh_status",
             "description": "Show who's online across all devices and what they're doing. Shows presence, recent activity, and task status across the MAUDE mesh network.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "dispatch_task",
-            "description": "Dispatch a task to a specific device or platform on the mesh network. Use capability 'SHELL' for shell commands or 'LLM' for AI tasks. Target by client_id (e.g. 'MacBook-Pro-matt') or platform (e.g. 'windows', 'macos'). Client-targeted SHELL tasks are picked up by the client within ~10 seconds.",
+            "description": "Dispatch a task to a specific device or platform on the mesh network. Use capability 'SHELL' for shell commands or 'LLM' for AI tasks. IMPORTANT: do NOT invent a client_id — call mesh_status first to get the exact client_id of an online device, then pass it as target_client_id. For platform targeting, use target_platform with 'windows', 'macos', or 'linux'. Client-targeted SHELL tasks are picked up by the client within ~10 seconds.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "The task prompt or command to execute"},
-                    "target": {"type": "string", "description": "Target hostname, client_id, or platform name. Leave empty for local execution."},
-                    "capability": {"type": "string", "description": "Task type: 'SHELL' for commands, 'LLM' for AI tasks", "enum": ["SHELL", "LLM"]},
+                    "target": {
+                        "type": "string",
+                        "description": "Target hostname, client_id, or platform name. Leave empty for local execution.",
+                    },
+                    "capability": {
+                        "type": "string",
+                        "description": "Task type: 'SHELL' for commands, 'LLM' for AI tasks",
+                        "enum": ["SHELL", "LLM"],
+                    },
                     "project_id": {"type": "string", "description": "Optional project ID to associate with this task"},
-                    "target_client_id": {"type": "string", "description": "Target a specific client by its client_id (from mesh_status)"},
-                    "target_platform": {"type": "string", "description": "Target a platform: 'windows', 'macos', or 'linux'"}
+                    "target_client_id": {
+                        "type": "string",
+                        "description": "The exact client_id of an online device, obtained by calling mesh_status. Do not guess or invent this value — if you don't have the real client_id, call mesh_status first.",
+                    },
+                    "target_platform": {
+                        "type": "string",
+                        "description": "Target a platform: 'windows', 'macos', or 'linux'. Only use if at least one client of that platform is currently online (check with mesh_status).",
+                    },
                 },
-                "required": ["prompt"]
-            }
-        }
+                "required": ["prompt"],
+            },
+        },
     },
     {
         "type": "function",
@@ -52,27 +61,19 @@ COLLAB_TOOLS = [
                 "properties": {
                     "name": {"type": "string", "description": "Project name"},
                     "description": {"type": "string", "description": "Project description"},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Tags for categorization"
-                    }
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 },
-                "required": ["name"]
-            }
-        }
+                "required": ["name"],
+            },
+        },
     },
     {
         "type": "function",
         "function": {
             "name": "list_projects",
             "description": "List all collaboration projects across the mesh.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
     },
     {
         "type": "function",
@@ -84,11 +85,11 @@ COLLAB_TOOLS = [
                 "properties": {
                     "project_id": {"type": "string", "description": "Project ID"},
                     "conversation_id": {"type": "string", "description": "Conversation ID to link"},
-                    "file_path": {"type": "string", "description": "File path to link"}
+                    "file_path": {"type": "string", "description": "File path to link"},
                 },
-                "required": ["project_id"]
-            }
-        }
+                "required": ["project_id"],
+            },
+        },
     },
     {
         "type": "function",
@@ -98,11 +99,15 @@ COLLAB_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "description": "Filter by status", "enum": ["pending", "running", "completed", "failed"]}
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by status",
+                        "enum": ["pending", "running", "completed", "failed"],
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
 ]
 
@@ -110,6 +115,7 @@ COLLAB_TOOL_NAMES = {t["function"]["name"] for t in COLLAB_TOOLS}
 
 
 # ── Tool execution ───────────────────────────────────────────────
+
 
 def execute_collab_tool(name: str, arguments: dict) -> str:
     """Execute a collaboration tool and return the result."""
@@ -128,7 +134,9 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
                 activity = p.get("activity", "idle")
                 plat = p.get("platform", p.get("client_type", "?"))
                 cid = p.get("client_id", "?")
-                lines.append(f"- **{p.get('hostname', '?')}** | client_id: `{cid}` | platform: `{plat}` — {activity} ({age}s ago)")
+                lines.append(
+                    f"- **{p.get('hostname', '?')}** | client_id: `{cid}` | platform: `{plat}` — {activity} ({age}s ago)"
+                )
         else:
             lines.append("### No devices currently online")
 
@@ -203,7 +211,9 @@ def execute_collab_tool(name: str, arguments: dict) -> str:
             tags = ", ".join(p.get("tags", [])) or "none"
             convs = len(p.get("conversations", []))
             files = len(p.get("files", []))
-            lines.append(f"- **{p['name']}** (id: {p['id']})\n  Tags: {tags} | {convs} conversations, {files} files\n  {p.get('description', '')}")
+            lines.append(
+                f"- **{p['name']}** (id: {p['id']})\n  Tags: {tags} | {convs} conversations, {files} files\n  {p.get('description', '')}"
+            )
         return "\n".join(lines)
 
     elif name == "add_to_project":

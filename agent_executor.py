@@ -6,17 +6,15 @@ simply sends a chat/completions request with scoped tools and stream=False,
 letting the gateway execute tools and return the final response.
 """
 
-import json
-import time
 import threading
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 
 import httpx
 
-from subagents import SUBAGENTS, AGENT_TOOL_SCOPES
 from maude_core.tool_defs import TOOLS
+from subagents import AGENT_TOOL_SCOPES, SUBAGENTS
 
 GATEWAY_URL = "http://localhost:30080/v1"
 
@@ -33,6 +31,7 @@ _AGENT_MODELS = {
 @dataclass
 class AgentTask:
     """A task to dispatch to a subagent."""
+
     agent_name: str
     task: str
     context: str = ""
@@ -42,29 +41,30 @@ class AgentTask:
 @dataclass
 class AgentResult:
     """Result from a subagent execution."""
+
     agent_name: str
     output: str
     tool_calls_made: int = 0
     elapsed: float = 0.0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class SharedContext:
     """Thread-safe shared context for parallel agents to exchange findings."""
 
     def __init__(self):
-        self._data: Dict[str, str] = {}
+        self._data: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def set(self, key: str, value: str):
         with self._lock:
             self._data[key] = value
 
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str) -> str | None:
         with self._lock:
             return self._data.get(key)
 
-    def get_all(self) -> Dict[str, str]:
+    def get_all(self) -> dict[str, str]:
         with self._lock:
             return dict(self._data)
 
@@ -79,7 +79,7 @@ class SharedContext:
             return "\n\n".join(parts)
 
 
-def _get_scoped_tools(agent_name: str) -> List[dict]:
+def _get_scoped_tools(agent_name: str) -> list[dict]:
     """Filter TOOLS to only those allowed for this agent."""
     allowed = set(AGENT_TOOL_SCOPES.get(agent_name, []))
     if not allowed:
@@ -89,7 +89,7 @@ def _get_scoped_tools(agent_name: str) -> List[dict]:
 
 def execute_agent_with_tools(
     task: AgentTask,
-    shared_context: Optional[SharedContext] = None,
+    shared_context: SharedContext | None = None,
 ) -> AgentResult:
     """Execute a single agent task through the gateway.
 
@@ -184,19 +184,16 @@ def execute_agent_with_tools(
         )
 
 
-def execute_agents_parallel(tasks: List[AgentTask]) -> List[AgentResult]:
+def execute_agents_parallel(tasks: list[AgentTask]) -> list[AgentResult]:
     """Execute multiple agent tasks in parallel.
 
     Earlier finishers' results are available to later ones via SharedContext.
     """
     shared = SharedContext()
-    results: List[AgentResult] = [None] * len(tasks)
+    results: list[AgentResult] = [None] * len(tasks)
 
     with ThreadPoolExecutor(max_workers=min(len(tasks), 4)) as executor:
-        future_to_idx = {
-            executor.submit(execute_agent_with_tools, task, shared): i
-            for i, task in enumerate(tasks)
-        }
+        future_to_idx = {executor.submit(execute_agent_with_tools, task, shared): i for i, task in enumerate(tasks)}
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             try:

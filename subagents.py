@@ -4,14 +4,13 @@ Subagent Registry and Routing for MAUDE.
 Defines specialized agents with fallback chains (local -> cloud).
 """
 
-import os
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 
 @dataclass
 class AgentProvider:
     """A single provider option for an agent."""
+
     type: str  # "local" or "cloud"
     model: str = None
     url_env: str = None  # Environment variable for URL (local)
@@ -21,16 +20,17 @@ class AgentProvider:
 @dataclass
 class SubAgent:
     """Configuration for a specialized subagent."""
+
     name: str
     description: str
-    providers: List[AgentProvider]
+    providers: list[AgentProvider]
     system_prompt: str
     temperature: float = 0.2
     max_tokens: int = 2048
 
 
 # Agent registry
-SUBAGENTS: Dict[str, SubAgent] = {
+SUBAGENTS: dict[str, SubAgent] = {
     # ─────────────────────────────────────────────────────────────────
     # CODE - Code generation, debugging, refactoring
     # ─────────────────────────────────────────────────────────────────
@@ -50,9 +50,8 @@ SUBAGENTS: Dict[str, SubAgent] = {
 
 Be concise. Output code directly without excessive explanation unless asked.""",
         temperature=0.1,
-        max_tokens=4096
+        max_tokens=4096,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # VISION - Image analysis
     # ─────────────────────────────────────────────────────────────────
@@ -74,9 +73,8 @@ Be concise. Output code directly without excessive explanation unless asked.""",
 
 Be thorough but organized. Structure your analysis clearly.""",
         temperature=0.2,
-        max_tokens=1024
+        max_tokens=1024,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # WRITER - Documentation and long-form content
     # ─────────────────────────────────────────────────────────────────
@@ -97,9 +95,8 @@ Be thorough but organized. Structure your analysis clearly.""",
 
 Use proper formatting (markdown). Be thorough but not verbose.""",
         temperature=0.7,
-        max_tokens=8192
+        max_tokens=8192,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # REASONING - Complex analysis and planning
     # ─────────────────────────────────────────────────────────────────
@@ -120,9 +117,8 @@ Use proper formatting (markdown). Be thorough but not verbose.""",
 
 Show your reasoning process. Be thorough and systematic.""",
         temperature=0.3,
-        max_tokens=8192
+        max_tokens=8192,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # RESEARCH - Multi-step web research with tool access
     # ─────────────────────────────────────────────────────────────────
@@ -142,9 +138,8 @@ Show your reasoning process. Be thorough and systematic.""",
 
 Be systematic: search first, read promising results, then synthesize. Cite sources.""",
         temperature=0.2,
-        max_tokens=4096
+        max_tokens=4096,
     ),
-
     # ─────────────────────────────────────────────────────────────────
     # SEARCH - Real-time information
     # ─────────────────────────────────────────────────────────────────
@@ -164,107 +159,50 @@ Your role is to:
 
 Be accurate. Cite sources when possible. Note when information may be outdated.""",
         temperature=0.3,
-        max_tokens=2048
+        max_tokens=2048,
     ),
 }
 
 
 # Tool scopes — which tools each agent can use when running with tool access
-AGENT_TOOL_SCOPES: Dict[str, List[str]] = {
+AGENT_TOOL_SCOPES: dict[str, list[str]] = {
     "code": [
-        "read_file", "write_file", "edit_file", "list_directory",
-        "search_file", "search_directory", "run_command", "change_directory",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "list_directory",
+        "search_file",
+        "search_directory",
+        "run_command",
+        "change_directory",
     ],
     "research": [
-        "web_search", "web_browse", "read_file", "list_directory",
-        "search_file", "search_directory",
+        "web_search",
+        "web_browse",
+        "read_file",
+        "list_directory",
+        "search_file",
+        "search_directory",
     ],
     "writer": [
-        "read_file", "write_file", "web_search", "web_browse",
-        "list_directory", "search_file",
+        "read_file",
+        "write_file",
+        "web_search",
+        "web_browse",
+        "list_directory",
+        "search_file",
     ],
     "reasoning": [
-        "read_file", "list_directory", "search_file", "search_directory",
-        "web_search", "web_browse", "run_command",
+        "read_file",
+        "list_directory",
+        "search_file",
+        "search_directory",
+        "web_search",
+        "web_browse",
+        "run_command",
     ],
     "search": [
-        "web_search", "web_browse",
+        "web_search",
+        "web_browse",
     ],
 }
-
-
-def get_agent(name: str) -> Optional[SubAgent]:
-    """Get an agent by name."""
-    return SUBAGENTS.get(name.lower())
-
-
-def list_agents() -> str:
-    """List all available agents."""
-    lines = ["Available Agents:\n"]
-
-    for name, agent in SUBAGENTS.items():
-        # Determine if any provider is available
-        local_available = any(
-            p.type == "local" for p in agent.providers
-        )
-        cloud_available = any(
-            p.type == "cloud" for p in agent.providers
-        )
-
-        status = []
-        if local_available:
-            status.append("local")
-        if cloud_available:
-            status.append("cloud")
-
-        lines.append(f"  {name:12} - {agent.description}")
-        lines.append(f"               Providers: {', '.join(status)}")
-
-    return "\n".join(lines)
-
-
-def get_agent_tool_definition() -> dict:
-    """Get the delegate_to_agent tool definition for the LLM."""
-    agent_names = list(SUBAGENTS.keys())
-
-    return {
-        "type": "function",
-        "function": {
-            "name": "delegate_to_agent",
-            "description": """Delegate a specialized task to a subagent. Available agents:
-
-LOCAL (free, private, always available):
-- 'code': Code generation, debugging, refactoring (Codestral)
-- 'vision': Image/screenshot analysis (LLaVA)
-- 'writer': Long documentation or detailed explanations (Gemma)
-
-CLOUD (requires API key, higher capability):
-- 'reasoning': Complex analysis, multi-step planning (Claude Opus / o1)
-- 'search': Real-time web info, current events (Grok)
-
-The router will try local first, then fall back to cloud if configured.""",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "agent": {
-                        "type": "string",
-                        "enum": agent_names,
-                        "description": "Which specialized agent to use"
-                    },
-                    "task": {
-                        "type": "string",
-                        "description": "Clear description of what the agent should do"
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "Relevant context (code, file contents, requirements)"
-                    },
-                    "prefer_cloud": {
-                        "type": "boolean",
-                        "description": "Set true to prefer cloud models for this task (default: false)"
-                    }
-                },
-                "required": ["agent", "task"]
-            }
-        }
-    }

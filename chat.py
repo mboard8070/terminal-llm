@@ -6,15 +6,16 @@ Supports local (NVIDIA), Mistral, Codestral, and Claude models.
 
 import os
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
-import uuid
 from dotenv import load_dotenv
 from openai import OpenAI
 from rich.console import Console
 from rich.panel import Panel
-import threading
-import time
+
 import conversation_sync
 from collab import get_hub as get_collab_hub
 
@@ -48,14 +49,28 @@ MODELS = {
     "sonnet": "claude-sonnet-4-20250514",
     # Local (via gateway)
     "nemotron": "nemotron",
+    "gemma4": "gemma-4-31b",
+    "gemma": "gemma-4-31b",
     "llava": "llava",
 }
 
 # Models that route through the gateway
-_CLOUD_MODELS = {"mistral", "codestral", "devstral", "devstral-small", "devstral-medium", "claude", "sonnet", "nemotron", "llava"}
+_CLOUD_MODELS = {
+    "mistral",
+    "codestral",
+    "devstral",
+    "devstral-small",
+    "devstral-medium",
+    "claude",
+    "sonnet",
+    "nemotron",
+    "gemma4",
+    "gemma",
+    "llava",
+}
 
 # Default model
-DEFAULT_MODEL = "mistral"
+DEFAULT_MODEL = "nemotron-super"
 
 
 def create_nvidia_client():
@@ -76,11 +91,7 @@ def chat(client, messages: list, model_id: str, stream: bool = True):
     try:
         if stream:
             response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=4096,
-                stream=True
+                model=model_id, messages=messages, temperature=0.2, max_tokens=4096, stream=True
             )
 
             full_response = ""
@@ -94,10 +105,7 @@ def chat(client, messages: list, model_id: str, stream: bool = True):
             return full_response
         else:
             response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=4096
+                model=model_id, messages=messages, temperature=0.2, max_tokens=4096
             )
             return response.choices[0].message.content
 
@@ -108,14 +116,16 @@ def chat(client, messages: list, model_id: str, stream: bool = True):
 
 def main():
     """Main chat loop."""
-    console.print(Panel.fit(
-        "[bold magenta]MAUDE Terminal Chat[/bold magenta]\n"
-        "[dim]NVIDIA: nemotron-nano, llama-3.3, nemotron-51b, llama-405b, codellama[/dim]\n"
-        "[dim]Local:  nemotron, llava[/dim]\n"
-        "[dim]Cloud:  mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet[/dim]",
-        border_style="magenta"
-    ))
-    console.print(f"[dim]Commands: /quit, /clear, /model <name>[/dim]\n")
+    console.print(
+        Panel.fit(
+            "[bold magenta]MAUDE Terminal Chat[/bold magenta]\n"
+            "[dim]NVIDIA: nemotron-nano, llama-3.3, nemotron-51b, llama-405b, codellama[/dim]\n"
+            "[dim]Local:  nemotron, llava[/dim]\n"
+            "[dim]Cloud:  mistral, codestral, devstral, devstral-small, devstral-medium, claude, sonnet[/dim]",
+            border_style="magenta",
+        )
+    )
+    console.print("[dim]Commands: /quit, /clear, /model <name>[/dim]\n")
 
     nvidia_client = create_nvidia_client()
     gateway_client = create_gateway_client()
@@ -134,6 +144,7 @@ def main():
             except Exception:
                 pass
             time.sleep(30)
+
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
 
     # System prompt
@@ -146,7 +157,7 @@ You excel at:
 - Reasoning through difficult problems step by step
 - Explaining technical concepts clearly
 
-Be concise but thorough. When writing code, include comments for complex logic."""
+Be concise but thorough. When writing code, include comments for complex logic.""",
     }
     messages.append(system_prompt)
 
@@ -197,14 +208,13 @@ Be concise but thorough. When writing code, include comments for complex logic."
                 # Sync to gateway for cross-device history
                 if not conv_title:
                     conv_title = conversation_sync.generate_title(user_input)
-                conversation_sync.save_conversation(
-                    conv_id, conv_title, current_model, messages
-                )
+                conversation_sync.save_conversation(conv_id, conv_title, current_model, messages)
                 # Emit activity event
                 collab_activity[0] = f"chatting: {user_input[:40]}"
                 try:
                     get_collab_hub().emit(
-                        "chat", f"Asked about: {user_input[:50]}",
+                        "chat",
+                        f"Asked about: {user_input[:50]}",
                         data={"model": current_model},
                         client_id="cli-client",
                         conversation_id=conv_id,

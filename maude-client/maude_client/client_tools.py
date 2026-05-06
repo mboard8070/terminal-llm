@@ -87,6 +87,13 @@ def execute_tool(name: str, arguments: dict) -> str:
                 arguments.get("filename"),
                 arguments.get("confirm", False)
             )
+        elif name == "list_transfers":
+            return list_transfers()
+        elif name == "clean_transfers":
+            return clean_transfers(
+                arguments.get("filename"),
+                arguments.get("confirm", False)
+            )
         else:
             return f"Unknown local tool: {name}"
     except Exception as e:
@@ -398,55 +405,123 @@ def sync_shared() -> str:
 
 
 def clean_shared(filename: str = None, confirm: bool = False) -> str:
-    """Remove files from shared folder on both client and server."""
+    """Delete files from the server's shared folder and clear the local cache.
+
+    The server is the source of truth — the file is deleted there, and the
+    local copy in ~/.maude/shared/ (a download cache) is removed so it
+    doesn't linger.
+    """
+    return _clean_remote(
+        endpoint_prefix="/delete",
+        list_endpoint="/list",
+        local_dir=Path(LOCAL_SHARED_DIR).expanduser(),
+        filename=filename,
+        confirm=confirm,
+        label="shared",
+    )
+
+
+def list_transfers() -> str:
+    """List files in the server's transfers folder."""
+    try:
+        r = _requests.get(f"{FILE_SERVER_URL}/transfers", timeout=5, verify=False)
+        data = r.json()
+        if "error" in data:
+            return f"Error: {data['error']}"
+        files = data.get("files", [])
+        if not files:
+            return "Server transfers folder is empty."
+        entries = []
+        for f in files:
+            if f["is_dir"]:
+                entries.append(f"  [DIR]  {f['name']}/")
+            else:
+                entries.append(f"  [FILE] {f['name']} ({f['size']:,} bytes)")
+        return "Server transfers folder:\n" + "\n".join(entries)
+    except _requests.ConnectionError:
+        return "Error: Can't reach file server. Make sure Tailscale is connected and the server is running."
+    except Exception as e:
+        return f"Error: {e}"
+
+
+def clean_transfers(filename: str = None, confirm: bool = False) -> str:
+    """Delete files from the server's transfers folder."""
+    return _clean_remote(
+        endpoint_prefix="/delete-transfer",
+        list_endpoint="/transfers",
+        local_dir=None,
+        filename=filename,
+        confirm=confirm,
+        label="transfers",
+    )
+
+
+def _clean_remote(
+    *,
+    endpoint_prefix: str,
+    list_endpoint: str,
+    local_dir: Optional[Path],
+    filename: Optional[str],
+    confirm: bool,
+    label: str,
+) -> str:
+    """Shared implementation for clean_shared / clean_transfers."""
     if not confirm:
         return "Error: Set confirm=true to proceed with deletion."
 
-    local_dir = Path(LOCAL_SHARED_DIR).expanduser()
-    results = []
-
     if filename:
-        # Delete specific file from both sides
-        local_file = local_dir / filename
-        if local_file.exists():
-            local_file.unlink()
-            results.append(f"Deleted local: {filename}")
-        else:
-            results.append(f"Local: {filename} not found (skipped)")
-
-        # Delete from server
-        try:
-            server_path = f"{SERVER_SHARED_DIR}/{filename}"
-            r = subprocess.run(
-                ["ssh", SERVER_SSH_HOST, f"rm -f {server_path}"],
-                capture_output=True, text=True, timeout=10
-            )
-            if r.returncode == 0:
-                results.append(f"Deleted server: {filename}")
-            else:
-                results.append(f"Server delete failed: {r.stderr.strip()}")
-        except Exception as e:
-            results.append(f"Server error: {e}")
+        targets = [filename]
     else:
-        # Clean all files from both sides
-        local_count = 0
-        for f in local_dir.iterdir():
-            if f.is_file():
-                f.unlink()
-                local_count += 1
-        results.append(f"Deleted {local_count} file(s) from local shared")
-
-        # Clean server shared
         try:
-            r = subprocess.run(
-                ["ssh", SERVER_SSH_HOST, f"find {SERVER_SHARED_DIR} -maxdepth 1 -type f -delete"],
-                capture_output=True, text=True, timeout=10
+            r = _requests.get(f"{FILE_SERVER_URL}{list_endpoint}", timeout=10, verify=False)
+            if r.status_code != 200:
+                return f"Could not list server {label}: HTTP {r.status_code}"
+            targets = sorted(
+                e["name"]
+                for e in r.json().get("files", [])
+                if not e.get("is_dir") and not e["name"].startswith(".")
             )
-            if r.returncode == 0:
-                results.append("Cleaned server shared folder")
-            else:
-                results.append(f"Server clean failed: {r.stderr.strip()}")
+        except _requests.ConnectionError:
+            return "Error: Can't reach file server."
         except Exception as e:
-            results.append(f"Server error: {e}")
+            return f"Error listing server {label}: {e}"
 
-    return "\n".join(results)
+    if not targets:
+        return f"Nothing to delete — server {label} folder is empty."
+
+    server_ok = 0
+    failures = []
+    local_ok = 0
+
+    for name in targets:
+        try:
+            r = _requests.post(
+                f"{FILE_SERVER_URL}{endpoint_prefix}/{name}", timeout=15, verify=False
+            )
+            if r.status_code == 200:
+                server_ok += 1
+            else:
+                failures.append(f"{name}: HTTP {r.status_code} {r.text[:120]}")
+        except _requests.ConnectionError:
+            failures.append(f"{name}: server unreachable")
+            continue
+        except Exception as e:
+            failures.append(f"{name}: {e}")
+            continue
+
+        if local_dir is not None:
+            local_file = local_dir / name
+            if local_file.exists():
+                try:
+                    local_file.unlink()
+                    local_ok += 1
+                except Exception as e:
+                    failures.append(f"{name} (local cache): {e}")
+
+    parts = [f"Deleted {server_ok}/{len(targets)} from server {label}"]
+    if local_dir is not None:
+        parts.append(f"cleared {local_ok} local cache file(s)")
+    summary = ", ".join(parts)
+    if failures:
+        return summary + "\nFailures:\n  " + "\n  ".join(failures)
+    return summary

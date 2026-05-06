@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run this on your Mac to authenticate with Google."""
 
-from google_auth_oauthlib.flow import InstalledAppFlow
-import os
 import glob
+import os
+
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 # Find the credentials file on Desktop
 desktop = os.path.expanduser("~/Desktop")

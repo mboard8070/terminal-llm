@@ -5,8 +5,9 @@ These tools let the main LLM dispatch tasks to specialized subagents
 that have their own tool access through the gateway.
 """
 
-from .log import log
 from tool_registry import register_tool
+
+from .log import log
 
 
 @register_tool("run_agent")
@@ -32,10 +33,7 @@ def _dispatch_run_agent(args):
     if result.error:
         return f"[{agent_name} agent error] {result.error}"
 
-    return (
-        f"[{agent_name} agent — {result.elapsed}s]\n\n"
-        f"{result.output}"
-    )
+    return f"[{agent_name} agent — {result.elapsed}s]\n\n{result.output}"
 
 
 @register_tool("run_agents")
@@ -48,11 +46,13 @@ def _dispatch_run_agents(args):
 
     agent_tasks = []
     for t in tasks_data:
-        agent_tasks.append(AgentTask(
-            agent_name=t.get("agent", ""),
-            task=t.get("task", ""),
-            context=t.get("context", ""),
-        ))
+        agent_tasks.append(
+            AgentTask(
+                agent_name=t.get("agent", ""),
+                task=t.get("task", ""),
+                context=t.get("context", ""),
+            )
+        )
 
     agent_names = [t.agent_name for t in agent_tasks]
     log(f"Dispatching {len(agent_tasks)} agents in parallel: {', '.join(agent_names)}")
