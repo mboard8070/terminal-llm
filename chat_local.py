@@ -371,6 +371,7 @@ def chat(client, messages: list):
                                     if ttype == "tool_call":
                                         tname = trace.get("name", "?")
                                         targs = trace.get("args", "")
+                                        task = trace.get("task", "")
                                         # Try to extract the most useful arg value
                                         arg_hint = ""
                                         try:
@@ -395,7 +396,9 @@ def chat(client, messages: list):
                                         except (json.JSONDecodeError, TypeError):
                                             if targs and targs != "{}" and len(targs) <= 60:
                                                 arg_hint = targs
-                                        console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{tname}[/bold white]")
+                                        console.print(f"[bold cyan]  ╭─ [/bold cyan][bold white]{task or tname}[/bold white]")
+                                        if task:
+                                            console.print(f"[cyan]  │[/cyan]  [dim]{tname}[/dim]")
                                         if arg_hint:
                                             console.print(f"[cyan]  │[/cyan]  [dim]{arg_hint}[/dim]")
                                     elif ttype == "parallel_start":

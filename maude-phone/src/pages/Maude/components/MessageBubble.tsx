@@ -161,7 +161,7 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
           >
             <div className="flex items-center gap-1.5">
               <span className="text-[11px]">{icon}</span>
-              <span className="font-mono text-[11px] font-semibold text-cyan-400">{step.name}</span>
+              <span className="text-[11px] font-semibold text-cyan-300">{step.task || step.name}</span>
               {isRunning && (
                 <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
               )}
@@ -169,6 +169,9 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
                 <span className="ml-auto font-mono text-[10px] text-maude-muted">{step.elapsed.toFixed(1)}s</span>
               )}
             </div>
+            {step.task && (
+              <div className="truncate font-mono text-[10px] leading-tight text-maude-muted">{step.name}</div>
+            )}
             {step.args && (
               <div className="truncate font-mono text-[10px] leading-tight text-maude-muted">{step.args}</div>
             )}

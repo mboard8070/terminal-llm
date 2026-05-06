@@ -25,6 +25,7 @@ function getLocation(): Promise<typeof cachedLocation> {
 
 export interface ToolStep {
   name: string;
+  task?: string;
   args?: string;
   result?: string;
   elapsed?: number;
@@ -314,7 +315,7 @@ export function useChat(conversationId: string | null = null) {
                   if (t.type === "tool_call" && t.name) {
                     trace.tools.push(t.name);
                     const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                    toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                    toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
                     scheduleUpdate();
                   } else if (t.type === "tool_result") {
                     for (let i = toolSteps.length - 1; i >= 0; i--) {
@@ -429,7 +430,7 @@ export function useChat(conversationId: string | null = null) {
                 if (t.type === "tool_call" && t.name) {
                   trace.tools.push(t.name);
                   const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
                   scheduleUpdate();
                 } else if (t.type === "tool_result") {
                   // Match the last running step with this tool name
@@ -487,7 +488,7 @@ export function useChat(conversationId: string | null = null) {
                 if (t.type === "tool_call" && t.name) {
                   trace.tools.push(t.name);
                   const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, args: argHint, status: "running" });
+                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
                   scheduleUpdate();
                 } else if (t.type === "tool_result") {
                   for (let i = toolSteps.length - 1; i >= 0; i--) {

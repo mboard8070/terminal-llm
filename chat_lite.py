@@ -139,6 +139,7 @@ def stream_response(messages: list, model_id: str) -> str:
 
                                 tname = trace.get("name", "?")
                                 targs = trace.get("args", "")
+                                task = trace.get("task", "")
                                 arg_hint = ""
                                 try:
                                     parsed = json.loads(targs) if targs else {}
@@ -165,7 +166,9 @@ def stream_response(messages: list, model_id: str) -> str:
                                     if targs and targs != "{}" and len(targs) <= 60:
                                         arg_hint = targs
 
-                                console.print(f"  [bold cyan]╭─[/bold cyan] [bold white]{tname}[/bold white]")
+                                console.print(f"  [bold cyan]╭─[/bold cyan] [bold white]{task or tname}[/bold white]")
+                                if task:
+                                    console.print(f"  [cyan]│[/cyan]  [dim]{tname}[/dim]")
                                 if arg_hint:
                                     console.print(f"  [cyan]│[/cyan]  [dim]{arg_hint}[/dim]")
 

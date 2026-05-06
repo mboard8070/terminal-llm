@@ -387,7 +387,8 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
             item_id = item.get("id") or f"codex-{len(active_items)}"
             name = self._codex_item_name(item, event_type)
             active_items[item_id] = name
-            self._send_trace_sse("tool_call", {"name": name, "args": json.dumps(self._codex_item_args(item, event_type))})
+            args = self._codex_item_args(item, event_type)
+            self._send_trace_sse("tool_call", self._tool_call_trace_payload(name, args, json.dumps(args)))
             return
 
         if event_type == "item.completed":
@@ -408,7 +409,8 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
         if event_type.endswith(".started"):
             name = event_type.removesuffix(".started").replace(".", "_")
             active_items[event_type] = name
-            self._send_trace_sse("tool_call", {"name": name, "args": json.dumps(self._codex_event_args(event))})
+            args = self._codex_event_args(event)
+            self._send_trace_sse("tool_call", self._tool_call_trace_payload(name, args, json.dumps(args)))
             return
 
         if event_type.endswith(".completed"):
@@ -502,6 +504,59 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
             self.wfile.flush()
         except Exception:
             pass
+
+    @staticmethod
+    def _tool_task_label(name: str, args: dict | None = None) -> str:
+        """Return a short user-facing description of what the tool is doing."""
+        args = args or {}
+        command = str(args.get("command", "")).strip()
+        query = str(args.get("query", "")).strip()
+        prompt = str(args.get("prompt", "")).strip()
+        file_path = str(args.get("file_path") or args.get("path") or args.get("local_path") or "").strip()
+
+        if name == "run_command":
+            cmd = command.lower()
+            if "comfyui" in cmd or "8188" in cmd:
+                return "Checking or starting ComfyUI"
+            if "ffmpeg" in cmd:
+                return "Rendering the video"
+            if "hyperframes" in cmd:
+                return "Building the video scene"
+            if "youtube" in cmd:
+                return "Checking YouTube state"
+            if any(part in cmd for part in ("ls ", "find ", "rg ", "grep ", "tail ", "cat ", "ss ", "lsof ")):
+                return "Inspecting local files and services"
+            if any(part in cmd for part in ("git ", "npm ", "pytest", "py_compile")):
+                return "Verifying code changes"
+            return "Running a local command"
+        if name in {"web_search", "web_browse", "web_image_search"}:
+            return f"Researching: {query[:70]}" if query else "Researching online"
+        if name in {"generate_image", "generate_image_flux2"}:
+            return f"Creating image asset: {prompt[:70]}" if prompt else "Creating image asset"
+        if name == "youtube_upload":
+            return "Uploading the video to YouTube"
+        if name.startswith("youtube_"):
+            return "Checking YouTube"
+        if name.startswith("gmail_"):
+            return "Working with Gmail"
+        if name.startswith("drive_"):
+            return "Working with Google Drive"
+        if name.startswith("calendar_"):
+            return "Working with Calendar"
+        if name in {"read_file", "write_file", "list_directory"}:
+            return f"Working with files: {file_path[:70]}" if file_path else "Working with files"
+        if name in {"share_file", "pull_shared"}:
+            return "Moving the finished file"
+        if name.startswith("codex_"):
+            return "Delegating work to Codex"
+        return name.replace("_", " ").capitalize()
+
+    def _tool_call_trace_payload(self, name: str, args: dict | None, args_preview: str) -> dict:
+        return {
+            "name": name,
+            "args": args_preview,
+            "task": self._tool_task_label(name, args),
+        }
 
     def _close_sse_with_error(self, error_msg: str):
         """Send an error trace and close the SSE stream cleanly."""
@@ -951,10 +1006,7 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
                     if sse_started:
                         self._send_trace_sse(
                             "tool_call",
-                            {
-                                "name": func_name,
-                                "args": args_preview,
-                            },
+                            self._tool_call_trace_payload(func_name, func_args, args_preview),
                         )
 
                     # Duplicate detection
@@ -1547,10 +1599,7 @@ HyperFrames is CLI-based; there is no long-running HyperFrames service to start.
                     if sse_started:
                         self._send_trace_sse(
                             "tool_call",
-                            {
-                                "name": func_name,
-                                "args": args_preview,
-                            },
+                            self._tool_call_trace_payload(func_name, func_args, args_preview),
                         )
 
                     # Duplicate detection
