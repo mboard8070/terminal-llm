@@ -6,6 +6,7 @@ tool pre-flight checks, and startup diagnostics.
 """
 
 import importlib
+import shutil
 import socket
 import time
 
@@ -89,6 +90,11 @@ _TOOL_DEPS = {
     "substack_get_stats": [],
     "schedule_task": ["croniter"],
     "send_to_claude": ["anthropic"],
+    "hyperframes_doctor": [],
+    "hyperframes_browser_ensure": [],
+    "hyperframes_init": [],
+    "hyperframes_lint": [],
+    "hyperframes_render": [],
 }
 
 # Tools with no external deps (always ready)
@@ -223,6 +229,9 @@ class HealthChecker:
             except ImportError:
                 return (False, "skills framework not available")
 
+        if name.startswith("hyperframes_") and not shutil.which("npx"):
+            return (False, "npx not found; install Node.js 22+ and npm")
+
         deps = _TOOL_DEPS.get(name)
         if deps is None:
             # Unknown tool — assume ready (don't block)
@@ -244,6 +253,9 @@ class HealthChecker:
 
         if name.startswith("skill_"):
             return (True, "")  # Best-effort
+
+        if name.startswith("hyperframes_") and not shutil.which("npx"):
+            return (False, "npx not found; install Node.js 22+ and npm")
 
         required = _TOOL_DEPS.get(name)
         if required is None:

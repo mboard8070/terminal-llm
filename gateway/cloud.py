@@ -33,20 +33,90 @@ class CloudMixin:
 
     CODEX_MAUDE_TOOL_BRIDGE = """MAUDE TOOL BRIDGE FOR CODEX:
 You are running inside MAUDE on the DGX Spark. Do not use Codex's own imagegen skill for image generation.
-When the user asks you to generate, draw, create, render, or make an image, call MAUDE's local Flux 1 / ComfyUI image tool through the local gateway:
+Call MAUDE tools through the local gateway when the task needs Maude capabilities:
 
 curl -s -X POST http://localhost:30080/api/tools/execute \
   -H 'Content-Type: application/json' \
   -d '{"name":"generate_image","arguments":{"prompt":"PROMPT","width":1024,"height":1024,"steps":28,"seed":-1}}'
 
+IMAGE GENERATION:
+When the user asks you to generate, draw, create, render, or make an image, call MAUDE's local Flux 1 / ComfyUI image tool through the local gateway using name "generate_image".
 Use this local Flux 1 tool by default. If the user specifically asks for Flux 2, use name "generate_image_flux2" with arguments {"prompt":"PROMPT","model":"pro","aspect_ratio":"1:1","seed":-1}.
 After the tool returns, include its markdown display link, usually like ![description](/download/file.png), so the mobile app can show the image.
-Do not claim the image was generated until the MAUDE tool response says it succeeded."""
+Do not claim the image was generated until the MAUDE tool response says it succeeded.
+
+HYPERFRAMES VIDEO:
+Maude has a HyperFrames skill and native HyperFrames tools. Use these for HTML/CSS/JS programmatic video, motion graphics, or requests that mention HyperFrames. Do not use Mochi; it has been removed.
+
+Check readiness:
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"skill_hyperframes","arguments":{"action":"doctor"}}'
+
+Install/verify HyperFrames managed Chrome if doctor says Chrome is missing:
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"skill_hyperframes","arguments":{"action":"browser_ensure"}}'
+
+Create a HyperFrames project:
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"skill_hyperframes","arguments":{"action":"init","name":"PROJECT_NAME","example":"blank"}}'
+
+Render a HyperFrames project:
+curl -s -X POST http://localhost:30080/api/tools/execute \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"skill_hyperframes","arguments":{"action":"render","project_path":"/path/to/project","format":"mp4","quality":"standard","share":true}}'
+
+HyperFrames is CLI-based; there is no long-running HyperFrames service to start. The rendered video is shared through /download/<file> when share is true."""
+
+    @staticmethod
+    def _codex_available_tools_addendum(messages: list[dict]) -> str:
+        """Build a compact list of Maude tools Codex can call via the bridge."""
+        user_msg = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = "\n".join(
+                        block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+                    )
+                user_msg = str(content)
+                break
+
+        try:
+            active_tools = get_tools_for_message(user_msg) if get_tools_for_message else []
+        except Exception:
+            active_tools = []
+
+        if not active_tools:
+            return ""
+
+        lines = [
+            "AVAILABLE MAUDE TOOLS FOR THIS REQUEST:",
+            "Use any listed tool with:",
+            "curl -s -X POST http://localhost:30080/api/tools/execute "
+            "-H 'Content-Type: application/json' "
+            "-d '{\"name\":\"TOOL_NAME\",\"arguments\":{...}}'",
+        ]
+        for tool in active_tools:
+            fn = tool.get("function", {})
+            name = fn.get("name", "")
+            description = " ".join((fn.get("description") or "").split())
+            if not name:
+                continue
+            if len(description) > 180:
+                description = description[:177] + "..."
+            lines.append(f"- {name}: {description}")
+        return "\n".join(lines)
 
     @staticmethod
     def _messages_to_codex_prompt(messages: list[dict]) -> str:
         """Flatten chat messages into a single prompt for `codex exec`."""
         parts = [CloudMixin.CODEX_MAUDE_TOOL_BRIDGE]
+        tool_addendum = CloudMixin._codex_available_tools_addendum(messages)
+        if tool_addendum:
+            parts.append(tool_addendum)
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")

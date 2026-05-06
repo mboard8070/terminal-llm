@@ -84,6 +84,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Scheduled tasks**: Cron-based automation with natural language scheduling
 - **Google integration**: Gmail, Drive, Sheets, Calendar, Slides, Contacts, YouTube
 - **Voice mode**: Speech input/output via Nemotron ASR + Magpie TTS
+- **HyperFrames video rendering**: Scaffold, lint, render, and share programmatic HTML/CSS/JS videos
 - **Conversation memory**: Persistent context across sessions
 - **Best-practice guides**: 10 markdown guides (coding, web design, graphic design, color theory, writing, API design, prompt engineering, image generation, cybersecurity, UI/UX patterns) auto-injected into system prompt based on task context
 
@@ -157,6 +158,7 @@ The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror 
 | `web_view` | Screenshot webpage + LLaVA visual analysis |
 | `view_image` | Analyze local images with LLaVA |
 | `generate_image` | Generate images via Flux/ComfyUI |
+| `hyperframes_doctor` / `hyperframes_browser_ensure` / `hyperframes_init` / `hyperframes_lint` / `hyperframes_render` | Diagnose, create, and render HyperFrames HTML-to-video projects |
 
 ### Shared Folder & Transfers
 | Tool | Description |

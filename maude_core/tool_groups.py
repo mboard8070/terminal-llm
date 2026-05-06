@@ -170,6 +170,30 @@ _TOOL_GROUPS = {
             "youtube_my_channel",
         },
     },
+    "hyperframes": {
+        "keywords": [
+            "hyperframes",
+            "hyperframe",
+            "html to video",
+            "html-to-video",
+            "programmatic video",
+            "video composition",
+            "render video",
+            "render mp4",
+            "create video",
+            "make a video",
+            "motion graphics",
+        ],
+        "tools": {
+            "skill_hyperframes",
+            "hyperframes_doctor",
+            "hyperframes_browser_ensure",
+            "hyperframes_init",
+            "hyperframes_lint",
+            "hyperframes_render",
+            "share_file",
+        },
+    },
     "substack": {
         "keywords": ["substack", "newsletter", "draft", "publish", "blog post", "article"],
         "tools": {

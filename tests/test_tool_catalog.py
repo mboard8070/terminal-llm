@@ -83,6 +83,14 @@ class TestCatalogFiltering:
         names = {t["function"]["name"] for t in tools}
         assert "generate_image" in names
 
+    def test_hyperframes_keyword(self):
+        tools = get_filtered_tools("create a HyperFrames product video")
+        names = {t["function"]["name"] for t in tools}
+        assert "skill_hyperframes" in names
+        assert "hyperframes_init" in names
+        assert "hyperframes_browser_ensure" in names
+        assert "hyperframes_render" in names
+
 
 class TestExecutionTargets:
     """Test that execution targets are correctly assigned."""
