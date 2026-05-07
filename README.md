@@ -1,8 +1,8 @@
 # MAUDE
 
-**Multi-Agent Unified Dispatch Engine** — An on-device AI assistant running on DGX Spark with cloud model routing, multi-client access, and tool execution.
+**Multi-Agent Unified Dispatch Engine** — a DGX Spark AI assistant with local models, cloud model routing, multi-client access, and tool execution.
 
-MAUDE runs locally using Nemotron via llama.cpp, with automatic routing to cloud models (Mistral, Codestral) via a unified gateway. Accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
+MAUDE defaults to the gateway-routed `nemotron-super` model, can run local llama-server models, and routes cloud requests to Mistral, Codestral, Devstral, Claude, OpenAI, OpenRouter, and the local Codex CLI. It is accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
 
 ## Screenshots
 
@@ -51,10 +51,10 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 │             │                        │                               │
 │             ▼                        ▼                                │
 │  ┌──────────────────┐  ┌─────────────────────────────────────┐      │
-│  │ llama.cpp        │  │ Mistral / Codestral / Claude API    │      │
-│  │ (port 30010)     │  │ (tool loop + result caching)        │      │
-│  │ Nemotron 30B     │  └─────────────────────────────────────┘      │
-│  └──────────────────┘                                                │
+│  │ llama-server     │  │ Mistral / Codestral / Devstral      │      │
+│  │ ports 30010+     │  │ Claude / OpenAI / OpenRouter        │      │
+│  │ Nemotron/Gemma   │  │ Codex CLI (local account)           │      │
+│  └──────────────────┘  └─────────────────────────────────────┘      │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐    │
 │  │  maude_core/               tool_registry.py                   │    │
@@ -71,7 +71,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 ## Features
 
 - **Multi-client access**: Server TUI, Mac/PC CLI, phone PWA, Telegram bot
-- **Model routing**: Auto-routes between local Nemotron and cloud Mistral/Codestral via gateway
+- **Model routing**: Routes local llama-server models, OpenRouter Nemotron Super, Mistral/Codestral/Devstral, Claude, OpenAI, and Codex CLI through the gateway
 - **Tool execution**: Files, shell, web browse/search, vision, image generation
 - **Parallel tool execution**: Read-only tools run concurrently via ThreadPoolExecutor; mutating tools stay sequential
 - **Planned execution**: `execute_plan` tool lets the model declare multi-stage tool plans with `$N.M` cross-stage references — collapses multiple LLM round-trips into one
@@ -79,10 +79,11 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Pipeline trace**: Inline display of tool calls, args, result previews, timing, and parallel execution indicators
 - **Typewriter effects**: Word-by-word response reveal on server TUI and client CLI
 - **Shared folder**: Server-owned shared files in `shared/`, accessed by clients through HTTP routes
+- **Phone location awareness**: Phone GPS is cached by the gateway and injected into model context for location-aware replies
 - **Auto-routing**: Classifies messages and routes to specialized subagents
-- **Frontier delegation**: Escalates to cloud AI (Mistral, Codestral) for complex tasks
+- **Codex delegation**: Routes coding tasks through the locally authenticated Codex CLI when `/model switch codex` is active
 - **Scheduled tasks**: Cron-based automation with natural language scheduling
-- **Google integration**: Gmail, Drive, Sheets, Calendar, Slides, Contacts, YouTube
+- **Google integration**: Gmail, Drive, Docs, Sheets, Calendar, Slides, Contacts, YouTube search/upload
 - **Voice mode**: Speech input/output via Nemotron ASR + Magpie TTS
 - **HyperFrames video rendering**: Scaffold, lint, render, and share programmatic HTML/CSS/JS videos
 - **Conversation memory**: Persistent context across sessions
@@ -90,15 +91,25 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 
 ## Models
 
-| Model | Type | Use Case |
-|-------|------|----------|
-| **Nemotron-3-Nano-30B** | Local (llama.cpp) | Default — general tasks, tool use |
-| **Mistral Large** | Cloud (API) | Complex reasoning, longer context |
-| **Codestral** | Cloud (API) | Code generation and analysis |
-| **Claude Opus / Sonnet** | Cloud (Anthropic) | Deep reasoning, coding |
-| **LLaVA 13B** | Local (Ollama) | Vision — image and screenshot analysis |
+| Switch Name / ID | Routed Model | Type | Use Case |
+|------------------|--------------|------|----------|
+| `nemotron-super` | `nvidia/nemotron-3-super-120b-a12b:free` | OpenRouter | Default general model with large context |
+| `nemotron` / `local` | `nemotron` | Local llama-server, port 30010 | Local fallback and offline chat |
+| `mistral` | `mistral-large-latest` | Mistral API | General cloud model with native vision support |
+| `codestral` | `codestral-latest` | Codestral API | Code generation and analysis |
+| `devstral` | `devstral-2512` | Mistral API | Larger code-agent model |
+| `devstral-small` | `devstral-small-latest` | Mistral API | Lightweight code-agent model |
+| `devstral-medium` | `devstral-medium-latest` | Mistral API | Mid-tier code-agent model |
+| `openai` | `MAUDE_OPENAI_MODEL` or `gpt-4o` | OpenAI API | Optional OpenAI route |
+| `codex` | `codex-cli` | Local Codex CLI | Coding tasks through the locally authenticated Codex CLI |
+| `claude` | `claude-opus-4-20250514` | Anthropic API | Deep reasoning and vision |
+| `sonnet` | `claude-sonnet-4-20250514` | Anthropic API | Fast Claude route with vision |
+| `hermes` / `hermes3` | `hermes` | Local llama-server, port 30011 | Local Hermes 3 route |
+| `gemma` / `gemma4` | `gemma-4-31b` | Local llama-server, port 30013 | Local multimodal route |
+| `vision` / `llava` | `llava` | Local llama-server | Local vision route |
+| vision fallback | `nvidia/nemotron-nano-12b-v2-vl:free` | OpenRouter | Free fallback used when native vision is unavailable |
 
-Switch models at runtime with `/model switch mistral` or `/model switch nemotron`.
+Switch models at runtime with `/model switch mistral`, `/model switch claude`, `/model switch codex`, or `/model switch nemotron`.
 
 ## Clients
 
@@ -129,8 +140,8 @@ Accessible from anywhere via Telegram. Runs as a systemd service on the server.
 
 The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror on port 30080 for clients that need it. It is the single entry point for all remote clients.
 
-- **Model routing**: Routes requests to local llama.cpp or cloud APIs (Mistral, Codestral, Claude) based on model name
-- **Tool execution**: Runs server-side tool loops for cloud models with automatic tool selection
+- **Model routing**: Resolves aliases in `gateway/state.py` and routes requests to local llama-server ports, OpenRouter, Mistral/Codestral/Devstral, Claude, OpenAI, or Codex CLI
+- **Tool execution**: Runs server-side tool loops for tool-capable gateway routes with automatic tool selection
 - **SSE trace events**: Streams `tool_call`, `tool_result`, `llm_call`, and `parallel_start` trace events to clients
 - **Structured logging**: Uses Python `logging` module (`maude.gateway` logger) with timestamps and levels
 - **File serving**: Serves shared folder files, PWA assets, and generated images
@@ -155,9 +166,10 @@ The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror 
 |------|-------------|
 | `web_browse` | Fetch and parse web pages (text extraction) |
 | `web_search` | Search via DuckDuckGo |
-| `web_view` | Screenshot webpage + LLaVA visual analysis |
-| `view_image` | Analyze local images with LLaVA |
-| `generate_image` | Generate images via Flux/ComfyUI |
+| `web_view` | Screenshot webpage + native vision or fallback visual analysis |
+| `view_image` | Analyze local images with native vision or OpenRouter/local fallback |
+| `generate_image` | Generate images via local Flux/ComfyUI |
+| `generate_image_flux2` | Optional Flux 2 image generation via Replicate |
 | `hyperframes_doctor` / `hyperframes_browser_ensure` / `hyperframes_init` / `hyperframes_lint` / `hyperframes_render` | Diagnose, create, and render HyperFrames HTML-to-video projects |
 
 ### Shared Folder & Transfers
@@ -171,22 +183,32 @@ The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror 
 ### Delegation, Planning & Automation
 | Tool | Description |
 |------|-------------|
-| `ask_frontier` | Escalate to cloud AI for complex reasoning |
 | `send_to_claude` | Delegate tasks to Claude Code |
 | `execute_plan` | Multi-stage tool plan — stages run sequentially, tools within each stage run in parallel. Supports `$N.M` references between stages |
 | `run_agent` / `run_agents` | Dispatch to specialized subagents (parallel execution, shared context) |
 | `schedule_task` | Create/manage cron-based automated tasks |
+| `ask_frontier` | Legacy optional frontier helper; most model routing now goes through the gateway |
+
+### GitHub
+| Tool | Description |
+|------|-------------|
+| `github_list_prs` / `github_view_pr` / `github_create_pr` / `github_merge_pr` / `github_close_pr` | Pull request operations via `gh` |
+| `github_list_issues` / `github_view_issue` / `github_create_issue` / `github_close_issue` | Issue operations via `gh` |
+| `github_list_repos` / `github_view_repo` / `github_list_branches` / `github_list_commits` | Repository inspection |
+| `github_list_runs` / `github_view_run` / `github_rerun` | GitHub Actions operations |
+| `github_search` / `github_notifications` | Search and notifications |
 
 ### Google Integration
 | Tool | Description |
 |------|-------------|
 | `gmail_list` / `gmail_read` / `gmail_send` | Email operations |
 | `drive_list` / `drive_search` / `drive_read` / `drive_upload` / `drive_delete` | Drive operations |
+| `drive_create_folder` / `drive_create_doc` / `drive_create_sheet` / `drive_update_doc` | Drive Docs, Sheets, and folder creation/update |
 | `sheets_read` / `sheets_write` / `sheets_create` | Spreadsheet operations |
 | `calendar_list` / `calendar_create` / `calendar_delete_event` | Calendar operations |
 | `slides_create` / `slides_add_slide` | Presentation operations |
 | `contacts_list` / `contacts_search` | Contact operations |
-| `youtube_search` | YouTube search |
+| `youtube_search` / `youtube_upload` | YouTube search and upload |
 
 ## Installation
 
@@ -200,12 +222,15 @@ pip install -r requirements.txt
 # Install Playwright for web screenshots
 playwright install chromium
 
-# Install LLaVA for vision (via Ollama)
+# Optional local vision route; OpenRouter Nemotron Nano VL is the configured fallback
 ollama pull llava:13b
 
 # Set up API keys for cloud models (optional)
 export MISTRAL_API_KEY="your-key"
 export CODESTRAL_API_KEY="your-key"
+export CLAUDE_API_KEY="your-key"        # Gateway Claude routes
+export OPENAI_API_KEY="your-key"
+export OPEN_ROUTER_API_KEY="your-key"
 ```
 
 ## Quick Start
@@ -216,6 +241,19 @@ cd ~/nvidia-workbench/terminal-llm
 ```
 
 This starts the inference server, gateway, and TUI. Use `/model switch mistral` to switch to cloud models.
+
+## Testing
+
+The test suite follows a testing pyramid: broad, fast unit coverage at the base, narrower integration coverage for gateway/client contracts in the middle, and focused end-to-end HTTP smoke tests at the top.
+
+```bash
+venv/bin/python -m pytest
+venv/bin/python -m pytest --collect-only -q
+```
+
+- **Unit tests** cover tool execution, health checks, tool catalog schemas, routing, planned execution, and `PARALLEL_SAFE` classification.
+- **Integration tests** exercise gateway API behavior, client/server tool routing, collaboration state, and parallel execution behavior with mocked external calls.
+- **HTTP smoke tests** start the real gateway server and validate health, tool catalog filtering, tool execution, model listing, and CORS behavior.
 
 ## Configuration
 
@@ -232,11 +270,14 @@ This starts the inference server, gateway, and TUI. Use `/model switch mistral` 
 | `MAUDE_CODEX_TIMEOUT` | `3600` | Codex CLI timeout in seconds |
 | `MAUDE_ENABLE_FLUX2` | unset/false | Enable cloud Flux 2 image generation via Replicate. Local ComfyUI Flux 1 is used by default. |
 | `VISION_SERVER_URL` | `http://localhost:11434/v1` | Ollama endpoint for LLaVA |
-| `MAUDE_VISION_MODEL` | `llava:13b` | Vision model name |
+| `MAUDE_VISION_MODEL` | `llava:13b` | Local vision model name |
+| `MAUDE_CODEX_MAX_CONTEXT` | `128000` | Context budget used for Codex CLI routing metadata |
 | `MISTRAL_API_KEY` | — | Mistral API key (for cloud routing) |
 | `CODESTRAL_API_KEY` | — | Codestral API key (for cloud routing) |
-| `CLAUDE_API_KEY` | — | Anthropic API key (for Claude Opus/Sonnet) |
+| `CLAUDE_API_KEY` | — | Anthropic API key used by gateway Claude Opus/Sonnet routes |
 | `OPENAI_API_KEY` | — | OpenAI API key (only for `/model switch openai`) |
+| `OPEN_ROUTER_API_KEY` | — | OpenRouter key for `nemotron-super` and vision fallback |
+| `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `XAI_API_KEY` | — | Legacy optional keys used only by `ask_frontier` |
 
 ## Project Structure
 
@@ -259,7 +300,7 @@ terminal-llm/
 │   ├── rate_limits.py     # Per-turn rate limit counters
 │   ├── tools_file.py      # 9 file/shell tools (read, write, edit, search, run_command)
 │   ├── tools_web.py       # 4 web/vision tools (browse, search, web_view, view_image)
-│   ├── tools_ai.py        # AI delegation (ask_frontier, send_to_claude)
+│   ├── tools_ai.py        # AI delegation helpers (send_to_claude, legacy ask_frontier)
 │   ├── tools_shared.py    # Shared folder / file transfer tools
 │   ├── tools_media.py     # Image generation (Flux via ComfyUI)
 │   ├── tools_schedule.py  # Cron-based task scheduling
@@ -271,7 +312,7 @@ terminal-llm/
 ├── gateway.py             # Gateway — model routing, tool loops, SSE, structured logging
 ├── auto_router.py         # Message classification and subagent routing
 ├── agent_executor.py      # Parallel subagent execution with shared context
-├── frontier.py            # Cloud AI escalation
+├── frontier.py            # Legacy ask_frontier provider helper
 ├── memory.py              # Persistent conversation memory
 ├── scheduler.py           # Cron-based task scheduling
 ├── google_tools.py        # Google Workspace API implementations
@@ -281,7 +322,7 @@ terminal-llm/
 ├── tool_catalog.py        # Tool catalog API for gateway endpoints
 ├── voice.py               # Voice mode (Whisper)
 ├── run_telegram.py        # Telegram bot
-├── tests/                 # Test suite (122+ tests)
+├── tests/                 # Test suite (124 tests; pyramid of unit, integration, HTTP smoke coverage)
 │   ├── test_tool_execution.py    # Unit tests for core tools
 │   ├── test_gateway_api.py       # API endpoint tests (mock-based)
 │   ├── test_gateway_http.py      # Integration tests (real HTTP server)

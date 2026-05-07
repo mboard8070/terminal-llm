@@ -15,23 +15,20 @@
 - [x] Web search and browsing
 - [x] Gateway with HTTPS + HTTP mirror
 - [x] OAuth app verification for persistent Google tokens
+- [x] Parallel tool execution (read-only tools run concurrently; mutating tools stay sequential)
+- [x] Pytest suite organized around a testing pyramid: unit coverage, integration coverage, and gateway HTTP smoke tests
+- [x] Phone location awareness
+- [x] Long-term memory / context retention across sessions
+- [x] PDF and Office document parsing tools
 
 ## Open
 
 ### Phone App
-- [ ] Phone location awareness (send GPS coords as context)
-- [ ] Push notifications
-- [ ] Nemotron reasoning_content display (fix merged, needs deploy to TestFlight)
-
-### Local Model
-- [ ] Nemotron tool calling (gated — only when query clearly needs tools, otherwise route to cloud)
+- [ ] No open items
 
 ### Quality of Life
-- [ ] Long-term memory / context retention across sessions
-- [ ] Slack/Discord integration
-- [ ] PDF and Office document parsing tools
-- [ ] Parallel tool execution (run independent tool calls concurrently)
+- [ ] No open items
 
 ### Infrastructure
 - [ ] Gateway connection pooling for cloud API requests
-- [ ] Better error recovery and auto-retry for transient failures
+- [ ] Extend transient retry/error recovery to plain provider proxy and frontier calls
