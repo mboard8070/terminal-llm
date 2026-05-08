@@ -1,5 +1,6 @@
 workflow:
   rules:
+    - if: $CI_COMMIT_TAG
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
@@ -8,6 +9,7 @@ stages:
   - test
   - build
   - security
+  - package
   - release
 
 variables:
@@ -67,10 +69,103 @@ phone:build:
     paths:
       - maude-phone/dist
 
+client:package:
+  stage: package
+  image: python:3.12-slim
+  rules:
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - python -m pip install --upgrade pip
+  script:
+    - cd maude-client
+    - python -m pip wheel --no-deps . -w dist
+    - WHEEL="$(ls dist/*.whl)"
+    - FILE="$(basename "$WHEEL")"
+    - |
+      python - "$WHEEL" "$FILE" <<'PY'
+      import os
+      import sys
+      import urllib.request
+
+      path, filename = sys.argv[1], sys.argv[2]
+      project = os.environ["CI_PROJECT_ID"]
+      tag = os.environ["CI_COMMIT_TAG"]
+      token = os.environ["CI_JOB_TOKEN"]
+      url = f"{os.environ['CI_API_V4_URL']}/projects/{project}/packages/generic/maude-client/{tag}/{filename}"
+
+      with open(path, "rb") as fh:
+          req = urllib.request.Request(url, data=fh.read(), method="PUT")
+      req.add_header("JOB-TOKEN", token)
+      req.add_header("Content-Type", "application/octet-stream")
+      with urllib.request.urlopen(req) as resp:
+          print(resp.status, resp.reason)
+      PY
+  artifacts:
+    when: on_success
+    expire_in: 1 week
+    paths:
+      - maude-client/dist/*.whl
+
+phone:package:
+  stage: package
+  image: node:20-slim
+  rules:
+    - if: $CI_COMMIT_TAG
+  cache:
+    key:
+      files:
+        - maude-phone/package-lock.json
+    paths:
+      - .cache/npm
+  before_script:
+    - cd maude-phone
+    - npm ci
+  script:
+    - npm run build
+    - ARCHIVE="maude-phone-dist-${CI_COMMIT_TAG}.tar.gz"
+    - tar -czf "$ARCHIVE" dist
+    - |
+      node - "$ARCHIVE" <<'JS'
+      const fs = require("fs");
+      const path = require("path");
+
+      const archive = process.argv[2];
+      const project = process.env.CI_PROJECT_ID;
+      const tag = process.env.CI_COMMIT_TAG;
+      const token = process.env.CI_JOB_TOKEN;
+      const filename = path.basename(archive);
+      const url = `${process.env.CI_API_V4_URL}/projects/${project}/packages/generic/maude-phone/${tag}/${filename}`;
+
+      fetch(url, {
+        method: "PUT",
+        headers: {
+          "JOB-TOKEN": token,
+          "Content-Type": "application/octet-stream",
+        },
+        body: fs.readFileSync(archive),
+      }).then(async (res) => {
+        console.log(res.status, res.statusText);
+        if (!res.ok) {
+          console.error(await res.text());
+          process.exit(1);
+        }
+      }).catch((err) => {
+        console.error(err);
+        process.exit(1);
+      });
+      JS
+  artifacts:
+    when: on_success
+    expire_in: 1 week
+    paths:
+      - maude-phone/maude-phone-dist-*.tar.gz
+
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
-  needs: []
+  needs:
+    - client:package
+    - phone:package
   rules:
     - if: $CI_COMMIT_TAG
   script:
