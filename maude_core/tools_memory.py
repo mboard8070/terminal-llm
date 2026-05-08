@@ -5,8 +5,8 @@ Memory tools — LLM-callable persistent memory operations.
 from tool_registry import register_tool
 
 from .log import log
-from .mempalace_utils import get_palace_kg, get_palace_stack
 from .memory_utils import get_memory
+from .mempalace_utils import get_palace_kg, get_palace_stack
 
 
 @register_tool("save_memory")

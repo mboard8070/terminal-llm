@@ -481,7 +481,7 @@ def main():
             "[dim]Files · Shell · Web · Gmail · Drive · Calendar · YouTube · Substack\n"
             "Browser · Social · Vision · Voice · Cross-machine[/dim]\n"
             "\n"
-            f"[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
+            "[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
             border_style="magenta",
         )
     )

@@ -18,7 +18,6 @@ Then set CAMOFOX_URL=http://localhost:9377 in your environment.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import uuid
@@ -199,7 +198,7 @@ def click(selector: str) -> str:
             return f"Clicked '{selector}'.\nURL: {data.get('url', '')}"
         else:
             # For CSS/text selectors, get snapshot, find matching ref, click it
-            return f"Error: Camofox requires @eN refs. Run browser_snapshot first to get element refs."
+            return "Error: Camofox requires @eN refs. Run browser_snapshot first to get element refs."
 
     except Exception as e:
         return f"Error clicking '{selector}': {e}"
@@ -220,7 +219,7 @@ def type_text(selector: str, text: str) -> str:
             })
             return f"Typed '{text[:50]}{'...' if len(text) > 50 else ''}' into '{selector}'."
         else:
-            return f"Error: Camofox requires @eN refs. Run browser_snapshot first to get element refs."
+            return "Error: Camofox requires @eN refs. Run browser_snapshot first to get element refs."
 
     except Exception as e:
         return f"Error typing into '{selector}': {e}"
