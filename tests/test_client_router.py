@@ -154,9 +154,13 @@ class TestToolRouterExecution:
         assert "search results" in result
         mock_post.assert_called_once()
 
-    def test_remote_tool_offline_error(self):
+    @patch("maude_client.tool_router.requests.post")
+    def test_remote_tool_offline_error(self, mock_post):
         """When gateway is down, server tools return error."""
-        router = ToolRouter(gateway_url="http://192.0.2.1:39999")
+        import requests
+
+        mock_post.side_effect = requests.ConnectionError("gateway offline")
+        router = ToolRouter(gateway_url="https://fake:30000")
         result = router.execute("web_search", {"query": "test"})
         assert "Error" in result
 
