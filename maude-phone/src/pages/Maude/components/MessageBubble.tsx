@@ -91,6 +91,9 @@ const TOOL_VERBS: Record<string, string> = {
   share_file: "shared a file",
   view_image: "viewed an image",
   dispatch_task: "dispatched a task",
+  run_agent: "spawned an agent",
+  run_agents: "spawned agents",
+  execute_plan: "ran plan mode",
   change_directory: "changed directory",
   get_working_directory: "checked directory",
 };
@@ -98,7 +101,7 @@ const TOOL_VERBS: Record<string, string> = {
 function buildToolSummary(steps: ToolStep[]): string {
   // Count each tool, then describe with friendly verbs
   const counts = new Map<string, number>();
-  for (const s of steps) {
+  for (const s of steps.filter((step) => !step.kind || step.kind === "tool")) {
     counts.set(s.name, (counts.get(s.name) || 0) + 1);
   }
   const parts: string[] = [];
@@ -117,6 +120,9 @@ function buildToolSummary(steps: ToolStep[]): string {
 }
 
 const TOOL_ICONS: Record<string, string> = {
+  model_route: "\u21C4",
+  parallel_start: "\u2225",
+  context_trim: "\u25F1",
   web_search: "\uD83D\uDD0D",
   web_browse: "\uD83C\uDF10",
   run_command: "\u26A1",
@@ -144,6 +150,7 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
   if (!steps.length) return null;
 
   const anyRunning = steps.some((s) => s.status === "running");
+  const finalToolSummary = buildToolSummary(steps);
 
   return (
     <div className="mb-2 space-y-1">
@@ -173,7 +180,7 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
                 <span className="ml-auto font-mono text-[10px] text-maude-muted">{step.elapsed.toFixed(1)}s</span>
               )}
             </div>
-            {step.task && (
+            {step.task && (!step.kind || step.kind === "tool") && (
               <div className="truncate font-mono text-[10px] leading-tight text-maude-muted">{step.name}</div>
             )}
             {step.args && (
@@ -196,11 +203,11 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
           <span className="animate-pulse text-[10px] text-cyan-400/50">thinking</span>
         </div>
       )}
-      {!streaming && steps.length > 0 && (
+      {!streaming && finalToolSummary && (
         <div className="mt-1 border-l-2 border-green-400/30 py-0.5 pl-2.5">
           <span className="text-[10px] text-green-400/70">
             {"\u2713 "}
-            {buildToolSummary(steps)}
+            {finalToolSummary}
             {(() => {
               const total = steps.reduce((sum, s) => sum + (s.elapsed || 0), 0);
               return total > 0 ? ` \u2014 ${total.toFixed(1)}s` : "";
@@ -214,7 +221,7 @@ const ToolActivity: FC<{ steps: ToolStep[]; streaming: boolean; contentStarted: 
 
 const TraceBadge: FC<{ trace: TraceInfo }> = ({ trace }) => {
   const totalInput = trace.promptTokens + trace.cacheReadTokens + trace.cacheCreateTokens;
-  if (!totalInput && !trace.tools.length) return null;
+  if (!totalInput && !trace.tools.length && !trace.route) return null;
 
   const cachePct = totalInput > 0
     ? Math.round((trace.cacheReadTokens / totalInput) * 100)
@@ -222,14 +229,23 @@ const TraceBadge: FC<{ trace: TraceInfo }> = ({ trace }) => {
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-maude-muted">
+      {trace.route && (
+        <span className="rounded bg-maude-bg px-1.5 py-0.5 text-cyan-300">
+          {trace.route.requestedModel && trace.route.requestedModel !== trace.route.resolvedModel
+            ? `${trace.route.requestedModel} -> ${trace.route.resolvedModel}`
+            : trace.route.resolvedModel || trace.route.requestedModel}
+        </span>
+      )}
       {trace.tools.length > 0 && (
         <span className="rounded bg-maude-bg px-1.5 py-0.5">
           {trace.tools.length} tool{trace.tools.length > 1 ? "s" : ""}
         </span>
       )}
-      <span className="rounded bg-maude-bg px-1.5 py-0.5">
-        {totalInput + trace.completionTokens} tok
-      </span>
+      {totalInput + trace.completionTokens > 0 && (
+        <span className="rounded bg-maude-bg px-1.5 py-0.5">
+          {totalInput + trace.completionTokens} tok
+        </span>
+      )}
       {cachePct > 0 && (
         <span className="rounded bg-maude-bg px-1.5 py-0.5 text-green-400">
           {cachePct}% cached

@@ -314,6 +314,13 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
             return
 
+        req["_route_trace"] = {
+            "requested_model": model_name,
+            "resolved_model": resolved_name,
+            "provider": route["provider"],
+            "max_context": route.get("max_context", 0),
+        }
+
         if route["provider"] == "codex-cli":
             self._codex_cli_response(req, resolved_name)
             return
@@ -329,6 +336,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
                 return
             # Tool-capable local models -> same tool loop as cloud
             if TOOL_SUPPORT:
+                req["_route_trace"]["tool_mode"] = "server"
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
             # Fallback: raw proxy
@@ -348,9 +356,11 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         plain_api = bool(req.get("response_format"))
         if TOOL_SUPPORT and not client_sent_tools and not plain_api:
             if route["provider"] in ("mistral", "openrouter"):
+                req["_route_trace"]["tool_mode"] = "server"
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
             if route["provider"] == "anthropic":
+                req["_route_trace"]["tool_mode"] = "server"
                 self._claude_tool_loop(req, route, resolved_name)
                 return
 

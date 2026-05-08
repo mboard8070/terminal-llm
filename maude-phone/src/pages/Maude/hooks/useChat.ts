@@ -25,6 +25,7 @@ function getLocation(): Promise<typeof cachedLocation> {
 
 export interface ToolStep {
   name: string;
+  kind?: "tool" | "route" | "parallel" | "context";
   task?: string;
   args?: string;
   result?: string;
@@ -32,8 +33,19 @@ export interface ToolStep {
   status: "running" | "done" | "error";
 }
 
+export interface RouteInfo {
+  requestedModel: string;
+  resolvedModel: string;
+  provider: string;
+  endpoint?: string;
+  maxContext?: number;
+  routeKind?: string;
+  toolMode?: string;
+}
+
 export interface TraceInfo {
   tools: string[];
+  route?: RouteInfo;
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
@@ -103,6 +115,97 @@ function extractArgHint(argsStr: string): string {
     }
   } catch { /* raw string fallback */ }
   return argsStr.length > 50 ? argsStr.slice(0, 50) + "\u2026" : argsStr;
+}
+
+function applyTracePayload(
+  t: Record<string, any>,
+  trace: TraceInfo,
+  toolSteps: ToolStep[],
+  appendError: (message: string) => void,
+): boolean {
+  if (t.type === "model_route") {
+    trace.route = {
+      requestedModel: t.requested_model || "",
+      resolvedModel: t.resolved_model || "",
+      provider: t.provider || "unknown",
+      endpoint: t.endpoint,
+      maxContext: t.max_context,
+      routeKind: t.route_kind,
+      toolMode: t.tool_mode,
+    };
+    const summary = t.summary || t.resolved_model || t.requested_model || "model route";
+    const detail = [t.provider, t.endpoint].filter(Boolean).join(" via ");
+    toolSteps.push({
+      name: "model_route",
+      kind: "route",
+      task: `Route: ${summary}`,
+      args: detail || undefined,
+      result: t.max_context ? `${Number(t.max_context).toLocaleString()} ctx` : undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "parallel_start") {
+    const tools = Array.isArray(t.tools) ? t.tools.join(", ") : "";
+    toolSteps.push({
+      name: "parallel_start",
+      kind: "parallel",
+      task: `Running ${t.count || 0} tools in parallel`,
+      args: tools || undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "context_trim") {
+    toolSteps.push({
+      name: "context_trim",
+      kind: "context",
+      task: `Trimmed ${t.removed || 0} old messages`,
+      result: t.max_tokens ? `${Number(t.max_tokens).toLocaleString()} token budget` : undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "tool_call" && t.name) {
+    trace.tools.push(t.name);
+    const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+    toolSteps.push({ name: t.name, kind: "tool", task: t.task, args: argHint, status: "running" });
+    return true;
+  }
+  if (t.type === "tool_result") {
+    for (let i = toolSteps.length - 1; i >= 0; i--) {
+      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+        const preview = (t.preview || "").slice(0, 60);
+        toolSteps[i].result = preview;
+        toolSteps[i].elapsed = t.elapsed || 0;
+        toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
+        break;
+      }
+    }
+    return true;
+  }
+  if (t.type === "keepalive" && t.name) {
+    for (let i = toolSteps.length - 1; i >= 0; i--) {
+      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+        toolSteps[i].elapsed = t.elapsed || 0;
+        break;
+      }
+    }
+    return true;
+  }
+  if (t.type === "llm_call") {
+    trace.promptTokens += t.prompt_tokens || 0;
+    trace.completionTokens += t.completion_tokens || 0;
+    trace.cacheReadTokens += t.cache_read_tokens || 0;
+    trace.cacheCreateTokens += t.cache_create_tokens || 0;
+    trace.elapsed += t.elapsed || 0;
+    return false;
+  }
+  if (t.type === "error") {
+    appendError(t.message || "Unknown error");
+    return true;
+  }
+  return false;
 }
 
 export function useChat(conversationId: string | null = null) {
@@ -255,7 +358,7 @@ export function useChat(conversationId: string | null = null) {
               if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = 0; }
               const finalUpdates: Partial<ChatMessage> = { content: fullContent };
               if (actualModel) finalUpdates.model = actualModel;
-              if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+              if (trace.promptTokens || trace.tools.length || trace.route) finalUpdates.trace = { ...trace };
               if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
               setMessages((prev) =>
                 prev.map((m) => m.id === assistantMsg.id ? { ...m, ...finalUpdates } : m));
@@ -311,41 +414,18 @@ export function useChat(conversationId: string | null = null) {
             const handleTrace = ((event: MessageEvent) => {
               markEvent(event);
               try {
-                  const t = JSON.parse(event.data);
-                  if (t.type === "tool_call" && t.name) {
-                    trace.tools.push(t.name);
-                    const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                    toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                    scheduleUpdate();
-                  } else if (t.type === "tool_result") {
-                    for (let i = toolSteps.length - 1; i >= 0; i--) {
-                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                        toolSteps[i].result = (t.preview || "").slice(0, 60);
-                        toolSteps[i].elapsed = t.elapsed || 0;
-                        toolSteps[i].status = (toolSteps[i].result || "").startsWith("Error") ? "error" : "done";
-                        break;
-                      }
-                    }
-                    scheduleUpdate();
-                  } else if (t.type === "keepalive" && t.name) {
-                    for (let i = toolSteps.length - 1; i >= 0; i--) {
-                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                        toolSteps[i].elapsed = t.elapsed || 0; break;
-                      }
-                    }
-                    scheduleUpdate();
-                  } else if (t.type === "llm_call") {
-                    trace.promptTokens += t.prompt_tokens || 0;
-                    trace.completionTokens += t.completion_tokens || 0;
-                    trace.cacheReadTokens += t.cache_read_tokens || 0;
-                    trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                    trace.elapsed += t.elapsed || 0;
-                  } else if (t.type === "error") {
-                    fullContent += `\n\n*Error: ${t.message || "Unknown error"}*`;
+                const t = JSON.parse(event.data);
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
+                  contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") {
                     contentRef.current = fullContent;
-                    scheduleUpdate();
                   }
-                } catch { /* skip */ }
+                  scheduleUpdate();
+                }
+              } catch { /* skip */ }
             }) as EventListener;
 
             const connect = () => {
@@ -427,43 +507,12 @@ export function useChat(conversationId: string | null = null) {
             if (trimmed.startsWith(": trace ")) {
               try {
                 const t = JSON.parse(trimmed.slice(8));
-                if (t.type === "tool_call" && t.name) {
-                  trace.tools.push(t.name);
-                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                  scheduleUpdate();
-                } else if (t.type === "tool_result") {
-                  // Match the last running step with this tool name
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      const preview = (t.preview || "").slice(0, 60);
-                      toolSteps[i].result = preview;
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "keepalive" && t.name) {
-                  // Update elapsed on the running tool step (keeps connection alive)
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "llm_call") {
-                  trace.promptTokens += t.prompt_tokens || 0;
-                  trace.completionTokens += t.completion_tokens || 0;
-                  trace.cacheReadTokens += t.cache_read_tokens || 0;
-                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                  trace.elapsed += t.elapsed || 0;
-                } else if (t.type === "error") {
-                  // Gateway sent an error — display it as content
-                  const errMsg = t.message || "Unknown error";
-                  fullContent += `\n\n*Error: ${errMsg}*`;
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
                   contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") contentRef.current = fullContent;
                   scheduleUpdate();
                 }
               } catch { /* skip malformed trace */ }
@@ -485,40 +534,12 @@ export function useChat(conversationId: string | null = null) {
               currentEventType = "";
               try {
                 const t = JSON.parse(data);
-                if (t.type === "tool_call" && t.name) {
-                  trace.tools.push(t.name);
-                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                  scheduleUpdate();
-                } else if (t.type === "tool_result") {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      const preview = (t.preview || "").slice(0, 60);
-                      toolSteps[i].result = preview;
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "keepalive" && t.name) {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "llm_call") {
-                  trace.promptTokens += t.prompt_tokens || 0;
-                  trace.completionTokens += t.completion_tokens || 0;
-                  trace.cacheReadTokens += t.cache_read_tokens || 0;
-                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                  trace.elapsed += t.elapsed || 0;
-                } else if (t.type === "error") {
-                  const errMsg = t.message || "Unknown error";
-                  fullContent += `\n\n*Error: ${errMsg}*`;
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
                   contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") contentRef.current = fullContent;
                   scheduleUpdate();
                 }
               } catch { /* skip */ }
@@ -548,7 +569,7 @@ export function useChat(conversationId: string | null = null) {
         // Final update: model from response, trace stats, tool steps
         const finalUpdates: Partial<ChatMessage> = {};
         if (actualModel) finalUpdates.model = actualModel;
-        if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+        if (trace.promptTokens || trace.tools.length || trace.route) finalUpdates.trace = { ...trace };
         if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
         if (Object.keys(finalUpdates).length) {
           setMessages((prev) =>
