@@ -749,6 +749,8 @@ def chat(client, messages: list):
 AVAILABLE_MODELS = {
     "nemotron": "nemotron",
     "nemotron-super": "nemotron-super",
+    "nemotron-a3b": "nemotron-a3b",
+    "a3b": "nemotron-a3b",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
     "devstral": "devstral-2512",
@@ -769,6 +771,7 @@ GATEWAY_URL = "http://localhost:30080/v1"
 
 _CLOUD_MODELS = {
     "nemotron-super",
+    "nemotron-a3b",
     "mistral-large-latest",
     "codestral-latest",
     "devstral-2512",

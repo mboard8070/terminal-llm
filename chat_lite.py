@@ -39,6 +39,8 @@ HISTORY_FILE = Path.home() / ".config" / "maude" / "chat_lite_history"
 MODELS = {
     "nemotron": "nemotron",
     "nemotron-super": "nemotron-super",
+    "nemotron-a3b": "nemotron-a3b",
+    "a3b": "nemotron-a3b",
     "llava": "llava",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",

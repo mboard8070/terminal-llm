@@ -17,14 +17,23 @@ const MODELS = [
   { id: "devstral-small-latest", label: "Devstral Small", desc: "Code Light" },
   { id: "devstral-medium-latest", label: "Devstral Medium", desc: "Code Mid" },
   { id: "nemotron", label: "Nemotron", desc: "Local" },
-  { id: "nemotron-super", label: "Nemotron Super", desc: "Local 120B" },
+  { id: "nemotron-super", label: "Nemotron Super", desc: "OpenRouter 120B" },
+  { id: "nemotron-a3b", label: "Nemotron A3B", desc: "OpenRouter 30B" },
   { id: "gemma-4-31b", label: "Gemma 4", desc: "Local 31B" },
   { id: "llava", label: "LLaVA", desc: "Vision" },
 ];
 
+const MODEL_ALIASES: Record<string, string> = {
+  "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
+  "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
+  "nemotron-nano": "nemotron-a3b",
+  "a3b": "nemotron-a3b",
+};
+
 export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, onToggleAutoRoute }) => {
   const [open, setOpen] = useState(false);
-  const current = MODELS.find((m) => m.id === currentModel) || MODELS[0];
+  const normalizedCurrentModel = MODEL_ALIASES[currentModel] || currentModel;
+  const current = MODELS.find((m) => m.id === normalizedCurrentModel) || MODELS[0];
 
   return (
     <div className="relative">
@@ -37,7 +46,7 @@ export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, on
         <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border border-maude-border bg-maude-surface p-2 shadow-xl">
           {MODELS.map((m) => (
             <button key={m.id} onClick={() => { onSelect(m.id); setOpen(false); }}
-              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${m.id === currentModel ? "bg-maude-bg text-maude-accent" : "text-maude-text hover:bg-maude-bg"}`}>
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${m.id === normalizedCurrentModel ? "bg-maude-bg text-maude-accent" : "text-maude-text hover:bg-maude-bg"}`}>
               <span>{m.label}</span>
               <span className="text-xs text-maude-muted">{m.desc}</span>
             </button>

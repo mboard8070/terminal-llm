@@ -5,6 +5,19 @@ import { uuid } from "./uuid";
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+const MODEL_ALIASES: Record<string, string> = {
+  "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
+  "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
+  "nemotron-nano": "nemotron-a3b",
+  "a3b": "nemotron-a3b",
+};
+
+function normalizeModelId(model: string | null | undefined): string {
+  const value = (model || "").trim();
+  if (!value || value === "claude-opus-4-20250514") return "nemotron-super";
+  return MODEL_ALIASES[value] || value;
+}
+
 // Cached location — updated every 5 minutes or on first use
 let cachedLocation: { lat: number; lng: number; accuracy: number; ts: number } | null = null;
 
@@ -215,7 +228,9 @@ export function useChat(conversationId: string | null = null) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentModel, setCurrentModel] = useState(() => {
     const stored = localStorage.getItem("maude-model");
-    return !stored || stored === "claude-opus-4-20250514" ? "nemotron-super" : stored;
+    const model = normalizeModelId(stored);
+    if (stored !== model) localStorage.setItem("maude-model", model);
+    return model;
   });
   const [autoRoute, setAutoRoute] = useState(() =>
     localStorage.getItem("maude-autoroute") === "true",
@@ -223,8 +238,9 @@ export function useChat(conversationId: string | null = null) {
 
   // Write to localStorage synchronously — not via useEffect which runs after render
   const updateModel = useCallback((model: string) => {
-    localStorage.setItem("maude-model", model);
-    setCurrentModel(model);
+    const normalized = normalizeModelId(model);
+    localStorage.setItem("maude-model", normalized);
+    setCurrentModel(normalized);
   }, []);
   const updateAutoRoute = useCallback((val: boolean) => {
     localStorage.setItem("maude-autoroute", String(val));
@@ -267,7 +283,7 @@ export function useChat(conversationId: string | null = null) {
       if (content.startsWith("/")) {
         const cmd = content.trim().toLowerCase();
         if (cmd === "/clear") { setMessages([]); return; }
-        if (cmd.startsWith("/model ")) { setCurrentModel(cmd.slice(7).trim()); return; }
+        if (cmd.startsWith("/model ")) { updateModel(cmd.slice(7).trim()); return; }
       }
 
       const displayContent = content || (hasImages ? "What do you see in this image?" : "");
@@ -397,7 +413,7 @@ export function useChat(conversationId: string | null = null) {
               if (event.data === "[DONE]") { finish(); return; }
               try {
                 const parsed = JSON.parse(event.data);
-                if (parsed.model && !actualModel) actualModel = parsed.model;
+                if (parsed.model && !actualModel) actualModel = normalizeModelId(parsed.model);
                 const delta = parsed.choices?.[0]?.delta;
                 if (delta?.reasoning_content) {
                   if (!inReasoning) { fullContent += "*Thinking...*\n\n"; inReasoning = true; }
@@ -550,7 +566,7 @@ export function useChat(conversationId: string | null = null) {
             try {
               const parsed = JSON.parse(data);
               // Capture the actual model from the response
-              if (parsed.model && !actualModel) actualModel = parsed.model;
+              if (parsed.model && !actualModel) actualModel = normalizeModelId(parsed.model);
               const delta = parsed.choices?.[0]?.delta;
               if (delta?.reasoning_content) {
                 if (!fetchInReasoning) { fullContent += "*Thinking...*\n\n"; fetchInReasoning = true; }
@@ -599,7 +615,7 @@ export function useChat(conversationId: string | null = null) {
         abortRef.current = null;
       }
     },
-    [messages, isStreaming, currentModel, autoRoute],
+    [messages, isStreaming, currentModel, autoRoute, updateModel],
   );
 
   const stopStreaming = useCallback(() => { abortRef.current?.abort(); }, []);

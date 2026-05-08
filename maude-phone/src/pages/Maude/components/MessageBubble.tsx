@@ -270,6 +270,11 @@ const MODEL_LABELS: Record<string, string> = {
   "devstral-medium-latest": "Devstral Medium",
   "nemotron": "Nemotron",
   "nemotron-super": "Nemotron Super",
+  "nemotron-a3b": "Nemotron A3B",
+  "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron Super",
+  "nvidia/nemotron-3-nano-30b-a3b": "Nemotron A3B",
+  "nemotron-nano": "Nemotron A3B",
+  "a3b": "Nemotron A3B",
   "gemma-4-31b": "Gemma 4",
   "llava": "LLaVA",
 };

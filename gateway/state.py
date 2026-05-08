@@ -124,6 +124,13 @@ MODEL_ROUTES = {
         "api_key_env": "OPEN_ROUTER_API_KEY",
         "max_context": 1000000,
     },
+    # Nemotron 3 Nano 30B-A3B — efficient reasoning/agent model via OpenRouter
+    "nvidia/nemotron-3-nano-30b-a3b": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api",
+        "api_key_env": "OPEN_ROUTER_API_KEY",
+        "max_context": 262144,
+    },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
@@ -178,6 +185,8 @@ MODEL_ALIASES = {
     "openai": os.environ.get("MAUDE_OPENAI_MODEL", "gpt-4o"),
     "codex": "codex-cli",
     "nemotron-super": "nvidia/nemotron-3-super-120b-a12b:free",
+    "nemotron-a3b": "nvidia/nemotron-3-nano-30b-a3b",
+    "a3b": "nvidia/nemotron-3-nano-30b-a3b",
     "local": "nemotron",
     "vision": "llava",
     "hermes": "hermes",
