@@ -1,0 +1,65 @@
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - validate
+  - test
+  - build
+  - security
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  SECRET_DETECTION_HISTORIC_SCAN: "false"
+
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+python:lint:
+  stage: validate
+  image: python:3.12-slim
+  cache:
+    key: python-pip
+    paths:
+      - .cache/pip
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install ruff
+  script:
+    - ruff check .
+  allow_failure: true
+
+python:test:
+  stage: test
+  image: python:3.12-slim
+  cache:
+    key: python-pip
+    paths:
+      - .cache/pip
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -e ".[dev,cloud,telegram,scheduler,google]"
+  script:
+    - python -m pytest -q
+
+phone:build:
+  stage: build
+  image: node:20-slim
+  cache:
+    key:
+      files:
+        - maude-phone/package-lock.json
+    paths:
+      - .cache/npm
+  before_script:
+    - cd maude-phone
+    - npm ci
+  script:
+    - npm run build
+  artifacts:
+    when: on_success
+    expire_in: 1 week
+    paths:
+      - maude-phone/dist
