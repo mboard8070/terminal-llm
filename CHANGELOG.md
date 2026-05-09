@@ -29,6 +29,7 @@ Before creating a protected `v*` tag:
 - Protected production environment with Maintainer deployment approval.
 - CI/CD variable governance and protected release tag policy.
 - Release artifact links for tag-created GitLab releases.
+- Security policy layer documentation and merge request security gates.
 
 ### Changed
 

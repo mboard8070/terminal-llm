@@ -32,6 +32,13 @@ What could break?
 - [ ] No secrets, tokens, local env files, or generated private data are committed.
 - [ ] Release notes or wiki docs are updated, if operator behavior changes.
 
+## Security Gates
+
+- [ ] Secret detection, SAST, and dependency scanning passed, or exceptions are documented.
+- [ ] No high or critical security findings are newly introduced.
+- [ ] Dependency additions or upgrades have license and maintenance risk reviewed.
+- [ ] Container scanning impact was considered if container build files were added or changed.
+
 ## Model And Deployment Impact
 
 - [ ] No model route, alias, provider, or default selection changed.
