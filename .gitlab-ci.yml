@@ -219,7 +219,7 @@ deploy:production:
     - job: phone:package
       artifacts: false
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
       when: manual
       allow_failure: false
   environment:

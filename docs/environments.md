@@ -32,3 +32,5 @@ No GitLab CI/CD variables are currently configured for this project. When variab
 - Lower-environment values must be scoped to `development`, `staging`, or `*` only when they are safe for non-production jobs.
 - Shared non-secret values should use clear names and avoid granting production access by default.
 - Production deploy jobs should depend only on protected branches or protected tags so protected variables cannot be exposed from untrusted refs.
+
+See `docs/ci-variables.md` for the variable audit and required settings for future secrets.
