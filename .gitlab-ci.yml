@@ -10,6 +10,7 @@ stages:
   - build
   - security
   - package
+  - deploy
   - release
 
 variables:
@@ -171,6 +172,63 @@ phone:package:
     expire_in: 1 week
     paths:
       - maude-phone/maude-phone-dist-*.tar.gz
+
+deploy:development:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: phone:build
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "trace-iteration"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  environment:
+    name: development
+    deployment_tier: development
+  resource_group: development
+  script:
+    - echo "Recording development deployment placeholder for $CI_COMMIT_REF_NAME at $CI_COMMIT_SHA"
+    - echo "Replace this job with the development deployment command when infrastructure is ready."
+
+deploy:staging:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: phone:build
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false
+  environment:
+    name: staging
+    deployment_tier: staging
+  resource_group: staging
+  script:
+    - echo "Recording staging deployment placeholder for $CI_COMMIT_REF_NAME at $CI_COMMIT_SHA"
+    - echo "Replace this job with the staging deployment command when infrastructure is ready."
+
+deploy:production:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: client:package
+      artifacts: false
+    - job: phone:package
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: manual
+      allow_failure: false
+  environment:
+    name: production
+    deployment_tier: production
+  resource_group: production
+  script:
+    - echo "Recording production deployment placeholder for $CI_COMMIT_TAG at $CI_COMMIT_SHA"
+    - echo "Replace this job with the production deployment command when infrastructure is ready."
 
 release:
   stage: release
