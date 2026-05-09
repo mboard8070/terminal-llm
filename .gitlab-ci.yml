@@ -48,6 +48,19 @@ python:test:
   script:
     - python -m pytest -q
 
+standup:test:
+  stage: test
+  image: python:3.12-slim
+  cache:
+    key: python-pip
+    paths:
+      - .cache/pip
+  before_script:
+    - python -m pip install --upgrade pip
+    - python -m pip install -r requirements.txt
+  script:
+    - python -m pytest -q tests/test_standup_state_machine.py
+
 phone:build:
   stage: build
   image: node:20-slim
