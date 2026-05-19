@@ -3,6 +3,7 @@ import topLevelAwait from "vite-plugin-top-level-await";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
+  const buildTime = new Date().toISOString();
 
   // In dev, proxy to gateway; in prod, gateway serves the built files
   const gatewayTarget = env.VITE_GATEWAY_URL || "http://localhost:30000";
@@ -16,6 +17,10 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    define: {
+      __MAUDE_BUILD_TIME__: JSON.stringify(buildTime),
+      __MAUDE_APP_VERSION__: JSON.stringify(process.env.npm_package_version || "unknown"),
+    },
     server: {
       host: "0.0.0.0",
       port: 5174,

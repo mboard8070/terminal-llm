@@ -1,5 +1,5 @@
 // MAUDE Service Worker — enables PWA "Add to Home Screen"
-const CACHE_NAME = 'maude-v8';
+const CACHE_NAME = 'maude-v9';
 
 // Always resolve to a real Response so respondWith() never sees null/undefined.
 const offlineResponse = () =>
