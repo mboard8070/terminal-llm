@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 import { uuid } from "./uuid";
+import { getGatewayUrl } from "../../../lib/gateway";
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -10,6 +11,7 @@ const MODEL_ALIASES: Record<string, string> = {
   "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
   "nemotron-nano": "nemotron-a3b",
   "a3b": "nemotron-a3b",
+  "codex-cli": "codex",
 };
 
 function normalizeModelId(model: string | null | undefined): string {
@@ -109,10 +111,6 @@ function shouldUseCodestral(text: string): boolean {
   return CODE_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-function getGatewayUrl(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
-}
 
 /** Pick the most useful arg value from a JSON args string (for tool step display). */
 function extractArgHint(argsStr: string): string {

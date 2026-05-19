@@ -1,4 +1,5 @@
 import { FC, useState, useEffect, useRef } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
 interface Message {
   id: number;
@@ -8,9 +9,6 @@ interface Message {
   outgoing: boolean;
 }
 
-function getGatewayUrl(): string {
-  return `${window.location.protocol}//${window.location.host}`;
-}
 
 export const Messages: FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);

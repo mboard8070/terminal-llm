@@ -1,9 +1,6 @@
 import { FC, useState, useRef, useEffect } from "react";
+import { getGatewayUrl } from "../../../lib/gateway";
 
-function getGatewayUrl(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
-}
 
 interface Props {
   onSend: (text: string, imageUrls?: string[]) => void;

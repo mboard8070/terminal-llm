@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
-function getGatewayUrl(): string {
-  return `${window.location.protocol}//${window.location.host}`;
-}
 
 export interface SystemStats {
   cpu_percent: number;

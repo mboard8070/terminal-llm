@@ -1,4 +1,5 @@
 import { FC, useEffect, useRef, useState } from "react";
+import { getGatewayUrl } from "../../../lib/gateway";
 import { ChatMessage, TraceInfo, ToolStep } from "../hooks/useChat";
 
 function useTypewriter(content: string, active: boolean): string {
@@ -39,7 +40,7 @@ interface Props {
 
 function renderMarkdown(text: string): string {
   // Resolve relative /download/ URLs to absolute gateway URLs
-  const baseUrl = `${window.location.protocol}//${window.location.host}`;
+  const baseUrl = getGatewayUrl();
   let html = text
     // Images: ![alt](url) — resolve relative URLs and add error handling + max-height
     .replace(
@@ -295,7 +296,7 @@ export const MessageBubble: FC<Props> = ({ message, animate }) => {
         {(() => {
           const urls = message.imageUrls || (message.imageUrl ? [message.imageUrl] : []);
           if (!urls.length) return null;
-          const base = `${window.location.protocol}//${window.location.host}`;
+          const base = getGatewayUrl();
           return (
             <div className={`mb-2 flex gap-2 ${urls.length > 1 ? "overflow-x-auto" : ""}`}>
               {urls.map((url, i) => (

@@ -28,6 +28,7 @@ const MODEL_ALIASES: Record<string, string> = {
   "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
   "nemotron-nano": "nemotron-a3b",
   "a3b": "nemotron-a3b",
+  "codex-cli": "codex",
 };
 
 export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, onToggleAutoRoute }) => {

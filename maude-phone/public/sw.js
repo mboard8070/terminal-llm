@@ -1,5 +1,5 @@
 // MAUDE Service Worker — enables PWA "Add to Home Screen"
-const CACHE_NAME = 'maude-v5';
+const CACHE_NAME = 'maude-v8';
 
 // Always resolve to a real Response so respondWith() never sees null/undefined.
 const offlineResponse = () =>
@@ -71,7 +71,7 @@ self.addEventListener('fetch', (event) => {
     url.pathname.endsWith('.css')
   ) {
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: 'no-store' })
         .then((response) => {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
@@ -111,7 +111,7 @@ self.addEventListener('fetch', (event) => {
 
   // Default: network-first
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));

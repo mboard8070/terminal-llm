@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
-function apiBase(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
-}
+function apiBase(): string { return getGatewayUrl(); }
 
 export interface PresenceEntry {
   client_id: string;

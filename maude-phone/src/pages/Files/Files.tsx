@@ -1,8 +1,8 @@
 import { FC, useState, useEffect, useCallback, useRef } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
 interface FileEntry { name: string; size: number; is_dir: boolean; modified: number; }
 
-function getGatewayUrl(): string { return `${window.location.protocol}//${window.location.host}`; }
 function formatSize(b: number): string { if (b < 1024) return b + " B"; if (b < 1048576) return (b / 1024).toFixed(1) + " KB"; return (b / 1048576).toFixed(1) + " MB"; }
 function formatDate(ts: number): string { return new Date(ts * 1000).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
 

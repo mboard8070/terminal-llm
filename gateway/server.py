@@ -70,6 +70,10 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         parsed = urlparse(path)
         query = parse_qs(parsed.query)
 
+        if parsed.path in ("/reset-cache", "/reset"):
+            self._serve_reset_cache_page()
+            return
+
         # WebSocket upgrade for terminal
         if parsed.path == "/ws/terminal":
             upgrade = self.headers.get("Upgrade", "").lower()

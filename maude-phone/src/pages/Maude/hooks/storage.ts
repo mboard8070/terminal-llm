@@ -1,4 +1,5 @@
 import type { ChatMessage } from "./useChat";
+import { getGatewayUrl } from "../../../lib/gateway";
 
 export interface Conversation {
   id: string;
@@ -8,10 +9,7 @@ export interface Conversation {
   model: string;
 }
 
-function apiBase(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
-}
+function apiBase(): string { return getGatewayUrl(); }
 
 const KEYS = {
   index: "maude-conversations",

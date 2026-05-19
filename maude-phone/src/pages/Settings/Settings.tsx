@@ -1,4 +1,5 @@
 import { FC, useState, useEffect } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
 interface ServiceStatus { status: string; port: number; }
 interface HealthStatus {
@@ -11,7 +12,6 @@ interface HealthStatus {
 }
 interface ModelInfo { id: string; provider: string; available: boolean; }
 
-function getGatewayUrl(): string { return `${window.location.protocol}//${window.location.host}`; }
 
 const THEMES = [
   { id: "dark", label: "MAUDE Dark", desc: "Default dark theme" },
@@ -38,7 +38,7 @@ export const Settings: FC = () => {
 
   // Gateway reachable = Spark is connected (regardless of whether sub-services are up)
   const sparkConnected = health !== null;
-  const gatewayPort = health?.gateway_port ?? 30000;
+  const gatewayPort = health?.gateway_port ?? (new URL(getGatewayUrl()).port || "30080");
   const llmService = health?.services?.llama_server;
   const voiceService = health?.services?.voice_server;
 
@@ -52,7 +52,7 @@ export const Settings: FC = () => {
 
   const svcLabel = (svc?: ServiceStatus) => {
     if (!svc) return { text: "\u2014", color: "text-maude-muted" };
-    if (svc.status === "up") return { text: `${svc.port} (up)`, color: "text-green-400" };
+    if (svc.status === "up" || svc.status === "ok") return { text: `${svc.port} (${svc.status})`, color: "text-green-400" };
     return { text: `${svc.port} (down)`, color: "text-red-400" };
   };
 
@@ -80,7 +80,7 @@ export const Settings: FC = () => {
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className={`font-mono text-sm ${llm.color}`}>{llm.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice Server</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{window.location.host}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{getGatewayUrl().replace(/^https?:\/\//, "")}</span></div>
           </div>
         </section>
 
