@@ -4,6 +4,20 @@
 
 MAUDE defaults to the gateway-routed `nemotron-super` model, can run local llama-server models, and routes cloud requests to Mistral, Codestral, Devstral, Claude, OpenAI, OpenRouter, and the local Codex CLI. It is accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
 
+## Case Study
+
+**Problem:** I wanted a private, always-available AI workbench on DGX Spark that could use local models when possible, route to cloud models when useful, and expose the same assistant from terminal, desktop, phone, and Telegram clients.
+
+**What I built:** MAUDE is a multi-client assistant platform with an HTTPS gateway, OpenAI-compatible model routing, local llama-server integration, server-side tool execution, streaming trace events, persistent memory, scheduled tasks, Google Workspace tools, and client apps for terminal, mobile, and Telegram.
+
+**Architecture:** Clients talk to a gateway on the Spark over local access, Tailscale, or HTTPS. The gateway routes each request to local llama-server models, OpenRouter/Nemotron, Mistral, Claude, OpenAI, or the local Codex CLI, then streams model output and tool traces back to the client through SSE.
+
+**Technical depth:** The project includes a decorator-based tool registry, parallel read-only tool execution, planned multi-stage tool calls, TTL caching for expensive web/vision calls, model switching at runtime, shared-file transfer routes, structured gateway logging, and a test suite covering tool execution, gateway APIs, health checks, client routing, planned execution, and parallel behavior.
+
+**Proof:** The repo includes screenshots for the server TUI, CLI client, and Android PWA, plus unit, integration, and HTTP smoke tests under `tests/`.
+
+**Tradeoffs:** Local inference keeps private work on the Spark but requires fallback routes for larger reasoning, vision, and coding tasks. The gateway keeps clients thin while centralizing authentication, tools, model routing, logging, and file access on the server.
+
 ## Screenshots
 
 ### Server TUI
