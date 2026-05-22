@@ -64,6 +64,21 @@ def _is_video_media(path: str | None) -> bool:
     return Path(path).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}
 
 
+def _latest_shared_video(max_age_hours: int = 48) -> str | None:
+    shared_dir = Path(__file__).resolve().parent / "shared"
+    if not shared_dir.exists():
+        return None
+
+    cutoff = time.time() - (max_age_hours * 3600)
+    videos = []
+    for ext in ("*.mp4", "*.mov", "*.m4v", "*.webm"):
+        videos.extend(shared_dir.glob(ext))
+    videos = [p for p in videos if p.is_file() and p.stat().st_mtime >= cutoff]
+    if not videos:
+        return None
+    return str(max(videos, key=lambda p: p.stat().st_mtime).resolve())
+
+
 def _x_media_state(page) -> dict:
     try:
         return page.evaluate(
@@ -1113,6 +1128,11 @@ def social_post(platform: str, content: str, image_path: str = None, **kwargs) -
 
     if not image_path:
         image_path = kwargs.get("media_path") or kwargs.get("video_path")
+
+    if platform == "x" and not image_path:
+        image_path = _latest_shared_video()
+        if image_path:
+            log(f"social_post x: auto-attaching latest shared video: {image_path}")
 
     if platform not in _POSTERS:
         return f"Error: Unsupported platform '{platform}'. Supported: {', '.join(_POSTERS)}"
