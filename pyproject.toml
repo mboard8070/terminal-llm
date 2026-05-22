@@ -1,6 +1,6 @@
 [project]
 name = "maude"
-version = "1.8.7"
+version = "1.9.1"
 description = "MAUDE AI assistant — TUI, gateway, tools, and autonomous builder"
 requires-python = ">=3.12"
 dependencies = [
