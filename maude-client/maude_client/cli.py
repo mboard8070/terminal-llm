@@ -1092,17 +1092,26 @@ def main():
                 # Handle /update command
                 if user_input == "/update":
                     print("Updating MAUDE client...")
-                    # Use tarball URL to avoid git clone entirely (bypasses hook issues)
+                    print(f"Using Python: {sys.executable}")
+                    package_url = "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
                     result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir",
-                         "https://github.com/mboard8070/terminal-llm/archive/Astra.tar.gz#subdirectory=maude-client"],
-                        capture_output=False
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--upgrade",
+                            "--force-reinstall",
+                            "--no-cache-dir",
+                            package_url,
+                        ],
+                        capture_output=False,
                     )
                     if result.returncode == 0:
                         print("\nUpdate complete. Restarting...")
                         os.execv(sys.executable, [sys.executable, "-m", "maude_client"])
                     else:
-                        print("\nUpdate failed. Check your SSH key and internet connection.")
+                        print("\nUpdate failed. Check the pip output above for details.")
                     continue
 
                 # Handle /version command
