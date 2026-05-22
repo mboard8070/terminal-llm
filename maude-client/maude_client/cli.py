@@ -485,6 +485,134 @@ Current client: {CLIENT_NAME} ({_MY_PLATFORM})
 Be concise and helpful."""
 
 
+def _is_mistralish_model(model: str) -> bool:
+    """Return True for models routed through Mistral-compatible APIs."""
+    name = (model or "").lower()
+    return any(part in name for part in ("mistral", "codestral", "devstral"))
+
+
+def _format_http_error(response: requests.Response) -> str:
+    """Include provider error details instead of only the HTTP status line."""
+    detail = response.text.strip()
+    if detail:
+        try:
+            parsed = response.json()
+            detail = json.dumps(parsed, ensure_ascii=False)
+        except Exception:
+            pass
+        return f"{response.status_code} {response.reason}: {detail}"
+    return f"{response.status_code} {response.reason} for url: {response.url}"
+
+
+def _clean_description(value, limit: int = 900) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[: limit - 3].rstrip() + "..."
+    return text
+
+
+def _sanitize_json_schema_for_mistral(schema) -> dict:
+    """Reduce JSON Schema to the conservative subset Mistral accepts for tools."""
+    if not isinstance(schema, dict):
+        return {"type": "object", "properties": {}}
+
+    raw_type = schema.get("type", "object")
+    if isinstance(raw_type, list):
+        raw_type = next((t for t in raw_type if t != "null"), raw_type[0] if raw_type else "string")
+    if raw_type not in {"object", "array", "string", "integer", "number", "boolean"}:
+        raw_type = "string"
+
+    clean = {"type": raw_type}
+    desc = _clean_description(schema.get("description"), 300)
+    if desc:
+        clean["description"] = desc
+
+    enum = schema.get("enum")
+    if isinstance(enum, list) and enum:
+        clean["enum"] = [v for v in enum if isinstance(v, (str, int, float, bool)) and v is not None][:100]
+        if not clean["enum"]:
+            clean.pop("enum", None)
+
+    if raw_type == "object":
+        props = schema.get("properties")
+        if not isinstance(props, dict):
+            props = {}
+        clean_props = {}
+        for key, value in props.items():
+            key = str(key)
+            if not key:
+                continue
+            clean_props[key] = _sanitize_json_schema_for_mistral(value)
+        clean["properties"] = clean_props
+
+        required = schema.get("required")
+        if isinstance(required, list):
+            clean_required = [str(k) for k in required if str(k) in clean_props]
+            if clean_required:
+                clean["required"] = clean_required
+
+    elif raw_type == "array":
+        clean["items"] = _sanitize_json_schema_for_mistral(schema.get("items") or {"type": "string"})
+
+    return clean
+
+
+def _sanitize_tools_for_mistral(tools: list) -> list:
+    """Normalize tool definitions before sending them to Mistral-compatible APIs."""
+    clean_tools = []
+    seen = set()
+    for tool in tools or []:
+        fn = tool.get("function", {}) if isinstance(tool, dict) else {}
+        name = str(fn.get("name") or "")
+        name = "".join(ch if (ch.isalnum() or ch in "_-") else "_" for ch in name)[:64]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        clean_tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": _clean_description(fn.get("description"), 900) or name,
+                    "parameters": _sanitize_json_schema_for_mistral(fn.get("parameters") or {}),
+                },
+            }
+        )
+    return clean_tools
+
+
+def _prepare_payload_for_provider(payload: dict) -> dict:
+    """Apply provider-specific request normalization without mutating callers."""
+    prepared = dict(payload)
+    if prepared.get("tools") and _is_mistralish_model(prepared.get("model", current_model)):
+        prepared["tools"] = _sanitize_tools_for_mistral(prepared.get("tools"))
+        if not prepared["tools"]:
+            prepared.pop("tools", None)
+            prepared.pop("tool_choice", None)
+    return prepared
+
+
+def _post_chat_payload(payload: dict, *, retry_without_tools: bool = True) -> requests.Response:
+    """POST a chat payload, falling back only if sanitized Mistral tools still fail."""
+    payload = _prepare_payload_for_provider(payload)
+    response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
+    if (
+        response.status_code == 422
+        and retry_without_tools
+        and payload.get("tools")
+        and _is_mistralish_model(payload.get("model", current_model))
+    ):
+        response.close()
+        fallback_payload = dict(payload)
+        fallback_payload.pop("tools", None)
+        fallback_payload.pop("tool_choice", None)
+        response = requests.post(API_URL, json=fallback_payload, stream=True, timeout=300, verify=False)
+
+    if response.status_code >= 400:
+        raise RuntimeError(_format_http_error(response))
+    return response
+
+
 def check_server_connection() -> bool:
     """Check if the LLM server is reachable."""
     try:
@@ -539,8 +667,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     }
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
-        response.raise_for_status()
+        response = _post_chat_payload(payload)
 
         full_content = ""
         tool_calls = []
@@ -678,8 +805,7 @@ def stream_chat_continuation() -> Generator[str, None, None]:
     }
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
-        response.raise_for_status()
+        response = _post_chat_payload(payload)
 
         full_content = ""
         tool_calls = []
