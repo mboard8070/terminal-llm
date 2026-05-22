@@ -1111,16 +1111,24 @@ def social_post(platform: str, content: str, image_path: str = None, **kwargs) -
     if platform == "twitter":
         platform = "x"
 
+    if not image_path:
+        image_path = kwargs.get("media_path") or kwargs.get("video_path")
+
     if platform not in _POSTERS:
         return f"Error: Unsupported platform '{platform}'. Supported: {', '.join(_POSTERS)}"
 
+    expects_media = bool(kwargs.get("expect_media"))
     if platform == "instagram" and not image_path:
-        return "Error: Instagram requires an image. Provide image_path."
+        return "Error: Instagram requires an image. Provide image_path or media_path."
+    if platform == "tiktok" and not image_path:
+        return "Error: TikTok requires a video. Provide video_path, media_path, or image_path."
+    if expects_media and not image_path:
+        return "Error: This post was requested with media, but no media_path/video_path/image_path was provided."
 
     if image_path:
-        p = Path(image_path)
+        p = Path(image_path).expanduser()
         if not p.exists():
-            return f"Error: Image not found: {image_path}"
+            return f"Error: Media file not found: {image_path}"
         image_path = str(p.resolve())
 
     from browser import _get_session
@@ -1157,8 +1165,9 @@ SOCIAL_TOOLS = [
                 "Post content to a social media platform using the running browser session. "
                 "Requires browser_login('<platform>') first — keep the browser open after login. "
                 "Instagram requires an image. TikTok requires a video file. "
+                "X, LinkedIn, Facebook, Reddit, and Bluesky can attach images or videos when media_path/video_path/image_path is provided. "
                 "For Reddit, first line of content is the title, rest is the body. "
-                "IMPORTANT: When the user asks to post WITH an image, you MUST pass image_path."
+                "IMPORTANT: When the user asks to post WITH an image or video, you MUST pass media_path, video_path, or image_path. Do not make a text-only post if media was requested."
             ),
             "parameters": {
                 "type": "object",
@@ -1175,9 +1184,21 @@ SOCIAL_TOOLS = [
                     "image_path": {
                         "type": "string",
                         "description": (
-                            "Path to image/video to attach. Required for Instagram (image) "
-                            "and TikTok (video). Use the same path from view_image if you just analyzed one."
+                            "Path to image/video to attach. Use for any platform when attaching media. "
+                            "Required for Instagram images and TikTok videos; also valid for X videos."
                         ),
+                    },
+                    "media_path": {
+                        "type": "string",
+                        "description": "Alias for image_path. Preferred for X/LinkedIn/Facebook/Reddit/Bluesky media attachments, including videos.",
+                    },
+                    "video_path": {
+                        "type": "string",
+                        "description": "Alias for image_path when the attachment is a video, especially for X or TikTok.",
+                    },
+                    "expect_media": {
+                        "type": "boolean",
+                        "description": "Set true when the user explicitly requested an image or video attachment; the tool will fail instead of posting text-only if no path is supplied.",
                     },
                     "subreddit": {
                         "type": "string",
@@ -1202,6 +1223,9 @@ def execute_social_tool(name: str, args: dict) -> str:
             a.get("platform", ""),
             a.get("content", ""),
             a.get("image_path"),
+            media_path=a.get("media_path"),
+            video_path=a.get("video_path"),
+            expect_media=a.get("expect_media"),
             subreddit=a.get("subreddit"),
         ),
     }
