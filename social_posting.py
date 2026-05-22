@@ -51,6 +51,104 @@ def _first_match(page, selectors: list):
     return None
 
 
+def _locator_count(page, selector: str) -> int:
+    try:
+        return page.locator(selector).count()
+    except Exception:
+        return 0
+
+
+def _is_video_media(path: str | None) -> bool:
+    if not path:
+        return False
+    return Path(path).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}
+
+
+def _x_media_state(page) -> dict:
+    try:
+        return page.evaluate(
+            """
+            () => {
+                const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+                const root = dialogs[dialogs.length - 1] || document;
+                const text = root.innerText || '';
+                const hasPreview = !!root.querySelector(
+                    '[data-testid="attachments"], [data-testid="videoPlayer"], video, [aria-label*="Remove media"], [aria-label*="Remove video"], [aria-label*="Remove image"], [aria-label*="Edit media"]'
+                );
+                const processing = text.includes('Preparing media') || !!root.querySelector('[role="progressbar"]');
+                const errors = [
+                    'The media could not be played.',
+                    'The media could not be uploaded.',
+                    'Your video file could not be processed.',
+                    'Unsupported video format',
+                    'upload failed',
+                    'Upload failed',
+                    'file is too large',
+                    'File is too large',
+                    'video is too long',
+                    'Video is too long'
+                ];
+                const error = errors.find(value => text.includes(value)) || null;
+                return { hasPreview, processing, error };
+            }
+            """
+        )
+    except Exception:
+        return {"hasPreview": False, "processing": False, "error": None}
+
+
+def _x_wait_for_media_ready(page, media_path: str) -> str | None:
+    timeout_s = 300 if _is_video_media(media_path) else 90
+    stable_preview_seen = 0
+    for _ in range(timeout_s):
+        state = _x_media_state(page)
+        if state.get("error"):
+            return f"Error: X media upload failed: {state['error']}"
+        if state.get("hasPreview") and not state.get("processing"):
+            stable_preview_seen += 1
+            if stable_preview_seen >= 3:
+                return None
+        else:
+            stable_preview_seen = 0
+        time.sleep(1)
+    return "Error: X media upload did not finish processing in time."
+
+
+def _x_wait_for_post_button(page, root, has_media: bool):
+    timeout_s = 300 if has_media else 60
+    selectors = [
+        '[data-testid="tweetButtonInline"]',
+        '[data-testid="tweetButton"]',
+    ]
+    for _ in range(timeout_s):
+        if has_media:
+            state = _x_media_state(page)
+            if state.get("error"):
+                return None, f"Error: X media upload failed: {state['error']}"
+        post_btn = _first_match(root, selectors)
+        try:
+            if post_btn and post_btn.is_enabled():
+                return post_btn, None
+        except Exception:
+            pass
+        time.sleep(1)
+    return None, "Error: Post button not found or disabled on X."
+
+
+def _x_verify_post_media(page, is_video: bool) -> bool:
+    selector = (
+        '[data-testid="videoPlayer"], article video'
+        if is_video
+        else 'article [data-testid="tweetPhoto"], article img[src*="twimg.com/media"]'
+    )
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        if _locator_count(page, selector) > 0:
+            return True
+        time.sleep(1)
+    return False
+
+
 def _screenshot(page, label: str = "social") -> str | None:
     try:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,14 +250,17 @@ def _is_logged_in(page, platform: str) -> bool:
 
 
 def _post_x(page, content: str, image_path: str | None) -> str:
-    page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30_000)
+    page.goto("https://x.com/compose/post", wait_until="domcontentloaded", timeout=30_000)
     _human_pause(2, 4)
 
     if not _is_logged_in(page, "x"):
         return "Error: Not logged in to X. Run browser_login('x') and keep the browser open."
 
+    dialog = _first_match(page, ['div[role="dialog"]'])
+    root = dialog if dialog else page
+
     compose = _first_match(
-        page,
+        root,
         [
             '[data-testid="tweetTextarea_0"]',
             'div[role="textbox"][data-testid="tweetTextarea_0"]',
@@ -167,27 +268,6 @@ def _post_x(page, content: str, image_path: str | None) -> str:
             "div.public-DraftEditor-content",
         ],
     )
-
-    if compose is None:
-        btn = _first_match(
-            page,
-            [
-                '[data-testid="SideNav_NewTweet_Button"]',
-                'a[aria-label="Post"]',
-                'a[href="/compose/post"]',
-            ],
-        )
-        if btn:
-            btn.click()
-            _human_pause(1, 2)
-            compose = _first_match(
-                page,
-                [
-                    '[data-testid="tweetTextarea_0"]',
-                    '[aria-label="Post text"]',
-                    "div.public-DraftEditor-content",
-                ],
-            )
 
     if compose is None:
         _screenshot(page, "x_compose_fail")
@@ -199,36 +279,43 @@ def _post_x(page, content: str, image_path: str | None) -> str:
     _human_pause(1, 2)
 
     if image_path:
+        media_path = str(Path(image_path).expanduser())
+        if not Path(media_path).exists():
+            return f"Error: Media file not found: {media_path}"
+
         fi = _first_match(
-            page,
+            root,
             [
                 'input[data-testid="fileInput"]',
-                'input[type="file"][accept*="image"]',
+                'input[type="file"]',
             ],
         )
         if fi:
-            fi.set_input_files(image_path)
+            fi.set_input_files(media_path)
+            _screenshot(page, "x_media_selected")
+            media_error = _x_wait_for_media_ready(page, media_path)
+            if media_error:
+                _screenshot(page, "x_media_attach_fail")
+                return media_error
+            _screenshot(page, "x_media_ready")
             _human_pause(2, 4)
         else:
-            return "Error: Could not find file input on X for image upload."
+            return "Error: Could not find file input on X for media upload."
 
-    post_btn = _first_match(
-        page,
-        [
-            '[data-testid="tweetButtonInline"]',
-            '[data-testid="tweetButton"]',
-        ],
-    )
-    if not post_btn or not post_btn.is_enabled():
+    post_btn, post_error = _x_wait_for_post_button(page, root, bool(image_path))
+    if post_error:
         _screenshot(page, "x_post_btn_fail")
-        return "Error: Post button not found or disabled on X."
+        return post_error
 
     post_btn.click()
     _human_pause(3, 5)
 
+    if image_path and not _x_verify_post_media(page, _is_video_media(image_path)):
+        _screenshot(page, "x_post_verify_missing_media")
+        return "Error: X posted, but the uploaded media was not visible afterward."
+
     ss = _screenshot(page, "x_posted")
     return f"Posted to X successfully.{f' Screenshot: {ss}' if ss else ''}"
-
 
 def _post_linkedin(page, content: str, image_path: str | None) -> str:
     page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30_000)
