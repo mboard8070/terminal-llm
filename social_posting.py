@@ -90,7 +90,15 @@ def _x_media_state(page) -> dict:
                 const hasPreview = !!root.querySelector(
                     '[data-testid="attachments"], [data-testid="videoPlayer"], video, [aria-label*="Remove media"], [aria-label*="Remove video"], [aria-label*="Remove image"], [aria-label*="Edit media"]'
                 );
-                const processing = text.includes('Preparing media') || !!root.querySelector('[role="progressbar"]');
+                const processingTexts = [
+                    'Preparing media',
+                    'Processing media',
+                    'Uploading media',
+                    'Uploading video',
+                    'Processing video',
+                    'Transcoding video'
+                ];
+                const processing = processingTexts.some(value => text.includes(value));
                 const errors = [
                     'The media could not be played.',
                     'The media could not be uploaded.',
@@ -104,18 +112,20 @@ def _x_media_state(page) -> dict:
                     'Video is too long'
                 ];
                 const error = errors.find(value => text.includes(value)) || null;
-                return { hasPreview, processing, error };
+                const postButton = root.querySelector('[data-testid="tweetButtonInline"], [data-testid="tweetButton"]');
+                const postEnabled = !!postButton && !postButton.disabled && postButton.getAttribute('aria-disabled') !== 'true';
+                return { hasPreview, processing, error, postEnabled };
             }
             """
         )
     except Exception:
-        return {"hasPreview": False, "processing": False, "error": None}
+        return {"hasPreview": False, "processing": False, "error": None, "postEnabled": False}
 
 
 def _x_wait_for_media_ready(page, media_path: str) -> str | None:
     timeout_s = 300 if _is_video_media(media_path) else 90
     stable_preview_seen = 0
-    for _ in range(timeout_s):
+    for elapsed in range(timeout_s):
         state = _x_media_state(page)
         if state.get("error"):
             return f"Error: X media upload failed: {state['error']}"
@@ -125,6 +135,8 @@ def _x_wait_for_media_ready(page, media_path: str) -> str | None:
                 return None
         else:
             stable_preview_seen = 0
+        if elapsed and elapsed % 30 == 0:
+            log(f"social_post x: waiting for media ready, state={state}")
         time.sleep(1)
     return "Error: X media upload did not finish processing in time."
 
@@ -1129,7 +1141,8 @@ def social_post(platform: str, content: str, image_path: str = None, **kwargs) -
     if not image_path:
         image_path = kwargs.get("media_path") or kwargs.get("video_path")
 
-    if platform == "x" and not image_path:
+    expects_media = bool(kwargs.get("expect_media"))
+    if platform == "x" and not image_path and expects_media:
         image_path = _latest_shared_video()
         if image_path:
             log(f"social_post x: auto-attaching latest shared video: {image_path}")
@@ -1137,7 +1150,6 @@ def social_post(platform: str, content: str, image_path: str = None, **kwargs) -
     if platform not in _POSTERS:
         return f"Error: Unsupported platform '{platform}'. Supported: {', '.join(_POSTERS)}"
 
-    expects_media = bool(kwargs.get("expect_media"))
     if platform == "instagram" and not image_path:
         return "Error: Instagram requires an image. Provide image_path or media_path."
     if platform == "tiktok" and not image_path:
