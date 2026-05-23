@@ -123,22 +123,19 @@ def _x_media_state(page) -> dict:
 
 
 def _x_wait_for_media_ready(page, media_path: str) -> str | None:
-    timeout_s = 300 if _is_video_media(media_path) else 90
-    stable_preview_seen = 0
-    for elapsed in range(timeout_s):
+    # X's video composer DOM changes frequently. Treat explicit media errors as fatal,
+    # but do not require a specific preview selector before checking the Post button.
+    settle_s = 20 if _is_video_media(media_path) else 5
+    for elapsed in range(settle_s):
         state = _x_media_state(page)
         if state.get("error"):
             return f"Error: X media upload failed: {state['error']}"
         if state.get("hasPreview") and not state.get("processing"):
-            stable_preview_seen += 1
-            if stable_preview_seen >= 3:
-                return None
-        else:
-            stable_preview_seen = 0
-        if elapsed and elapsed % 30 == 0:
-            log(f"social_post x: waiting for media ready, state={state}")
+            return None
         time.sleep(1)
-    return "Error: X media upload did not finish processing in time."
+    state = _x_media_state(page)
+    log(f"social_post x: media settle complete, continuing to post button wait, state={state}")
+    return None
 
 
 def _x_wait_for_post_button(page, root, has_media: bool):
@@ -147,11 +144,14 @@ def _x_wait_for_post_button(page, root, has_media: bool):
         '[data-testid="tweetButtonInline"]',
         '[data-testid="tweetButton"]',
     ]
-    for _ in range(timeout_s):
+    last_state = None
+    for elapsed in range(timeout_s):
         if has_media:
-            state = _x_media_state(page)
-            if state.get("error"):
-                return None, f"Error: X media upload failed: {state['error']}"
+            last_state = _x_media_state(page)
+            if last_state.get("error"):
+                return None, f"Error: X media upload failed: {last_state['error']}"
+            if elapsed and elapsed % 30 == 0:
+                log(f"social_post x: waiting for post button, state={last_state}")
         post_btn = _first_match(root, selectors)
         try:
             if post_btn and post_btn.is_enabled():
@@ -159,6 +159,8 @@ def _x_wait_for_post_button(page, root, has_media: bool):
         except Exception:
             pass
         time.sleep(1)
+    if has_media:
+        return None, f"Error: Post button not found or disabled on X after media upload. Last media state: {last_state}"
     return None, "Error: Post button not found or disabled on X."
 
 
@@ -339,7 +341,7 @@ def _post_x(page, content: str, image_path: str | None) -> str:
 
     if image_path and not _x_verify_post_media(page, _is_video_media(image_path)):
         _screenshot(page, "x_post_verify_missing_media")
-        return "Error: X posted, but the uploaded media was not visible afterward."
+        return "Posted to X, but MAUDE could not verify the uploaded media afterward. Check the latest x_post_verify_missing_media screenshot."
 
     ss = _screenshot(page, "x_posted")
     return f"Posted to X successfully.{f' Screenshot: {ss}' if ss else ''}"
