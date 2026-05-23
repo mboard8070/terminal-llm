@@ -1229,6 +1229,39 @@ SOCIAL_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "social_x_post_video",
+            "description": (
+                "Post a video to X/Twitter using the running browser session. "
+                "Use this instead of browser tools whenever the user asks to upload/post a video to X. "
+                "If video_path/media_path/image_path is omitted, the latest shared MP4/MOV/WebM is attached automatically."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The text content of the X post.",
+                    },
+                    "video_path": {
+                        "type": "string",
+                        "description": "Path to the video file. Optional; latest shared video is used if omitted.",
+                    },
+                    "media_path": {
+                        "type": "string",
+                        "description": "Alias for video_path.",
+                    },
+                    "image_path": {
+                        "type": "string",
+                        "description": "Alias for video_path, retained for compatibility.",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
 
 
@@ -1247,6 +1280,14 @@ def execute_social_tool(name: str, args: dict) -> str:
             video_path=a.get("video_path"),
             expect_media=a.get("expect_media"),
             subreddit=a.get("subreddit"),
+        ),
+        "social_x_post_video": lambda a: social_post(
+            "x",
+            a.get("content", ""),
+            a.get("image_path"),
+            media_path=a.get("media_path"),
+            video_path=a.get("video_path"),
+            expect_media=True,
         ),
     }
     handler = dispatch.get(name)
