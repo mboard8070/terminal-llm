@@ -178,6 +178,51 @@ def _x_verify_post_media(page, is_video: bool) -> bool:
     return False
 
 
+def _x_composer_root_from_compose(compose):
+    try:
+        handle = compose.element_handle(timeout=5_000)
+        if not handle:
+            return None
+        root_handle = handle.evaluate_handle(
+            """
+            node => {
+                let el = node;
+                for (let i = 0; i < 24 && el; i++, el = el.parentElement) {
+                    const fileInputs = el.querySelectorAll('input[type="file"]');
+                    const postButton = el.querySelector('[data-testid="tweetButtonInline"], [data-testid="tweetButton"]');
+                    if (fileInputs.length && postButton) return el;
+                }
+                return node.closest('[role="dialog"]') || node.closest('main') || document.body;
+            }
+            """
+        )
+        return root_handle.as_element()
+    except Exception:
+        return None
+
+
+def _x_select_media(page, root, media_path: str) -> bool:
+    selectors = [
+        'input[data-testid="fileInput"]',
+        'input[type="file"][accept*="video"]',
+        'input[type="file"][accept*="image"]',
+        'input[type="file"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = root.locator(sel) if hasattr(root, "locator") else None
+            count = loc.count() if loc else 0
+            for idx in range(count):
+                candidate = loc.nth(idx)
+                accept = candidate.get_attribute("accept") or ""
+                if "image" in accept or "video" in accept or sel == 'input[type="file"]':
+                    candidate.set_input_files(media_path)
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def _screenshot(page, label: str = "social") -> str | None:
     try:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -302,6 +347,8 @@ def _post_x(page, content: str, image_path: str | None) -> str:
         _screenshot(page, "x_compose_fail")
         return "Error: Could not find the compose area on X."
 
+    composer_root = _x_composer_root_from_compose(compose) or root
+
     compose.click()
     _human_pause(0.5, 1.0)
     _type_human(page, content)
@@ -312,26 +359,22 @@ def _post_x(page, content: str, image_path: str | None) -> str:
         if not Path(media_path).exists():
             return f"Error: Media file not found: {media_path}"
 
-        fi = _first_match(
-            root,
-            [
-                'input[data-testid="fileInput"]',
-                'input[type="file"]',
-            ],
-        )
-        if fi:
-            fi.set_input_files(media_path)
+        if _x_select_media(page, composer_root, media_path):
             _screenshot(page, "x_media_selected")
             media_error = _x_wait_for_media_ready(page, media_path)
             if media_error:
                 _screenshot(page, "x_media_attach_fail")
                 return media_error
+            state = _x_media_state(page)
+            if not state.get("hasPreview"):
+                _screenshot(page, "x_media_no_preview")
+                return f"Error: X accepted the file input, but no media preview appeared. State: {state}"
             _screenshot(page, "x_media_ready")
             _human_pause(2, 4)
         else:
-            return "Error: Could not find file input on X for media upload."
+            return "Error: Could not find the composer file input on X for media upload."
 
-    post_btn, post_error = _x_wait_for_post_button(page, root, bool(image_path))
+    post_btn, post_error = _x_wait_for_post_button(page, composer_root, bool(image_path))
     if post_error:
         _screenshot(page, "x_post_btn_fail")
         return post_error
