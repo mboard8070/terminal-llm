@@ -1005,7 +1005,7 @@ TOOLS AVAILABLE:
 - Substack: substack_create_draft, substack_list_drafts, substack_list_posts, substack_get_post, substack_update_draft, substack_delete_draft, substack_get_stats
 - Browser: browser_open, browser_snapshot, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
   browser_snapshot returns an accessibility tree with interactive elements tagged [@e1], [@e2], etc. Pass these refs to browser_click or browser_type for precise interaction. Use browser_snapshot instead of browser_screenshot when you need to click or type — it's faster and more reliable.
-  You can interact with ANY website using browser_open → browser_snapshot → browser_click/type. This includes posting to forums, CMS, blogs, or any site with a web form.
+  You can interact with websites using browser_open → browser_snapshot → browser_click/type. For social posting, especially X/Twitter posts with images or videos, use social_post instead of raw browser clicks; raw browser posting does not reliably attach media.
 - Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky", "youtube", "google", "pinterest" or any URL). browser_check_session (verify if saved login is still valid)
 - Browser Workflows: workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
 IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or social media, USE browser_login — do NOT give text instructions. The tool handles VNC automatically for remote access.
