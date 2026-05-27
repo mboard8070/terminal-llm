@@ -6,6 +6,7 @@ import {
   Session,
   Activity,
   SchedulerStatus,
+  Mission,
   NodeInfo,
 } from "./useCommandCenter";
 
@@ -91,6 +92,82 @@ const TaskCard: FC<{ task: SchedulerStatus["tasks"][0] }> = ({ task }) => (
   </div>
 );
 
+// ── Mission Card ─────────────────────────────────────────────
+
+const MissionCard: FC<{ mission: Mission }> = ({ mission }) => {
+  const total = mission.progress.total || 0;
+  const done = mission.progress.done || 0;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+  const statusColor =
+    mission.status === "blocked"
+      ? "bg-red-400"
+      : mission.status === "complete"
+        ? "bg-green-400"
+        : mission.status === "paused"
+          ? "bg-yellow-400"
+          : "bg-maude-accent";
+
+  return (
+    <div className="rounded-xl bg-maude-surface p-3">
+      <div className="flex items-start gap-2">
+        <span className={`mt-1 inline-block h-2.5 w-2.5 shrink-0 rounded-full ${statusColor}`} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium text-maude-text">{mission.title}</span>
+            <span className="ml-auto shrink-0 text-[10px] uppercase text-maude-muted">{mission.status}</span>
+          </div>
+          <p className="mt-1 line-clamp-2 text-xs text-maude-muted">{mission.objective}</p>
+        </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="mb-1 flex items-center justify-between text-[10px] text-maude-muted">
+          <span>{done}/{total} steps</span>
+          {mission.cadence && <span className="truncate pl-2">{mission.cadence}</span>}
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-maude-bg">
+          <div className="h-full rounded-full bg-maude-accent transition-all" style={{ width: `${Math.min(pct, 100)}%` }} />
+        </div>
+      </div>
+
+      {mission.next_action && (
+        <div className="mt-3 rounded-lg bg-maude-bg px-2 py-1.5">
+          <p className="text-[10px] uppercase tracking-wider text-maude-muted">Next</p>
+          <p className="line-clamp-2 text-xs text-maude-text">{mission.next_action}</p>
+        </div>
+      )}
+
+      {!!mission.blockers?.length && (
+        <div className="mt-2 space-y-1">
+          {mission.blockers.slice(0, 2).map((blocker) => (
+            <p key={blocker} className="rounded bg-red-400/10 px-2 py-1 text-[11px] text-red-300">
+              {blocker}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+        {mission.schedule?.task_id && (
+          <span className="rounded bg-green-400/10 px-1.5 py-0.5 text-green-400">
+            {mission.schedule.cron || "scheduled"}
+          </span>
+        )}
+        {!!mission.artifacts?.length && (
+          <span className="rounded bg-maude-bg px-1.5 py-0.5 text-maude-muted">
+            {mission.artifacts.length} artifacts
+          </span>
+        )}
+        {mission.updated_at && (
+          <span className="rounded bg-maude-bg px-1.5 py-0.5 text-maude-muted">
+            {new Date(mission.updated_at).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ── Activity Item ────────────────────────────────────────────
 
 const ActivityItem: FC<{ item: Activity }> = ({ item }) => (
@@ -123,10 +200,10 @@ const SessionItem: FC<{ session: Session }> = ({ session }) => (
 
 // ── Main Page ────────────────────────────────────────────────
 
-type TabKey = "overview" | "nodes" | "activity" | "scheduler";
+type TabKey = "overview" | "missions" | "nodes" | "activity" | "scheduler";
 
 export const CommandCenter: FC = () => {
-  const { system, gpuProcesses, sessions, activity, scheduler, nodes, loading, refresh } = useCommandCenter();
+  const { system, gpuProcesses, sessions, activity, scheduler, missions, nodes, gatewayStatus, loading, refresh } = useCommandCenter();
   const [tab, setTab] = useState<TabKey>("overview");
 
   if (loading) {
@@ -139,6 +216,7 @@ export const CommandCenter: FC = () => {
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: "overview", label: "Overview" },
+    { key: "missions", label: "Missions" },
     { key: "nodes", label: "Nodes" },
     { key: "activity", label: "Activity" },
     { key: "scheduler", label: "Tasks" },
@@ -159,6 +237,14 @@ export const CommandCenter: FC = () => {
           Refresh
         </button>
       </div>
+
+      {!gatewayStatus.ok && (
+        <div className="mx-4 mb-3 rounded-lg border border-red-400/30 bg-red-400/10 p-3">
+          <p className="text-sm font-medium text-red-300">Gateway not reachable</p>
+          <p className="mt-1 break-all font-mono text-[11px] text-red-200">{gatewayStatus.url}</p>
+          {gatewayStatus.error && <p className="mt-1 text-xs text-red-200">{gatewayStatus.error}</p>}
+        </div>
+      )}
 
       {/* Tab bar */}
       <div className="flex gap-1 px-4 pb-3">
@@ -185,7 +271,7 @@ export const CommandCenter: FC = () => {
               <StatCard label="CPU" value={`${system?.cpu_percent ?? 0}%`} sub={`${system?.ram?.used_gb ?? 0}/${system?.ram?.total_gb ?? 0}GB RAM`} />
               <StatCard label="GPU Temp" value={`${gpuTemp}\u00B0C`} sub={system?.gpu?.name || "N/A"} color={tempColor} />
               <StatCard label="Disk" value={`${system?.disk?.percent ?? 0}%`} sub={`${system?.disk?.used_gb ?? 0}/${system?.disk?.total_gb ?? 0}GB`} />
-              <StatCard label="Sessions" value={sessions.length} sub={`${scheduler?.stats?.active ?? 0} scheduled tasks`} />
+              <StatCard label="Missions" value={missions?.stats?.active ?? 0} sub={`${scheduler?.stats?.active ?? 0} scheduled tasks`} />
             </div>
 
             {/* GPU memory */}
@@ -201,6 +287,24 @@ export const CommandCenter: FC = () => {
                   ))}
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {tab === "missions" && (
+          <div className="space-y-2">
+            {missions?.stats && (
+              <div className="grid grid-cols-4 gap-2">
+                <StatCard label="Total" value={missions.stats.total} />
+                <StatCard label="Active" value={missions.stats.active} color="text-green-400" />
+                <StatCard label="Blocked" value={missions.stats.blocked} color="text-red-400" />
+                <StatCard label="Sched" value={missions.stats.scheduled} />
+              </div>
+            )}
+            {!missions?.missions?.length ? (
+              <p className="py-8 text-center text-sm text-maude-muted">No missions</p>
+            ) : (
+              missions.missions.map((mission) => <MissionCard key={mission.id} mission={mission} />)
             )}
           </div>
         )}

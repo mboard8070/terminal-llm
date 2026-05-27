@@ -314,6 +314,7 @@ class RoutesMixin:
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
         self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Clear-Site-Data", '"cache", "storage"')
         self.end_headers()
         self.wfile.write(html)
 
@@ -342,7 +343,9 @@ class RoutesMixin:
             self._add_cors()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            if filepath.name == "index.html" or content_type == "application/javascript":
+            if filepath.name == "index.html":
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+            elif content_type == "application/javascript":
                 self.send_header("Cache-Control", "no-store, must-revalidate")
             elif content_type.startswith("text/"):
                 self.send_header("Cache-Control", "no-cache")
@@ -659,6 +662,7 @@ class RoutesMixin:
                 _dispatch_activity_feed,
                 _dispatch_gpu_processes,
                 _dispatch_memory_browse,
+                _dispatch_mission_status,
                 _dispatch_node_status,
                 _dispatch_scheduler_status,
                 _dispatch_session_list,
@@ -695,6 +699,11 @@ class RoutesMixin:
             result = _dispatch_activity_feed(args)
         elif endpoint == "scheduler":
             result = _dispatch_scheduler_status({})
+        elif endpoint == "missions":
+            args = {}
+            if "limit" in query:
+                args["limit"] = int(query["limit"][0])
+            result = _dispatch_mission_status(args)
         elif endpoint == "nodes":
             result = _dispatch_node_status({})
         else:

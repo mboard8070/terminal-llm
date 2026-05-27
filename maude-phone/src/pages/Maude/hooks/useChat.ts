@@ -38,6 +38,37 @@ function getLocation(): Promise<typeof cachedLocation> {
   });
 }
 
+async function clearBrowserAppCache(): Promise<void> {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+    }
+  } catch { /* best effort */ }
+  try {
+    if ("caches" in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map((name) => caches.delete(name)));
+    }
+  } catch { /* best effort */ }
+}
+
+function isLoadFailedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return err.name === "TypeError" && (msg.includes("load failed") || msg.includes("failed to fetch"));
+}
+
+async function fetchWithStaleAppRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, { ...init, cache: "no-store" });
+  } catch (err) {
+    if (!isLoadFailedError(err)) throw err;
+    await clearBrowserAppCache();
+    return fetch(input, { ...init, cache: "no-store" });
+  }
+}
+
 export interface ToolStep {
   name: string;
   kind?: "tool" | "route" | "parallel" | "context";
@@ -109,6 +140,35 @@ const CODE_KEYWORDS = [
 function shouldUseCodestral(text: string): boolean {
   const lower = text.toLowerCase();
   return CODE_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+function compactHistoryContent(content: string): string {
+  const maxChars = 4000;
+  if (content.length <= maxChars) return content;
+  return `${content.slice(0, 1800)}\n\n... [older content trimmed for mobile reliability] ...\n\n${content.slice(-1800)}`;
+}
+
+function buildChatBody(
+  model: string,
+  history: Array<{ role: string; content: string }>,
+  apiContent: string,
+  loc: { lat: number; lng: number; accuracy: number } | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: "system", content: MAUDE_SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: apiContent },
+    ],
+    stream: true, max_tokens: 4096, temperature: 0.7,
+  };
+  if (loc) body.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+  return body;
+}
+
+function minimalChatBody(model: string, apiContent: string): Record<string, unknown> {
+  return buildChatBody(model, [], apiContent, null);
 }
 
 
@@ -304,8 +364,8 @@ export function useChat(conversationId: string | null = null) {
       let actualModel = "";
 
       try {
-        const history = messages.filter((m) => m.role !== "system").slice(-20)
-          .map((m) => ({ role: m.role, content: m.content }));
+        const history = messages.filter((m) => m.role !== "system").slice(-8)
+          .map((m) => ({ role: m.role, content: compactHistoryContent(m.content) }));
 
         // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
@@ -322,29 +382,30 @@ export function useChat(conversationId: string | null = null) {
         // Fetch device location (non-blocking, cached)
         const loc = await getLocation();
 
-        const chatBody: Record<string, unknown> = {
-          model,
-          messages: [
-            { role: "system", content: MAUDE_SYSTEM_PROMPT },
-            ...history,
-            { role: "user", content: apiContent },
-          ],
-          stream: true, max_tokens: 4096, temperature: 0.7,
-        };
-        if (loc) {
-          chatBody.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
-        }
+        const chatBody = buildChatBody(model, history, apiContent, loc);
+        const fallbackChatBody = minimalChatBody(model, apiContent);
 
         // ── iOS: EventSource transport ──────────────────────────────
         // WKWebView kills streaming fetch() when app goes to background.
         // Same fix as Terminal.tsx: POST to create session, GET EventSource.
         if (isIOS) {
-          const createResp = await fetch(`${getGatewayUrl()}/api/chat/create`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(chatBody),
-            signal: controller.signal,
-          });
+          let createResp: Response;
+          try {
+            createResp = await fetchWithStaleAppRetry(`${getGatewayUrl()}/api/chat/create`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(chatBody),
+              signal: controller.signal,
+            });
+          } catch (err) {
+            if (!isLoadFailedError(err)) throw err;
+            createResp = await fetchWithStaleAppRetry(`${getGatewayUrl()}/api/chat/create`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(fallbackChatBody),
+              signal: controller.signal,
+            });
+          }
           if (!createResp.ok) {
             const errText = await createResp.text();
             setMessages((prev) =>
@@ -461,12 +522,23 @@ export function useChat(conversationId: string | null = null) {
         }
 
         // ── Standard fetch + ReadableStream transport ───────────────
-        const response = await fetch(`${getGatewayUrl()}/v1/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(chatBody),
-          signal: controller.signal,
-        });
+        let response: Response;
+        try {
+          response = await fetchWithStaleAppRetry(`${getGatewayUrl()}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(chatBody),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (!isLoadFailedError(err)) throw err;
+          response = await fetchWithStaleAppRetry(`${getGatewayUrl()}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(fallbackChatBody),
+            signal: controller.signal,
+          });
+        }
 
         if (!response.ok) {
           const errText = await response.text();
@@ -591,8 +663,11 @@ export function useChat(conversationId: string | null = null) {
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== "AbortError") {
+          const detail = isLoadFailedError(err)
+            ? "Could not reach the MAUDE gateway after clearing stale app cache. Check Tailscale/VPN and reopen MAUDE."
+            : err.message;
           setMessages((prev) =>
-            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${err.message}` } : m));
+            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${detail}` } : m));
         }
       } finally {
         // Flush any pending RAF update with final content
