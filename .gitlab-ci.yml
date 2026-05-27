@@ -10,6 +10,7 @@ stages:
   - build
   - security
   - package
+  - deploy
   - release
 
 variables:
@@ -85,7 +86,7 @@ client:package:
   stage: package
   image: python:3.12-slim
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ && $CI_COMMIT_REF_PROTECTED == "true"
   before_script:
     - python -m pip install --upgrade pip
   script:
@@ -93,6 +94,8 @@ client:package:
     - python -m pip wheel --no-deps . -w dist
     - WHEEL="$(ls dist/*.whl)"
     - FILE="$(basename "$WHEEL")"
+    - export CLIENT_PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/maude-client/${CI_COMMIT_TAG}/${FILE}"
+    - printf 'CLIENT_WHEEL_FILE=%s\nCLIENT_PACKAGE_URL=%s\n' "$FILE" "$CLIENT_PACKAGE_URL" > ../client-release.env
     - |
       python - "$WHEEL" "$FILE" <<'PY'
       import os
@@ -100,10 +103,8 @@ client:package:
       import urllib.request
 
       path, filename = sys.argv[1], sys.argv[2]
-      project = os.environ["CI_PROJECT_ID"]
-      tag = os.environ["CI_COMMIT_TAG"]
       token = os.environ["CI_JOB_TOKEN"]
-      url = f"{os.environ['CI_API_V4_URL']}/projects/{project}/packages/generic/maude-client/{tag}/{filename}"
+      url = os.environ["CLIENT_PACKAGE_URL"]
 
       with open(path, "rb") as fh:
           req = urllib.request.Request(url, data=fh.read(), method="PUT")
@@ -115,6 +116,8 @@ client:package:
   artifacts:
     when: on_success
     expire_in: 1 week
+    reports:
+      dotenv: client-release.env
     paths:
       - maude-client/dist/*.whl
 
@@ -122,7 +125,7 @@ phone:package:
   stage: package
   image: node:20-slim
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ && $CI_COMMIT_REF_PROTECTED == "true"
   cache:
     key:
       files:
@@ -136,17 +139,17 @@ phone:package:
     - npm run build
     - ARCHIVE="maude-phone-dist-${CI_COMMIT_TAG}.tar.gz"
     - tar -czf "$ARCHIVE" dist
+    - export PHONE_PACKAGE_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/maude-phone/${CI_COMMIT_TAG}/${ARCHIVE}"
+    - printf 'PHONE_PACKAGE_FILE=%s\nPHONE_PACKAGE_URL=%s\n' "$ARCHIVE" "$PHONE_PACKAGE_URL" > ../phone-release.env
     - |
       node - "$ARCHIVE" <<'JS'
       const fs = require("fs");
       const path = require("path");
 
       const archive = process.argv[2];
-      const project = process.env.CI_PROJECT_ID;
-      const tag = process.env.CI_COMMIT_TAG;
       const token = process.env.CI_JOB_TOKEN;
       const filename = path.basename(archive);
-      const url = `${process.env.CI_API_V4_URL}/projects/${project}/packages/generic/maude-phone/${tag}/${filename}`;
+      const url = process.env.PHONE_PACKAGE_URL;
 
       fetch(url, {
         method: "PUT",
@@ -169,20 +172,91 @@ phone:package:
   artifacts:
     when: on_success
     expire_in: 1 week
+    reports:
+      dotenv: phone-release.env
     paths:
       - maude-phone/maude-phone-dist-*.tar.gz
+
+deploy:development:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: phone:build
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "trace-iteration"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  environment:
+    name: development
+    deployment_tier: development
+  resource_group: development
+  script:
+    - echo "Recording development deployment placeholder for $CI_COMMIT_REF_NAME at $CI_COMMIT_SHA"
+    - echo "Replace this job with the development deployment command when infrastructure is ready."
+
+deploy:staging:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: phone:build
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false
+  environment:
+    name: staging
+    deployment_tier: staging
+  resource_group: staging
+  script:
+    - echo "Recording staging deployment placeholder for $CI_COMMIT_REF_NAME at $CI_COMMIT_SHA"
+    - echo "Replace this job with the staging deployment command when infrastructure is ready."
+
+deploy:production:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - job: client:package
+      artifacts: false
+    - job: phone:package
+      artifacts: false
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ && $CI_COMMIT_REF_PROTECTED == "true"
+      when: manual
+      allow_failure: false
+  environment:
+    name: production
+    deployment_tier: production
+  resource_group: production
+  script:
+    - echo "Recording production deployment placeholder for $CI_COMMIT_TAG at $CI_COMMIT_SHA"
+    - echo "Replace this job with the production deployment command when infrastructure is ready."
 
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs:
-    - client:package
-    - phone:package
+    - job: client:package
+      artifacts: true
+    - job: phone:package
+      artifacts: true
   rules:
-    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/ && $CI_COMMIT_REF_PROTECTED == "true"
   script:
     - echo "Creating GitLab release for $CI_COMMIT_TAG"
+    - test -n "$CLIENT_PACKAGE_URL"
+    - test -n "$PHONE_PACKAGE_URL"
   release:
     name: "MAUDE $CI_COMMIT_TAG"
     tag_name: "$CI_COMMIT_TAG"
-    description: "Release $CI_COMMIT_TAG"
+    description: "Release $CI_COMMIT_TAG. See CHANGELOG.md for the release note process and highlights."
+    assets:
+      links:
+        - name: "maude-client wheel"
+          url: "$CLIENT_PACKAGE_URL"
+          link_type: "package"
+        - name: "maude-phone dist archive"
+          url: "$PHONE_PACKAGE_URL"
+          link_type: "package"
