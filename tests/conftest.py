@@ -2,7 +2,10 @@
 Shared test fixtures for MAUDE test suite.
 """
 
+import socket
 import sys
+import threading
+from http.server import HTTPServer
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,26 @@ import pytest
 PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def get_free_port():
+    """Find a free TCP port on localhost."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def gateway_server():
+    """Start a real GatewayHandler server on a random port for the test module."""
+    from gateway import GatewayHandler
+
+    port = get_free_port()
+    server = HTTPServer(("127.0.0.1", port), GatewayHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
 
 
 @pytest.fixture

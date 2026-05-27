@@ -7,8 +7,6 @@ from pathlib import Path
 
 from tool_registry import register_tool
 
-from .log import log
-
 # Add forge3d to path
 FORGE3D_DIR = Path(__file__).parent.parent.parent / "forge3d"
 if FORGE3D_DIR.exists():
@@ -25,7 +23,6 @@ def _get_clients():
 @register_tool("generate_3d")
 def _dispatch_generate_3d(args):
     import time
-    from concurrent.futures import ThreadPoolExecutor
 
     image_path = args.get("image_path", "")
     engine = args.get("engine", "trellis")

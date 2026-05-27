@@ -285,6 +285,64 @@ def _dispatch_scheduler_status(args):
         return f"Error reading schedules: {e}"
 
 
+# ── Mission Status ────────────────────────────────────────────
+
+
+@register_tool("mission_status")
+def _dispatch_mission_status(args):
+    """Show active mission state for Command Center."""
+    try:
+        from .tools_missions import _missions_dir
+
+        limit = int(args.get("limit", 20))
+        limit = max(1, min(limit, 100))
+        missions = []
+        for path in _missions_dir().glob("*.json"):
+            try:
+                mission = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            steps = mission.get("steps", [])
+            done = sum(1 for step in steps if step.get("status") == "done")
+            next_step = next((step for step in steps if step.get("status") != "done"), None)
+            missions.append(
+                {
+                    "id": mission.get("id", path.stem),
+                    "title": mission.get("title", ""),
+                    "objective": mission.get("objective", ""),
+                    "status": mission.get("status", ""),
+                    "cadence": mission.get("cadence", ""),
+                    "progress": {"done": done, "total": len(steps)},
+                    "next_action": next_step.get("title", "") if next_step else "",
+                    "blockers": mission.get("blockers", [])[-5:],
+                    "artifacts": mission.get("artifacts", [])[-5:],
+                    "schedule": mission.get("schedule", {}),
+                    "updated_at": mission.get("updated_at"),
+                    "recent_logs": mission.get("logs", [])[-3:],
+                }
+            )
+
+        missions.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+        active = sum(1 for mission in missions if mission.get("status") == "active")
+        blocked = sum(1 for mission in missions if mission.get("status") == "blocked" or mission.get("blockers"))
+        scheduled = sum(1 for mission in missions if mission.get("schedule", {}).get("task_id"))
+        return json.dumps(
+            {
+                "stats": {
+                    "total": len(missions),
+                    "active": active,
+                    "blocked": blocked,
+                    "scheduled": scheduled,
+                },
+                "missions": missions[:limit],
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return f"Error reading missions: {e}"
+
+
 # ── Node Status ──────────────────────────────────────────────
 
 
@@ -298,7 +356,7 @@ def _dispatch_node_status(args):
     tmux_sessions = set(tmux_out.split("\n")) if tmux_out else set()
 
     maude_running = "maude" in tmux_sessions or bool(_run(["pgrep", "-f", "chat_local.py"]))
-    gateway_running = bool(_run(["pgrep", "-f", "gateway.py"]))
+    gateway_running = bool(_run(["pgrep", "-f", "python -m gateway"])) or bool(_run(["pgrep", "-f", "gateway.py"]))
     llama_running = bool(_run(["pgrep", "-f", "llama-server"]))
     telegram_running = bool(_run(["pgrep", "-f", "run_telegram"]))
 

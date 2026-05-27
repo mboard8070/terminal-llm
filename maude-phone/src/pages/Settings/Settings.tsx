@@ -1,4 +1,6 @@
 import { FC, useState, useEffect } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
+import { resetAppCacheAndReload } from "../../lib/cacheReset";
 
 interface ServiceStatus { status: string; port: number; }
 interface HealthStatus {
@@ -11,7 +13,9 @@ interface HealthStatus {
 }
 interface ModelInfo { id: string; provider: string; available: boolean; }
 
-function getGatewayUrl(): string { return `${window.location.protocol}//${window.location.host}`; }
+declare const __MAUDE_BUILD_TIME__: string;
+declare const __MAUDE_APP_VERSION__: string;
+
 
 const THEMES = [
   { id: "dark", label: "MAUDE Dark", desc: "Default dark theme" },
@@ -35,10 +39,12 @@ export const Settings: FC = () => {
   });
   const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem("maude-default-voice") || "NATF2.pt");
   const [theme, setTheme] = useState(() => localStorage.getItem("maude-theme") || "dark");
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState("");
 
   // Gateway reachable = Spark is connected (regardless of whether sub-services are up)
   const sparkConnected = health !== null;
-  const gatewayPort = health?.gateway_port ?? 30000;
+  const gatewayPort = health?.gateway_port ?? (new URL(getGatewayUrl()).port || "30080");
   const llmService = health?.services?.llama_server;
   const voiceService = health?.services?.voice_server;
 
@@ -50,9 +56,20 @@ export const Settings: FC = () => {
   const saveModel = (m: string) => { setDefaultModel(m); localStorage.setItem("maude-default-model", m); };
   const saveVoice = (v: string) => { setDefaultVoice(v); localStorage.setItem("maude-default-voice", v); };
 
+  const handleResetCache = async () => {
+    setResetting(true);
+    setResetError("");
+    try {
+      await resetAppCacheAndReload();
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Reset failed");
+      setResetting(false);
+    }
+  };
+
   const svcLabel = (svc?: ServiceStatus) => {
     if (!svc) return { text: "\u2014", color: "text-maude-muted" };
-    if (svc.status === "up") return { text: `${svc.port} (up)`, color: "text-green-400" };
+    if (svc.status === "up" || svc.status === "ok") return { text: `${svc.port} (${svc.status})`, color: "text-green-400" };
     return { text: `${svc.port} (down)`, color: "text-red-400" };
   };
 
@@ -80,7 +97,7 @@ export const Settings: FC = () => {
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className={`font-mono text-sm ${llm.color}`}>{llm.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice Server</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{window.location.host}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Host</span><span className="font-mono text-sm text-maude-muted">{getGatewayUrl().replace(/^https?:\/\//, "")}</span></div>
           </div>
         </section>
 
@@ -128,14 +145,25 @@ export const Settings: FC = () => {
         {/* Network */}
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Network</h2>
-          <div className="rounded-xl bg-maude-surface p-4"><p className="text-sm text-maude-muted">Network settings are managed via Tailscale and your device's system settings.</p></div>
+          <div className="space-y-3 rounded-xl bg-maude-surface p-4">
+            <p className="text-sm text-maude-muted">Network settings are managed via Tailscale and your device's system settings.</p>
+            <button
+              onClick={handleResetCache}
+              disabled={resetting}
+              className="w-full rounded-lg bg-maude-bg px-3 py-2.5 text-sm font-medium text-maude-text transition-colors hover:text-maude-accent disabled:opacity-50"
+            >
+              {resetting ? "Resetting..." : "Reset App Cache"}
+            </button>
+            {resetError && <p className="text-xs text-red-400">{resetError}</p>}
+          </div>
         </section>
 
         {/* About */}
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">About</h2>
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">1.8.3</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">{__MAUDE_APP_VERSION__}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Build</span><span className="text-right font-mono text-[11px] text-maude-muted">{new Date(__MAUDE_BUILD_TIME__).toLocaleString()}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Claude</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">MAUDE Voice ({(localStorage.getItem("maude-default-voice") || "NATF2.pt").replace(".pt", "")})</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Hub</span><span className="text-sm font-mono">DGX Spark</span></div>

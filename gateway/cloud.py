@@ -526,6 +526,29 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         prompt = str(args.get("prompt", "")).strip()
         file_path = str(args.get("file_path") or args.get("path") or args.get("local_path") or "").strip()
 
+        if name == "run_agent":
+            agent_name = str(args.get("agent", "")).strip()
+            return f"Spawned 1 agent: {agent_name}" if agent_name else "Spawned 1 agent"
+        if name == "run_agents":
+            tasks = args.get("tasks", [])
+            if isinstance(tasks, list):
+                agent_names = [
+                    str(task.get("agent", "")).strip()
+                    for task in tasks
+                    if isinstance(task, dict) and str(task.get("agent", "")).strip()
+                ]
+                count = len(tasks)
+                if agent_names:
+                    return f"Spawned {count} agents: {', '.join(agent_names[:4])}"
+                return f"Spawned {count} agents"
+            return "Spawned agents"
+        if name == "execute_plan":
+            stages = args.get("stages", [])
+            if isinstance(stages, list):
+                count = len(stages)
+                stage_word = "stage" if count == 1 else "stages"
+                return f"Plan mode: executing {count} {stage_word}"
+            return "Plan mode: executing tool plan"
         if name == "run_command":
             cmd = command.lower()
             if "comfyui" in cmd or "8188" in cmd:
@@ -568,6 +591,27 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             "name": name,
             "args": args_preview,
             "task": self._tool_task_label(name, args),
+        }
+
+    @staticmethod
+    def _model_route_trace_payload(route_trace: dict | None, route: dict, resolved_name: str) -> dict:
+        """Return a user-facing trace payload that explains model routing."""
+        route_trace = route_trace or {}
+        requested = route_trace.get("requested_model") or resolved_name
+        provider = route.get("provider", "unknown")
+        parsed_url = urlparse(route.get("base_url") or "")
+        endpoint = parsed_url.netloc or parsed_url.path or "local"
+        route_kind = "alias" if requested != resolved_name else "direct"
+        tool_mode = route_trace.get("tool_mode") or "server"
+        return {
+            "requested_model": requested,
+            "resolved_model": resolved_name,
+            "provider": provider,
+            "endpoint": endpoint,
+            "max_context": route.get("max_context", 0),
+            "route_kind": route_kind,
+            "tool_mode": tool_mode,
+            "summary": f"{requested} -> {resolved_name}" if route_kind == "alias" else resolved_name,
         }
 
     def _close_sse_with_error(self, error_msg: str):
@@ -812,6 +856,10 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         if is_streaming:
             self._start_sse_headers()
             sse_started = True
+            self._send_trace_sse(
+                "model_route",
+                self._model_route_trace_payload(req.get("_route_trace"), route, resolved_name),
+            )
 
         for iteration in range(max_iterations):
             # On last iteration, drop tools to force a summary response
@@ -1401,6 +1449,10 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         if is_streaming:
             self._start_sse_headers()
             sse_started = True
+            self._send_trace_sse(
+                "model_route",
+                self._model_route_trace_payload(req.get("_route_trace"), route, resolved_name),
+            )
 
         for iteration in range(max_iterations):
             # On last iteration, drop tools to force a summary response

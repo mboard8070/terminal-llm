@@ -17,28 +17,12 @@ import { TabBar } from "./components/TabBar/TabBar";
 // Start presence heartbeat at app load (auto-detects device type)
 startPresenceHeartbeat();
 
-// Force service worker update on app load and auto-reload when new version activates
+// MAUDE is a live gateway app. Remove any legacy PWA service worker so
+// Safari cannot serve stale app shells or intercept chat requests.
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.addEventListener("message", (event) => {
-    if (event.data?.type === "SW_UPDATED") {
-      window.location.reload();
-    }
-  });
-  navigator.serviceWorker.getRegistration().then((reg) => {
-    if (reg) {
-      reg.update();
-      reg.addEventListener("updatefound", () => {
-        const newWorker = reg.installing;
-        if (newWorker) {
-          newWorker.addEventListener("statechange", () => {
-            if (newWorker.state === "activated") {
-              window.location.reload();
-            }
-          });
-        }
-      });
-    }
-  });
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
+    .catch(() => {});
 }
 
 function AppLayout() {

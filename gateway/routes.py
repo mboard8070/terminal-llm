@@ -260,6 +260,64 @@ class RoutesMixin:
         except Exception as e:
             self._json_response({"error": f"Proxy error: {e}"}, 502)
 
+    def _serve_reset_cache_page(self):
+        """Serve a standalone page that clears MAUDE PWA cache/state."""
+        html = b'''<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reset MAUDE</title>
+  <style>
+    body { background:#0d1117; color:#e6edf3; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; padding:32px; }
+    code { background:#161b22; padding:2px 5px; border-radius:4px; }
+    .ok { color:#7ee787; }
+    .warn { color:#ffa657; }
+  </style>
+</head>
+<body>
+  <h1>Resetting MAUDE</h1>
+  <p id="status">Clearing service workers, caches, and local app state...</p>
+  <script>
+    async function reset() {
+      const lines = [];
+      try {
+        if ('serviceWorker' in navigator) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map((r) => r.unregister()));
+          lines.push('Unregistered ' + regs.length + ' service worker(s).');
+        }
+      } catch (e) { lines.push('Service worker reset failed: ' + e); }
+      try {
+        if ('caches' in window) {
+          const names = await caches.keys();
+          await Promise.all(names.map((n) => caches.delete(n)));
+          lines.push('Deleted ' + names.length + ' cache(s).');
+        }
+      } catch (e) { lines.push('Cache reset failed: ' + e); }
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+        lines.push('Cleared local storage.');
+      } catch (e) { lines.push('Storage reset failed: ' + e); }
+      document.getElementById('status').innerHTML = '<span class="ok">Reset complete.</span><br>' + lines.map((l) => '<code>' + l + '</code>').join('<br>') + '<br><br>Redirecting to MAUDE...';
+      setTimeout(() => { window.location.replace('/?fresh=' + Date.now()); }, 1000);
+    }
+    reset();
+  </script>
+  <noscript><p class="warn">JavaScript is required to clear the Safari cache.</p></noscript>
+</body>
+</html>
+'''
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Clear-Site-Data", '"cache", "storage"')
+        self.end_headers()
+        self.wfile.write(html)
+
     def _serve_static(self, path):
         """Serve PWA static files from dist/."""
         if path == "/" or path == "/app" or path == "/app/":
@@ -285,7 +343,9 @@ class RoutesMixin:
             self._add_cors()
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            if filepath.name == "index.html" or content_type == "application/javascript":
+            if filepath.name == "index.html":
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+            elif content_type == "application/javascript":
                 self.send_header("Cache-Control", "no-store, must-revalidate")
             elif content_type.startswith("text/"):
                 self.send_header("Cache-Control", "no-cache")
@@ -602,6 +662,7 @@ class RoutesMixin:
                 _dispatch_activity_feed,
                 _dispatch_gpu_processes,
                 _dispatch_memory_browse,
+                _dispatch_mission_status,
                 _dispatch_node_status,
                 _dispatch_scheduler_status,
                 _dispatch_session_list,
@@ -638,6 +699,11 @@ class RoutesMixin:
             result = _dispatch_activity_feed(args)
         elif endpoint == "scheduler":
             result = _dispatch_scheduler_status({})
+        elif endpoint == "missions":
+            args = {}
+            if "limit" in query:
+                args["limit"] = int(query["limit"][0])
+            result = _dispatch_mission_status(args)
         elif endpoint == "nodes":
             result = _dispatch_node_status({})
         else:

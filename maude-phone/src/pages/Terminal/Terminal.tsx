@@ -1,7 +1,7 @@
 import { FC, useEffect, useRef, useState } from "react";
+import { getGatewayUrl, getGatewayWsUrl } from "../../lib/gateway";
 
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const useHttpTerminalTransport = true;
 
 export const Terminal: FC = () => {
   const termRef = useRef<HTMLDivElement>(null);
@@ -52,23 +52,24 @@ export const Terminal: FC = () => {
 
       setStatus("connecting");
 
-      if (isIOS) {
-        // iOS: use HTTP transport (SSE output + POST input) — works over regular HTTPS
-        // which iOS already trusts (WSS with self-signed certs doesn't work in WKWebView)
+      if (useHttpTerminalTransport) {
+        // Mobile-safe transport: SSE output + POST input. This avoids
+        // WebSocket failures in embedded WebViews and keeps the route on
+        // the same gateway origin as the rest of the app.
         try {
-          const resp = await fetch("/api/terminal/create", { method: "POST" });
+          const resp = await fetch(`${getGatewayUrl()}/api/terminal/create`, { method: "POST" });
           const { sid } = await resp.json();
           sidRef.current = sid;
 
           // SSE stream for PTY output
-          const es = new EventSource(`/api/terminal/stream?sid=${sid}`);
+          const es = new EventSource(`${getGatewayUrl()}/api/terminal/stream?sid=${sid}`);
           esRef.current = es;
 
           es.onopen = () => {
             setStatus("connected");
             const dims = fitAddon.proposeDimensions();
             if (dims) {
-              fetch("/api/terminal/resize", {
+              fetch(`${getGatewayUrl()}/api/terminal/resize`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ sid, cols: dims.cols, rows: dims.rows }),
@@ -90,7 +91,7 @@ export const Terminal: FC = () => {
 
           // Input via POST
           const sendInput = (data: string) => {
-            fetch("/api/terminal/input", {
+            fetch(`${getGatewayUrl()}/api/terminal/input`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ sid, data }),
@@ -104,7 +105,7 @@ export const Terminal: FC = () => {
             fitAddon.fit();
             const dims = fitAddon.proposeDimensions();
             if (dims) {
-              fetch("/api/terminal/resize", {
+              fetch(`${getGatewayUrl()}/api/terminal/resize`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ sid, cols: dims.cols, rows: dims.rows }),
@@ -119,9 +120,8 @@ export const Terminal: FC = () => {
           term.write("\x1b[31m[Failed to connect]\x1b[0m\r\n");
         }
       } else {
-        // Android / Desktop: use WebSocket (self-signed cert trusted via native bridge)
-        const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-        const ws = new WebSocket(`${protocol}://${window.location.host}/ws/terminal`);
+        // Desktop fallback: WebSocket PTY transport.
+        const ws = new WebSocket(getGatewayWsUrl("/ws/terminal"));
         ws.binaryType = "arraybuffer";
         wsRef.current = ws;
 

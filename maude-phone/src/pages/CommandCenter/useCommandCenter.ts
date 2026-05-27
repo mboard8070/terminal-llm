@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { fetchGateway, getGatewayUrl } from "../../lib/gateway";
 
-function getGatewayUrl(): string {
-  return `${window.location.protocol}//${window.location.host}`;
-}
 
 export interface SystemStats {
   cpu_percent: number;
@@ -63,6 +61,32 @@ export interface SchedulerStatus {
   tasks: SchedulerTask[];
 }
 
+export interface MissionLog {
+  time: string;
+  kind: string;
+  message: string;
+}
+
+export interface Mission {
+  id: string;
+  title: string;
+  objective: string;
+  status: string;
+  cadence: string;
+  progress: { done: number; total: number };
+  next_action: string;
+  blockers: string[];
+  artifacts: string[];
+  schedule: { task_id?: string; cron?: string; enabled?: boolean };
+  updated_at: string;
+  recent_logs: MissionLog[];
+}
+
+export interface MissionStatus {
+  stats: { total: number; active: number; blocked: number; scheduled: number };
+  missions: Mission[];
+}
+
 export interface NodeInfo {
   name: string;
   type: string;
@@ -75,13 +99,28 @@ export interface NodeInfo {
   last_seen?: string;
 }
 
+export interface GatewayStatus {
+  ok: boolean;
+  url: string;
+  error?: string;
+  checked_at?: number;
+}
+
 async function fetchApi<T>(endpoint: string): Promise<T | null> {
+  const r = await fetchGateway(`/api/command-center/${endpoint}`, {}, 7000);
+  if (!r.ok) throw new Error(`${endpoint}: HTTP ${r.status}`);
+  return await r.json();
+}
+
+async function checkGateway(): Promise<GatewayStatus> {
+  const url = getGatewayUrl();
   try {
-    const r = await fetch(`${getGatewayUrl()}/api/command-center/${endpoint}`);
-    if (!r.ok) return null;
-    return await r.json();
-  } catch {
-    return null;
+    const r = await fetchGateway("/api/ping", {}, 5000);
+    if (!r.ok) return { ok: false, url, error: `HTTP ${r.status}`, checked_at: Date.now() };
+    return { ok: true, url, checked_at: Date.now() };
+  } catch (err) {
+    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    return { ok: false, url, error: message, checked_at: Date.now() };
   }
 }
 
@@ -91,17 +130,23 @@ export function useCommandCenter(refreshInterval = 10000) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activity, setActivity] = useState<Activity[]>([]);
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null);
+  const [missions, setMissions] = useState<MissionStatus | null>(null);
   const [nodes, setNodes] = useState<NodeInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus>({ ok: false, url: getGatewayUrl() });
 
   const refresh = useCallback(async () => {
-    const [sys, gpu, sess, act, sched, nodeData] = await Promise.all([
-      fetchApi<SystemStats>("system"),
-      fetchApi<GpuProcesses>("gpu-processes"),
-      fetchApi<{ sessions: Session[] }>("sessions?limit=10"),
-      fetchApi<{ activities: Activity[] }>("activity?limit=15"),
-      fetchApi<SchedulerStatus>("scheduler"),
-      fetchApi<{ nodes: NodeInfo[] }>("nodes"),
+    const gateway = await checkGateway();
+    setGatewayStatus(gateway);
+
+    const [sys, gpu, sess, act, sched, missionData, nodeData] = await Promise.all([
+      fetchApi<SystemStats>("system").catch(() => null),
+      fetchApi<GpuProcesses>("gpu-processes").catch(() => null),
+      fetchApi<{ sessions: Session[] }>("sessions?limit=10").catch(() => null),
+      fetchApi<{ activities: Activity[] }>("activity?limit=15").catch(() => null),
+      fetchApi<SchedulerStatus>("scheduler").catch(() => null),
+      fetchApi<MissionStatus>("missions?limit=20").catch(() => null),
+      fetchApi<{ nodes: NodeInfo[] }>("nodes").catch(() => null),
     ]);
 
     setSystem(sys);
@@ -109,6 +154,7 @@ export function useCommandCenter(refreshInterval = 10000) {
     setSessions(sess?.sessions || []);
     setActivity(act?.activities || []);
     setScheduler(sched);
+    setMissions(missionData);
     setNodes(nodeData?.nodes || []);
     setLoading(false);
   }, []);
@@ -119,5 +165,5 @@ export function useCommandCenter(refreshInterval = 10000) {
     return () => clearInterval(interval);
   }, [refresh, refreshInterval]);
 
-  return { system, gpuProcesses, sessions, activity, scheduler, nodes, loading, refresh };
+  return { system, gpuProcesses, sessions, activity, scheduler, missions, nodes, gatewayStatus, loading, refresh };
 }

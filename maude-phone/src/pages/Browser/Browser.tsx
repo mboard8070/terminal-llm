@@ -1,8 +1,6 @@
 import { FC, useState, useRef, useCallback } from "react";
+import { getGatewayUrl } from "../../lib/gateway";
 
-function getGatewayUrl(): string {
-  return `${window.location.protocol}//${window.location.host}`;
-}
 
 const BOOKMARKS = [
   { label: "Google", url: "https://www.google.com" },

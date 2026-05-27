@@ -2,6 +2,7 @@ import { FC, useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { encodeMessage, decodeMessage } from "../../protocol/encoder";
 import type { SocketStatus } from "../../protocol/types";
+import { getGatewayUrl, getGatewayWsUrl } from "../../lib/gateway";
 
 // MAUDE system prompt for voice
 const MAUDE_TEXT_PROMPT =
@@ -12,16 +13,12 @@ const MAUDE_TEXT_PROMPT =
 
 const DEFAULT_VOICE = "NATF2.pt";
 
-function getGatewayUrl(): string {
-  return `${window.location.protocol}//${window.location.host}`;
-}
 
 function getVoiceUrl(imageContext?: string): string {
   // Route through the gateway WSS proxy (/api/chat) so iOS can reuse
   // the already-trusted TLS session instead of needing a second
   // self-signed cert trust for port 8998.
-  const host = window.location.host; // includes port (e.g. 100.x.x.x:30000)
-  const base = `wss://${host}`;
+  const base = getGatewayWsUrl("");
 
   let prompt = MAUDE_TEXT_PROMPT;
   if (imageContext) {

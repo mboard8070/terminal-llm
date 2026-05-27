@@ -51,6 +51,178 @@ def _first_match(page, selectors: list):
     return None
 
 
+def _locator_count(page, selector: str) -> int:
+    try:
+        return page.locator(selector).count()
+    except Exception:
+        return 0
+
+
+def _is_video_media(path: str | None) -> bool:
+    if not path:
+        return False
+    return Path(path).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm"}
+
+
+def _latest_shared_video(max_age_hours: int = 48) -> str | None:
+    shared_dir = Path(__file__).resolve().parent / "shared"
+    if not shared_dir.exists():
+        return None
+
+    cutoff = time.time() - (max_age_hours * 3600)
+    videos = []
+    for ext in ("*.mp4", "*.mov", "*.m4v", "*.webm"):
+        videos.extend(shared_dir.glob(ext))
+    videos = [p for p in videos if p.is_file() and p.stat().st_mtime >= cutoff]
+    if not videos:
+        return None
+    return str(max(videos, key=lambda p: p.stat().st_mtime).resolve())
+
+
+def _x_media_state(page) -> dict:
+    try:
+        return page.evaluate(
+            """
+            () => {
+                const dialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+                const root = dialogs[dialogs.length - 1] || document;
+                const text = root.innerText || '';
+                const hasPreview = !!root.querySelector(
+                    '[data-testid="attachments"], [data-testid="videoPlayer"], video, [aria-label*="Remove media"], [aria-label*="Remove video"], [aria-label*="Remove image"], [aria-label*="Edit media"]'
+                );
+                const processingTexts = [
+                    'Preparing media',
+                    'Processing media',
+                    'Uploading media',
+                    'Uploading video',
+                    'Processing video',
+                    'Transcoding video'
+                ];
+                const processing = processingTexts.some(value => text.includes(value));
+                const errors = [
+                    'The media could not be played.',
+                    'The media could not be uploaded.',
+                    'Your video file could not be processed.',
+                    'Unsupported video format',
+                    'upload failed',
+                    'Upload failed',
+                    'file is too large',
+                    'File is too large',
+                    'video is too long',
+                    'Video is too long'
+                ];
+                const error = errors.find(value => text.includes(value)) || null;
+                const postButton = root.querySelector('[data-testid="tweetButtonInline"], [data-testid="tweetButton"]');
+                const postEnabled = !!postButton && !postButton.disabled && postButton.getAttribute('aria-disabled') !== 'true';
+                return { hasPreview, processing, error, postEnabled };
+            }
+            """
+        )
+    except Exception:
+        return {"hasPreview": False, "processing": False, "error": None, "postEnabled": False}
+
+
+def _x_wait_for_media_ready(page, media_path: str) -> str | None:
+    # X's video composer DOM changes frequently. Treat explicit media errors as fatal,
+    # but do not require a specific preview selector before checking the Post button.
+    settle_s = 20 if _is_video_media(media_path) else 5
+    for elapsed in range(settle_s):
+        state = _x_media_state(page)
+        if state.get("error"):
+            return f"Error: X media upload failed: {state['error']}"
+        if state.get("hasPreview") and not state.get("processing"):
+            return None
+        time.sleep(1)
+    state = _x_media_state(page)
+    log(f"social_post x: media settle complete, continuing to post button wait, state={state}")
+    return None
+
+
+def _x_wait_for_post_button(page, root, has_media: bool):
+    timeout_s = 300 if has_media else 60
+    selectors = [
+        '[data-testid="tweetButtonInline"]',
+        '[data-testid="tweetButton"]',
+    ]
+    last_state = None
+    for elapsed in range(timeout_s):
+        if has_media:
+            last_state = _x_media_state(page)
+            if last_state.get("error"):
+                return None, f"Error: X media upload failed: {last_state['error']}"
+            if elapsed and elapsed % 30 == 0:
+                log(f"social_post x: waiting for post button, state={last_state}")
+        post_btn = _first_match(root, selectors)
+        try:
+            if post_btn and post_btn.is_enabled():
+                return post_btn, None
+        except Exception:
+            pass
+        time.sleep(1)
+    if has_media:
+        return None, f"Error: Post button not found or disabled on X after media upload. Last media state: {last_state}"
+    return None, "Error: Post button not found or disabled on X."
+
+
+def _x_verify_post_media(page, is_video: bool) -> bool:
+    selector = (
+        '[data-testid="videoPlayer"], article video'
+        if is_video
+        else 'article [data-testid="tweetPhoto"], article img[src*="twimg.com/media"]'
+    )
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        if _locator_count(page, selector) > 0:
+            return True
+        time.sleep(1)
+    return False
+
+
+def _x_composer_root_from_compose(compose):
+    try:
+        handle = compose.element_handle(timeout=5_000)
+        if not handle:
+            return None
+        root_handle = handle.evaluate_handle(
+            """
+            node => {
+                let el = node;
+                for (let i = 0; i < 24 && el; i++, el = el.parentElement) {
+                    const fileInputs = el.querySelectorAll('input[type="file"]');
+                    const postButton = el.querySelector('[data-testid="tweetButtonInline"], [data-testid="tweetButton"]');
+                    if (fileInputs.length && postButton) return el;
+                }
+                return node.closest('[role="dialog"]') || node.closest('main') || document.body;
+            }
+            """
+        )
+        return root_handle.as_element()
+    except Exception:
+        return None
+
+
+def _x_select_media(page, root, media_path: str) -> bool:
+    selectors = [
+        'input[data-testid="fileInput"]',
+        'input[type="file"][accept*="video"]',
+        'input[type="file"][accept*="image"]',
+        'input[type="file"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = root.locator(sel) if hasattr(root, "locator") else None
+            count = loc.count() if loc else 0
+            for idx in range(count):
+                candidate = loc.nth(idx)
+                accept = candidate.get_attribute("accept") or ""
+                if "image" in accept or "video" in accept or sel == 'input[type="file"]':
+                    candidate.set_input_files(media_path)
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def _screenshot(page, label: str = "social") -> str | None:
     try:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,14 +324,17 @@ def _is_logged_in(page, platform: str) -> bool:
 
 
 def _post_x(page, content: str, image_path: str | None) -> str:
-    page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30_000)
+    page.goto("https://x.com/compose/post", wait_until="domcontentloaded", timeout=30_000)
     _human_pause(2, 4)
 
     if not _is_logged_in(page, "x"):
         return "Error: Not logged in to X. Run browser_login('x') and keep the browser open."
 
+    dialog = _first_match(page, ['div[role="dialog"]'])
+    root = dialog if dialog else page
+
     compose = _first_match(
-        page,
+        root,
         [
             '[data-testid="tweetTextarea_0"]',
             'div[role="textbox"][data-testid="tweetTextarea_0"]',
@@ -169,29 +344,10 @@ def _post_x(page, content: str, image_path: str | None) -> str:
     )
 
     if compose is None:
-        btn = _first_match(
-            page,
-            [
-                '[data-testid="SideNav_NewTweet_Button"]',
-                'a[aria-label="Post"]',
-                'a[href="/compose/post"]',
-            ],
-        )
-        if btn:
-            btn.click()
-            _human_pause(1, 2)
-            compose = _first_match(
-                page,
-                [
-                    '[data-testid="tweetTextarea_0"]',
-                    '[aria-label="Post text"]',
-                    "div.public-DraftEditor-content",
-                ],
-            )
-
-    if compose is None:
         _screenshot(page, "x_compose_fail")
         return "Error: Could not find the compose area on X."
+
+    composer_root = _x_composer_root_from_compose(compose) or root
 
     compose.click()
     _human_pause(0.5, 1.0)
@@ -199,36 +355,39 @@ def _post_x(page, content: str, image_path: str | None) -> str:
     _human_pause(1, 2)
 
     if image_path:
-        fi = _first_match(
-            page,
-            [
-                'input[data-testid="fileInput"]',
-                'input[type="file"][accept*="image"]',
-            ],
-        )
-        if fi:
-            fi.set_input_files(image_path)
+        media_path = str(Path(image_path).expanduser())
+        if not Path(media_path).exists():
+            return f"Error: Media file not found: {media_path}"
+
+        if _x_select_media(page, composer_root, media_path):
+            _screenshot(page, "x_media_selected")
+            media_error = _x_wait_for_media_ready(page, media_path)
+            if media_error:
+                _screenshot(page, "x_media_attach_fail")
+                return media_error
+            state = _x_media_state(page)
+            if not state.get("hasPreview"):
+                _screenshot(page, "x_media_no_preview")
+                return f"Error: X accepted the file input, but no media preview appeared. State: {state}"
+            _screenshot(page, "x_media_ready")
             _human_pause(2, 4)
         else:
-            return "Error: Could not find file input on X for image upload."
+            return "Error: Could not find the composer file input on X for media upload."
 
-    post_btn = _first_match(
-        page,
-        [
-            '[data-testid="tweetButtonInline"]',
-            '[data-testid="tweetButton"]',
-        ],
-    )
-    if not post_btn or not post_btn.is_enabled():
+    post_btn, post_error = _x_wait_for_post_button(page, composer_root, bool(image_path))
+    if post_error:
         _screenshot(page, "x_post_btn_fail")
-        return "Error: Post button not found or disabled on X."
+        return post_error
 
     post_btn.click()
     _human_pause(3, 5)
 
+    if image_path and not _x_verify_post_media(page, _is_video_media(image_path)):
+        _screenshot(page, "x_post_verify_missing_media")
+        return "Posted to X, but MAUDE could not verify the uploaded media afterward. Check the latest x_post_verify_missing_media screenshot."
+
     ss = _screenshot(page, "x_posted")
     return f"Posted to X successfully.{f' Screenshot: {ss}' if ss else ''}"
-
 
 def _post_linkedin(page, content: str, image_path: str | None) -> str:
     page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30_000)
@@ -1024,16 +1183,29 @@ def social_post(platform: str, content: str, image_path: str = None, **kwargs) -
     if platform == "twitter":
         platform = "x"
 
+    if not image_path:
+        image_path = kwargs.get("media_path") or kwargs.get("video_path")
+
+    expects_media = bool(kwargs.get("expect_media"))
+    if platform == "x" and not image_path and expects_media:
+        image_path = _latest_shared_video()
+        if image_path:
+            log(f"social_post x: auto-attaching latest shared video: {image_path}")
+
     if platform not in _POSTERS:
         return f"Error: Unsupported platform '{platform}'. Supported: {', '.join(_POSTERS)}"
 
     if platform == "instagram" and not image_path:
-        return "Error: Instagram requires an image. Provide image_path."
+        return "Error: Instagram requires an image. Provide image_path or media_path."
+    if platform == "tiktok" and not image_path:
+        return "Error: TikTok requires a video. Provide video_path, media_path, or image_path."
+    if expects_media and not image_path:
+        return "Error: This post was requested with media, but no media_path/video_path/image_path was provided."
 
     if image_path:
-        p = Path(image_path)
+        p = Path(image_path).expanduser()
         if not p.exists():
-            return f"Error: Image not found: {image_path}"
+            return f"Error: Media file not found: {image_path}"
         image_path = str(p.resolve())
 
     from browser import _get_session
@@ -1070,8 +1242,9 @@ SOCIAL_TOOLS = [
                 "Post content to a social media platform using the running browser session. "
                 "Requires browser_login('<platform>') first — keep the browser open after login. "
                 "Instagram requires an image. TikTok requires a video file. "
+                "X, LinkedIn, Facebook, Reddit, and Bluesky can attach images or videos when media_path/video_path/image_path is provided. "
                 "For Reddit, first line of content is the title, rest is the body. "
-                "IMPORTANT: When the user asks to post WITH an image, you MUST pass image_path."
+                "IMPORTANT: When the user asks to post WITH an image or video, you MUST pass media_path, video_path, or image_path. Do not make a text-only post if media was requested."
             ),
             "parameters": {
                 "type": "object",
@@ -1088,9 +1261,21 @@ SOCIAL_TOOLS = [
                     "image_path": {
                         "type": "string",
                         "description": (
-                            "Path to image/video to attach. Required for Instagram (image) "
-                            "and TikTok (video). Use the same path from view_image if you just analyzed one."
+                            "Path to image/video to attach. Use for any platform when attaching media. "
+                            "Required for Instagram images and TikTok videos; also valid for X videos."
                         ),
+                    },
+                    "media_path": {
+                        "type": "string",
+                        "description": "Alias for image_path. Preferred for X/LinkedIn/Facebook/Reddit/Bluesky media attachments, including videos.",
+                    },
+                    "video_path": {
+                        "type": "string",
+                        "description": "Alias for image_path when the attachment is a video, especially for X or TikTok.",
+                    },
+                    "expect_media": {
+                        "type": "boolean",
+                        "description": "Set true when the user explicitly requested an image or video attachment; the tool will fail instead of posting text-only if no path is supplied.",
                     },
                     "subreddit": {
                         "type": "string",
@@ -1098,6 +1283,39 @@ SOCIAL_TOOLS = [
                     },
                 },
                 "required": ["platform", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "social_x_post_video",
+            "description": (
+                "Post a video to X/Twitter using the running browser session. "
+                "Use this instead of browser tools whenever the user asks to upload/post a video to X. "
+                "If video_path/media_path/image_path is omitted, the latest shared MP4/MOV/WebM is attached automatically."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The text content of the X post.",
+                    },
+                    "video_path": {
+                        "type": "string",
+                        "description": "Path to the video file. Optional; latest shared video is used if omitted.",
+                    },
+                    "media_path": {
+                        "type": "string",
+                        "description": "Alias for video_path.",
+                    },
+                    "image_path": {
+                        "type": "string",
+                        "description": "Alias for video_path, retained for compatibility.",
+                    },
+                },
+                "required": ["content"],
             },
         },
     },
@@ -1115,7 +1333,18 @@ def execute_social_tool(name: str, args: dict) -> str:
             a.get("platform", ""),
             a.get("content", ""),
             a.get("image_path"),
+            media_path=a.get("media_path"),
+            video_path=a.get("video_path"),
+            expect_media=a.get("expect_media"),
             subreddit=a.get("subreddit"),
+        ),
+        "social_x_post_video": lambda a: social_post(
+            "x",
+            a.get("content", ""),
+            a.get("image_path"),
+            media_path=a.get("media_path"),
+            video_path=a.get("video_path"),
+            expect_media=True,
         ),
     }
     handler = dispatch.get(name)

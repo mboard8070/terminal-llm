@@ -1,0 +1,49 @@
+# Default ownership
+* @mboard8070
+
+[Model routing and AI providers]
+/gateway/state.py @mboard8070
+/gateway/cloud.py @mboard8070
+/providers.py @mboard8070
+/auto_router.py @mboard8070
+/routing.py @mboard8070
+/chat.py @mboard8070
+/chat_lite.py @mboard8070
+/chat_local.py @mboard8070
+
+[CI, release, and package controls]
+/.gitlab-ci.yml @mboard8070
+/.gitlab/ @mboard8070
+/pyproject.toml @mboard8070
+/requirements.txt @mboard8070
+/uv.lock @mboard8070
+/maude-client/pyproject.toml @mboard8070
+/maude-phone/package.json @mboard8070
+/maude-phone/package-lock.json @mboard8070
+
+[Security-sensitive configuration]
+/keys.py @mboard8070
+/gateway/ @mboard8070
+/maude_core/config.py @mboard8070
+/maude_core/tools_file.py @mboard8070
+/maude_core/tools_google.py @mboard8070
+/maude_core/tools_web.py @mboard8070
+/maude_core/tools_agents.py @mboard8070
+/maude_core/tools_plan.py @mboard8070
+/channels/ @mboard8070
+/services/ @mboard8070
+
+[Client applications]
+/maude-client/ @mboard8070
+/maude-phone/ @mboard8070
+
+[Tests and validation]
+/tests/ @mboard8070
+
+[Documentation and governance]
+/README.md @mboard8070
+/MAUDE.md @mboard8070
+/docs/ @mboard8070
+/guides/ @mboard8070
+/PRIVACY_POLICY.md @mboard8070
+/TERMS_OF_SERVICE.md @mboard8070

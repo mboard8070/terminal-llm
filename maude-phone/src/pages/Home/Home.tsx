@@ -1,5 +1,6 @@
 import { FC, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { getGatewayUrl } from "../../lib/gateway";
 
 interface AppIcon {
   path: string;
@@ -20,10 +21,6 @@ const APPS: AppIcon[] = [
   { path: "/settings", label: "Settings", icon: "\u2699", description: "Configure" },
 ];
 
-function getGatewayUrl(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
-}
 
 export const Home: FC = () => {
   const navigate = useNavigate();

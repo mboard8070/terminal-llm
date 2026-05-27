@@ -749,6 +749,8 @@ def chat(client, messages: list):
 AVAILABLE_MODELS = {
     "nemotron": "nemotron",
     "nemotron-super": "nemotron-super",
+    "nemotron-a3b": "nemotron-a3b",
+    "a3b": "nemotron-a3b",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
     "devstral": "devstral-2512",
@@ -769,6 +771,7 @@ GATEWAY_URL = "http://localhost:30080/v1"
 
 _CLOUD_MODELS = {
     "nemotron-super",
+    "nemotron-a3b",
     "mistral-large-latest",
     "codestral-latest",
     "devstral-2512",
@@ -1002,11 +1005,11 @@ TOOLS AVAILABLE:
 - Substack: substack_create_draft, substack_list_drafts, substack_list_posts, substack_get_post, substack_update_draft, substack_delete_draft, substack_get_stats
 - Browser: browser_open, browser_snapshot, browser_click, browser_type, browser_navigate, browser_screenshot, browser_extract, browser_fill_form, browser_select, browser_close
   browser_snapshot returns an accessibility tree with interactive elements tagged [@e1], [@e2], etc. Pass these refs to browser_click or browser_type for precise interaction. Use browser_snapshot instead of browser_screenshot when you need to click or type — it's faster and more reliable.
-  You can interact with ANY website using browser_open → browser_snapshot → browser_click/type. This includes posting to forums, CMS, blogs, or any site with a web form.
+  You can interact with websites using browser_open → browser_snapshot → browser_click/type. For social posting, especially X/Twitter posts with images or videos, use social_post instead of raw browser clicks; raw browser posting does not reliably attach media.
 - Browser Login: browser_login (opens visible browser via VNC for manual login — accepts shorthand: "x", "linkedin", "instagram", "facebook", "github", "reddit", "tiktok", "bluesky", "youtube", "google", "pinterest" or any URL). browser_check_session (verify if saved login is still valid)
 - Browser Workflows: workflow_create, workflow_run, workflow_list, workflow_get, workflow_delete, workflow_history, workflow_schedule, workflow_unschedule
 IMPORTANT: When the user asks to "log in", "login", "sign in" to any website or social media, USE browser_login — do NOT give text instructions. The tool handles VNC automatically for remote access.
-- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram, Reddit, TikTok, Bluesky). Uses saved browser_login sessions. For Reddit, first line of content is the title; use subreddit param. TikTok requires a video via image_path. When posting with an image, you MUST pass image_path to social_post.
+- Social media posting: social_post (browser-based — X, LinkedIn, Facebook, Instagram, Reddit, TikTok, Bluesky). Uses saved browser_login sessions. For Reddit, first line of content is the title; use subreddit param. When posting with an image or video on any platform, including X, you MUST pass media_path/video_path/image_path and set expect_media=true; never make a text-only post when media was requested. TikTok requires a video path.
 - Social media API (fallback): skill_post_social (requires API keys — only use if social_post fails), skill_social_status
 - Scheduling: schedule_task
 - Planning: execute_plan — run a multi-stage tool plan in one call. Define stages (each an array of tool calls); tools within a stage run in parallel, stages run sequentially. Use $N.M to reference results from stage N, tool M. Use this when you can foresee multiple steps ahead (e.g. read 3 files, then edit based on findings). This saves round-trips — prefer it over calling tools one at a time when the full plan is known upfront.

@@ -17,6 +17,7 @@ import signal
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 try:
     from playwright.sync_api import Browser, Page, Playwright, sync_playwright
@@ -275,7 +276,7 @@ class BrowserSession:
     # ── Accessibility snapshot ──────────────────────────────────────────────
 
     # Roles that represent interactive elements worth tagging with refs.
-    _INTERACTIVE_ROLES = {
+    _INTERACTIVE_ROLES: ClassVar[set[str]] = {
         "link", "button", "textbox", "checkbox", "radio", "combobox",
         "searchbox", "slider", "switch", "tab", "menuitem", "option",
         "spinbutton", "treeitem",

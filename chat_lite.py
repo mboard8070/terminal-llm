@@ -39,6 +39,8 @@ HISTORY_FILE = Path.home() / ".config" / "maude" / "chat_lite_history"
 MODELS = {
     "nemotron": "nemotron",
     "nemotron-super": "nemotron-super",
+    "nemotron-a3b": "nemotron-a3b",
+    "a3b": "nemotron-a3b",
     "llava": "llava",
     "mistral": "mistral-large-latest",
     "codestral": "codestral-latest",
@@ -178,6 +180,42 @@ def stream_response(messages: list, model_id: str) -> str:
                                     console.print(f"  [cyan]│[/cyan]  [dim]{tname}[/dim]")
                                 if arg_hint:
                                     console.print(f"  [cyan]│[/cyan]  [dim]{arg_hint}[/dim]")
+
+                            elif ttype == "model_route":
+                                requested = trace.get("requested_model", "")
+                                resolved = trace.get("resolved_model", "")
+                                provider = trace.get("provider", "unknown")
+                                endpoint = trace.get("endpoint", "")
+                                max_context = trace.get("max_context", 0)
+                                summary = trace.get("summary") or resolved or requested
+                                route_detail = provider
+                                if endpoint:
+                                    route_detail += f" via {endpoint}"
+                                if max_context:
+                                    route_detail += f", ctx {max_context:,}"
+                                _clear_spinner_line()
+                                console.print(f"  [dim]route[/dim] [cyan]{summary}[/cyan] [dim]({route_detail})[/dim]")
+
+                            elif ttype == "parallel_start":
+                                count = trace.get("count", 0)
+                                tools = trace.get("tools") or []
+                                label = f"{count} tools in parallel"
+                                if tools:
+                                    label += f": {', '.join(tools[:4])}"
+                                    if len(tools) > 4:
+                                        label += ", ..."
+                                spinner_label[0] = label
+                                _clear_spinner_line()
+                                console.print(f"  [dim]parallel[/dim] [cyan]{label}[/cyan]")
+
+                            elif ttype == "context_trim":
+                                removed = trace.get("removed", 0)
+                                max_tokens = trace.get("max_tokens", 0)
+                                _clear_spinner_line()
+                                console.print(
+                                    f"  [dim]context[/dim] trimmed {removed} messages"
+                                    + (f" to {max_tokens:,} tokens" if max_tokens else "")
+                                )
 
                             elif ttype == "tool_result":
                                 tname = trace.get("name", "")
@@ -443,7 +481,7 @@ def main():
             "[dim]Files · Shell · Web · Gmail · Drive · Calendar · YouTube · Substack\n"
             "Browser · Social · Vision · Voice · Cross-machine[/dim]\n"
             "\n"
-            f"[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
+            "[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
             border_style="magenta",
         )
     )

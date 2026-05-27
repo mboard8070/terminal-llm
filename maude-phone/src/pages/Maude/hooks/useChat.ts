@@ -1,9 +1,24 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 import { uuid } from "./uuid";
+import { getGatewayUrl } from "../../../lib/gateway";
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+const MODEL_ALIASES: Record<string, string> = {
+  "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
+  "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
+  "nemotron-nano": "nemotron-a3b",
+  "a3b": "nemotron-a3b",
+  "codex-cli": "codex",
+};
+
+function normalizeModelId(model: string | null | undefined): string {
+  const value = (model || "").trim();
+  if (!value || value === "claude-opus-4-20250514") return "nemotron-super";
+  return MODEL_ALIASES[value] || value;
+}
 
 // Cached location — updated every 5 minutes or on first use
 let cachedLocation: { lat: number; lng: number; accuracy: number; ts: number } | null = null;
@@ -23,8 +38,40 @@ function getLocation(): Promise<typeof cachedLocation> {
   });
 }
 
+async function clearBrowserAppCache(): Promise<void> {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((reg) => reg.unregister()));
+    }
+  } catch { /* best effort */ }
+  try {
+    if ("caches" in window) {
+      const names = await caches.keys();
+      await Promise.all(names.map((name) => caches.delete(name)));
+    }
+  } catch { /* best effort */ }
+}
+
+function isLoadFailedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return err.name === "TypeError" && (msg.includes("load failed") || msg.includes("failed to fetch"));
+}
+
+async function fetchWithStaleAppRetry(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, { ...init, cache: "no-store" });
+  } catch (err) {
+    if (!isLoadFailedError(err)) throw err;
+    await clearBrowserAppCache();
+    return fetch(input, { ...init, cache: "no-store" });
+  }
+}
+
 export interface ToolStep {
   name: string;
+  kind?: "tool" | "route" | "parallel" | "context";
   task?: string;
   args?: string;
   result?: string;
@@ -32,8 +79,19 @@ export interface ToolStep {
   status: "running" | "done" | "error";
 }
 
+export interface RouteInfo {
+  requestedModel: string;
+  resolvedModel: string;
+  provider: string;
+  endpoint?: string;
+  maxContext?: number;
+  routeKind?: string;
+  toolMode?: string;
+}
+
 export interface TraceInfo {
   tools: string[];
+  route?: RouteInfo;
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
@@ -84,10 +142,35 @@ function shouldUseCodestral(text: string): boolean {
   return CODE_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-function getGatewayUrl(): string {
-  const loc = window.location;
-  return `${loc.protocol}//${loc.host}`;
+function compactHistoryContent(content: string): string {
+  const maxChars = 4000;
+  if (content.length <= maxChars) return content;
+  return `${content.slice(0, 1800)}\n\n... [older content trimmed for mobile reliability] ...\n\n${content.slice(-1800)}`;
 }
+
+function buildChatBody(
+  model: string,
+  history: Array<{ role: string; content: string }>,
+  apiContent: string,
+  loc: { lat: number; lng: number; accuracy: number } | null,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: "system", content: MAUDE_SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: apiContent },
+    ],
+    stream: true, max_tokens: 4096, temperature: 0.7,
+  };
+  if (loc) body.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+  return body;
+}
+
+function minimalChatBody(model: string, apiContent: string): Record<string, unknown> {
+  return buildChatBody(model, [], apiContent, null);
+}
+
 
 /** Pick the most useful arg value from a JSON args string (for tool step display). */
 function extractArgHint(argsStr: string): string {
@@ -105,6 +188,97 @@ function extractArgHint(argsStr: string): string {
   return argsStr.length > 50 ? argsStr.slice(0, 50) + "\u2026" : argsStr;
 }
 
+function applyTracePayload(
+  t: Record<string, any>,
+  trace: TraceInfo,
+  toolSteps: ToolStep[],
+  appendError: (message: string) => void,
+): boolean {
+  if (t.type === "model_route") {
+    trace.route = {
+      requestedModel: t.requested_model || "",
+      resolvedModel: t.resolved_model || "",
+      provider: t.provider || "unknown",
+      endpoint: t.endpoint,
+      maxContext: t.max_context,
+      routeKind: t.route_kind,
+      toolMode: t.tool_mode,
+    };
+    const summary = t.summary || t.resolved_model || t.requested_model || "model route";
+    const detail = [t.provider, t.endpoint].filter(Boolean).join(" via ");
+    toolSteps.push({
+      name: "model_route",
+      kind: "route",
+      task: `Route: ${summary}`,
+      args: detail || undefined,
+      result: t.max_context ? `${Number(t.max_context).toLocaleString()} ctx` : undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "parallel_start") {
+    const tools = Array.isArray(t.tools) ? t.tools.join(", ") : "";
+    toolSteps.push({
+      name: "parallel_start",
+      kind: "parallel",
+      task: `Running ${t.count || 0} tools in parallel`,
+      args: tools || undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "context_trim") {
+    toolSteps.push({
+      name: "context_trim",
+      kind: "context",
+      task: `Trimmed ${t.removed || 0} old messages`,
+      result: t.max_tokens ? `${Number(t.max_tokens).toLocaleString()} token budget` : undefined,
+      status: "done",
+    });
+    return true;
+  }
+  if (t.type === "tool_call" && t.name) {
+    trace.tools.push(t.name);
+    const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
+    toolSteps.push({ name: t.name, kind: "tool", task: t.task, args: argHint, status: "running" });
+    return true;
+  }
+  if (t.type === "tool_result") {
+    for (let i = toolSteps.length - 1; i >= 0; i--) {
+      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+        const preview = (t.preview || "").slice(0, 60);
+        toolSteps[i].result = preview;
+        toolSteps[i].elapsed = t.elapsed || 0;
+        toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
+        break;
+      }
+    }
+    return true;
+  }
+  if (t.type === "keepalive" && t.name) {
+    for (let i = toolSteps.length - 1; i >= 0; i--) {
+      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
+        toolSteps[i].elapsed = t.elapsed || 0;
+        break;
+      }
+    }
+    return true;
+  }
+  if (t.type === "llm_call") {
+    trace.promptTokens += t.prompt_tokens || 0;
+    trace.completionTokens += t.completion_tokens || 0;
+    trace.cacheReadTokens += t.cache_read_tokens || 0;
+    trace.cacheCreateTokens += t.cache_create_tokens || 0;
+    trace.elapsed += t.elapsed || 0;
+    return false;
+  }
+  if (t.type === "error") {
+    appendError(t.message || "Unknown error");
+    return true;
+  }
+  return false;
+}
+
 export function useChat(conversationId: string | null = null) {
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     conversationId ? loadMessages(conversationId) : [],
@@ -112,7 +286,9 @@ export function useChat(conversationId: string | null = null) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentModel, setCurrentModel] = useState(() => {
     const stored = localStorage.getItem("maude-model");
-    return !stored || stored === "claude-opus-4-20250514" ? "nemotron-super" : stored;
+    const model = normalizeModelId(stored);
+    if (stored !== model) localStorage.setItem("maude-model", model);
+    return model;
   });
   const [autoRoute, setAutoRoute] = useState(() =>
     localStorage.getItem("maude-autoroute") === "true",
@@ -120,8 +296,9 @@ export function useChat(conversationId: string | null = null) {
 
   // Write to localStorage synchronously — not via useEffect which runs after render
   const updateModel = useCallback((model: string) => {
-    localStorage.setItem("maude-model", model);
-    setCurrentModel(model);
+    const normalized = normalizeModelId(model);
+    localStorage.setItem("maude-model", normalized);
+    setCurrentModel(normalized);
   }, []);
   const updateAutoRoute = useCallback((val: boolean) => {
     localStorage.setItem("maude-autoroute", String(val));
@@ -164,7 +341,7 @@ export function useChat(conversationId: string | null = null) {
       if (content.startsWith("/")) {
         const cmd = content.trim().toLowerCase();
         if (cmd === "/clear") { setMessages([]); return; }
-        if (cmd.startsWith("/model ")) { setCurrentModel(cmd.slice(7).trim()); return; }
+        if (cmd.startsWith("/model ")) { updateModel(cmd.slice(7).trim()); return; }
       }
 
       const displayContent = content || (hasImages ? "What do you see in this image?" : "");
@@ -187,8 +364,8 @@ export function useChat(conversationId: string | null = null) {
       let actualModel = "";
 
       try {
-        const history = messages.filter((m) => m.role !== "system").slice(-20)
-          .map((m) => ({ role: m.role, content: m.content }));
+        const history = messages.filter((m) => m.role !== "system").slice(-8)
+          .map((m) => ({ role: m.role, content: compactHistoryContent(m.content) }));
 
         // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
@@ -205,29 +382,30 @@ export function useChat(conversationId: string | null = null) {
         // Fetch device location (non-blocking, cached)
         const loc = await getLocation();
 
-        const chatBody: Record<string, unknown> = {
-          model,
-          messages: [
-            { role: "system", content: MAUDE_SYSTEM_PROMPT },
-            ...history,
-            { role: "user", content: apiContent },
-          ],
-          stream: true, max_tokens: 4096, temperature: 0.7,
-        };
-        if (loc) {
-          chatBody.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
-        }
+        const chatBody = buildChatBody(model, history, apiContent, loc);
+        const fallbackChatBody = minimalChatBody(model, apiContent);
 
         // ── iOS: EventSource transport ──────────────────────────────
         // WKWebView kills streaming fetch() when app goes to background.
         // Same fix as Terminal.tsx: POST to create session, GET EventSource.
         if (isIOS) {
-          const createResp = await fetch(`${getGatewayUrl()}/api/chat/create`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(chatBody),
-            signal: controller.signal,
-          });
+          let createResp: Response;
+          try {
+            createResp = await fetchWithStaleAppRetry(`${getGatewayUrl()}/api/chat/create`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(chatBody),
+              signal: controller.signal,
+            });
+          } catch (err) {
+            if (!isLoadFailedError(err)) throw err;
+            createResp = await fetchWithStaleAppRetry(`${getGatewayUrl()}/api/chat/create`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(fallbackChatBody),
+              signal: controller.signal,
+            });
+          }
           if (!createResp.ok) {
             const errText = await createResp.text();
             setMessages((prev) =>
@@ -255,7 +433,7 @@ export function useChat(conversationId: string | null = null) {
               if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = 0; }
               const finalUpdates: Partial<ChatMessage> = { content: fullContent };
               if (actualModel) finalUpdates.model = actualModel;
-              if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+              if (trace.promptTokens || trace.tools.length || trace.route) finalUpdates.trace = { ...trace };
               if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
               setMessages((prev) =>
                 prev.map((m) => m.id === assistantMsg.id ? { ...m, ...finalUpdates } : m));
@@ -294,7 +472,7 @@ export function useChat(conversationId: string | null = null) {
               if (event.data === "[DONE]") { finish(); return; }
               try {
                 const parsed = JSON.parse(event.data);
-                if (parsed.model && !actualModel) actualModel = parsed.model;
+                if (parsed.model && !actualModel) actualModel = normalizeModelId(parsed.model);
                 const delta = parsed.choices?.[0]?.delta;
                 if (delta?.reasoning_content) {
                   if (!inReasoning) { fullContent += "*Thinking...*\n\n"; inReasoning = true; }
@@ -311,41 +489,18 @@ export function useChat(conversationId: string | null = null) {
             const handleTrace = ((event: MessageEvent) => {
               markEvent(event);
               try {
-                  const t = JSON.parse(event.data);
-                  if (t.type === "tool_call" && t.name) {
-                    trace.tools.push(t.name);
-                    const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                    toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                    scheduleUpdate();
-                  } else if (t.type === "tool_result") {
-                    for (let i = toolSteps.length - 1; i >= 0; i--) {
-                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                        toolSteps[i].result = (t.preview || "").slice(0, 60);
-                        toolSteps[i].elapsed = t.elapsed || 0;
-                        toolSteps[i].status = (toolSteps[i].result || "").startsWith("Error") ? "error" : "done";
-                        break;
-                      }
-                    }
-                    scheduleUpdate();
-                  } else if (t.type === "keepalive" && t.name) {
-                    for (let i = toolSteps.length - 1; i >= 0; i--) {
-                      if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                        toolSteps[i].elapsed = t.elapsed || 0; break;
-                      }
-                    }
-                    scheduleUpdate();
-                  } else if (t.type === "llm_call") {
-                    trace.promptTokens += t.prompt_tokens || 0;
-                    trace.completionTokens += t.completion_tokens || 0;
-                    trace.cacheReadTokens += t.cache_read_tokens || 0;
-                    trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                    trace.elapsed += t.elapsed || 0;
-                  } else if (t.type === "error") {
-                    fullContent += `\n\n*Error: ${t.message || "Unknown error"}*`;
+                const t = JSON.parse(event.data);
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
+                  contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") {
                     contentRef.current = fullContent;
-                    scheduleUpdate();
                   }
-                } catch { /* skip */ }
+                  scheduleUpdate();
+                }
+              } catch { /* skip */ }
             }) as EventListener;
 
             const connect = () => {
@@ -367,12 +522,23 @@ export function useChat(conversationId: string | null = null) {
         }
 
         // ── Standard fetch + ReadableStream transport ───────────────
-        const response = await fetch(`${getGatewayUrl()}/v1/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(chatBody),
-          signal: controller.signal,
-        });
+        let response: Response;
+        try {
+          response = await fetchWithStaleAppRetry(`${getGatewayUrl()}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(chatBody),
+            signal: controller.signal,
+          });
+        } catch (err) {
+          if (!isLoadFailedError(err)) throw err;
+          response = await fetchWithStaleAppRetry(`${getGatewayUrl()}/v1/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(fallbackChatBody),
+            signal: controller.signal,
+          });
+        }
 
         if (!response.ok) {
           const errText = await response.text();
@@ -427,43 +593,12 @@ export function useChat(conversationId: string | null = null) {
             if (trimmed.startsWith(": trace ")) {
               try {
                 const t = JSON.parse(trimmed.slice(8));
-                if (t.type === "tool_call" && t.name) {
-                  trace.tools.push(t.name);
-                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                  scheduleUpdate();
-                } else if (t.type === "tool_result") {
-                  // Match the last running step with this tool name
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      const preview = (t.preview || "").slice(0, 60);
-                      toolSteps[i].result = preview;
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "keepalive" && t.name) {
-                  // Update elapsed on the running tool step (keeps connection alive)
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "llm_call") {
-                  trace.promptTokens += t.prompt_tokens || 0;
-                  trace.completionTokens += t.completion_tokens || 0;
-                  trace.cacheReadTokens += t.cache_read_tokens || 0;
-                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                  trace.elapsed += t.elapsed || 0;
-                } else if (t.type === "error") {
-                  // Gateway sent an error — display it as content
-                  const errMsg = t.message || "Unknown error";
-                  fullContent += `\n\n*Error: ${errMsg}*`;
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
                   contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") contentRef.current = fullContent;
                   scheduleUpdate();
                 }
               } catch { /* skip malformed trace */ }
@@ -485,40 +620,12 @@ export function useChat(conversationId: string | null = null) {
               currentEventType = "";
               try {
                 const t = JSON.parse(data);
-                if (t.type === "tool_call" && t.name) {
-                  trace.tools.push(t.name);
-                  const argHint = t.args && t.args !== "{}" ? extractArgHint(t.args) : undefined;
-                  toolSteps.push({ name: t.name, task: t.task, args: argHint, status: "running" });
-                  scheduleUpdate();
-                } else if (t.type === "tool_result") {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      const preview = (t.preview || "").slice(0, 60);
-                      toolSteps[i].result = preview;
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "keepalive" && t.name) {
-                  for (let i = toolSteps.length - 1; i >= 0; i--) {
-                    if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
-                      toolSteps[i].elapsed = t.elapsed || 0;
-                      break;
-                    }
-                  }
-                  scheduleUpdate();
-                } else if (t.type === "llm_call") {
-                  trace.promptTokens += t.prompt_tokens || 0;
-                  trace.completionTokens += t.completion_tokens || 0;
-                  trace.cacheReadTokens += t.cache_read_tokens || 0;
-                  trace.cacheCreateTokens += t.cache_create_tokens || 0;
-                  trace.elapsed += t.elapsed || 0;
-                } else if (t.type === "error") {
-                  const errMsg = t.message || "Unknown error";
-                  fullContent += `\n\n*Error: ${errMsg}*`;
+                const shouldUpdate = applyTracePayload(t, trace, toolSteps, (message) => {
+                  fullContent += `\n\n*Error: ${message}*`;
                   contentRef.current = fullContent;
+                });
+                if (shouldUpdate) {
+                  if (t.type !== "error") contentRef.current = fullContent;
                   scheduleUpdate();
                 }
               } catch { /* skip */ }
@@ -529,7 +636,7 @@ export function useChat(conversationId: string | null = null) {
             try {
               const parsed = JSON.parse(data);
               // Capture the actual model from the response
-              if (parsed.model && !actualModel) actualModel = parsed.model;
+              if (parsed.model && !actualModel) actualModel = normalizeModelId(parsed.model);
               const delta = parsed.choices?.[0]?.delta;
               if (delta?.reasoning_content) {
                 if (!fetchInReasoning) { fullContent += "*Thinking...*\n\n"; fetchInReasoning = true; }
@@ -548,7 +655,7 @@ export function useChat(conversationId: string | null = null) {
         // Final update: model from response, trace stats, tool steps
         const finalUpdates: Partial<ChatMessage> = {};
         if (actualModel) finalUpdates.model = actualModel;
-        if (trace.promptTokens || trace.tools.length) finalUpdates.trace = { ...trace };
+        if (trace.promptTokens || trace.tools.length || trace.route) finalUpdates.trace = { ...trace };
         if (toolSteps.length) finalUpdates.toolSteps = toolSteps.map((s) => ({ ...s }));
         if (Object.keys(finalUpdates).length) {
           setMessages((prev) =>
@@ -556,8 +663,11 @@ export function useChat(conversationId: string | null = null) {
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name !== "AbortError") {
+          const detail = isLoadFailedError(err)
+            ? "Could not reach the MAUDE gateway after clearing stale app cache. Check Tailscale/VPN and reopen MAUDE."
+            : err.message;
           setMessages((prev) =>
-            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${err.message}` } : m));
+            prev.map((m) => m.id === assistantMsg.id ? { ...m, content: `Error: ${detail}` } : m));
         }
       } finally {
         // Flush any pending RAF update with final content
@@ -578,7 +688,7 @@ export function useChat(conversationId: string | null = null) {
         abortRef.current = null;
       }
     },
-    [messages, isStreaming, currentModel, autoRoute],
+    [messages, isStreaming, currentModel, autoRoute, updateModel],
   );
 
   const stopStreaming = useCallback(() => { abortRef.current?.abort(); }, []);

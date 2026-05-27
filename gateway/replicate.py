@@ -5,7 +5,6 @@ Provides img2img stylization via Flux 2 Klein and text-to-image generation.
 Used by the /api/image/stylize endpoint and the generate_image_replicate tool.
 """
 
-import base64
 import http.client
 import json
 import os
@@ -107,7 +106,7 @@ def stylize_image(
         {"input": input_params},
     )
 
-    if "error" in prediction and prediction["error"]:
+    if prediction.get("error"):
         raise RuntimeError(f"Replicate error: {prediction['error']}")
 
     result = _poll_prediction(prediction)
@@ -158,7 +157,7 @@ def generate_image(
         {"input": input_params},
     )
 
-    if "error" in prediction and prediction["error"]:
+    if prediction.get("error"):
         raise RuntimeError(f"Replicate error: {prediction['error']}")
 
     result = _poll_prediction(prediction)

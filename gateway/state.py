@@ -124,6 +124,13 @@ MODEL_ROUTES = {
         "api_key_env": "OPEN_ROUTER_API_KEY",
         "max_context": 1000000,
     },
+    # Nemotron 3 Nano 30B-A3B — efficient reasoning/agent model via OpenRouter
+    "nvidia/nemotron-3-nano-30b-a3b": {
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api",
+        "api_key_env": "OPEN_ROUTER_API_KEY",
+        "max_context": 262144,
+    },
     # Nemotron — local fallback (llama-server)
     "nemotron": {
         "provider": "local",
@@ -178,6 +185,8 @@ MODEL_ALIASES = {
     "openai": os.environ.get("MAUDE_OPENAI_MODEL", "gpt-4o"),
     "codex": "codex-cli",
     "nemotron-super": "nvidia/nemotron-3-super-120b-a12b:free",
+    "nemotron-a3b": "nvidia/nemotron-3-nano-30b-a3b",
+    "a3b": "nvidia/nemotron-3-nano-30b-a3b",
     "local": "nemotron",
     "vision": "llava",
     "hermes": "hermes",
@@ -269,9 +278,11 @@ TOOL_ADDENDUM = (
     "For generated/shared images use ![description](/download/filename.png). "
     "For web images use the full URL from the search results."
     "\n\nBROWSER: The user has a persistent browser session (Playwright) that stays logged into "
-    "social media and other sites. When the user asks to DO something on a site (search LinkedIn, "
-    "post to X, check Facebook), use browser_navigate and browser tools to act on the EXISTING "
-    "session — do NOT open a new browser or ask them to log in again. Only use browser_login "
+    "social media and other sites. For social media posting, especially X/Twitter posts with "
+    "images or videos, ALWAYS use social_post. Do NOT use browser_type/browser_click to compose "
+    "or click Post on X; that path cannot reliably attach media. Use browser_navigate and browser "
+    "tools for non-posting site actions such as searching LinkedIn or checking Facebook. Use the "
+    "EXISTING session — do NOT open a new browser or ask them to log in again. Only use browser_login "
     "when the user explicitly asks to log in or when browser_check_session confirms the session "
     "is expired. browser_login accepts shorthand names (e.g. 'x', 'linkedin', 'instagram'). "
     "\n\nBROWSER WORKFLOWS: workflow_create, workflow_run, workflow_list, workflow_schedule — "

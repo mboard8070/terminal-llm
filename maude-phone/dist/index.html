@@ -22,15 +22,17 @@
         if (t) document.documentElement.setAttribute('data-theme', t);
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DIKYivWE.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DG_sGYD-.css">
+    <script type="module" crossorigin src="/assets/index-DcCvk7hW.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-TOxZm1D6.css">
   </head>
   <body>
     <div id="root" />
     <script>
-      // Register service worker for PWA "Add to Home Screen" on iOS Safari
+      // Service worker intentionally disabled: MAUDE is a live gateway app.
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js').catch(function() {});
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(reg) { reg.unregister(); });
+        }).catch(function() {});
       }
     </script>
   </body>

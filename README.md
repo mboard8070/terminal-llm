@@ -108,6 +108,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 | Switch Name / ID | Routed Model | Type | Use Case |
 |------------------|--------------|------|----------|
 | `nemotron-super` | `nvidia/nemotron-3-super-120b-a12b:free` | OpenRouter | Default general model with large context |
+| `nemotron-a3b` / `a3b` | `nvidia/nemotron-3-nano-30b-a3b` | OpenRouter | Efficient reasoning, coding, and agent workflows |
 | `nemotron` / `local` | `nemotron` | Local llama-server, port 30010 | Local fallback and offline chat |
 | `mistral` | `mistral-large-latest` | Mistral API | General cloud model with native vision support |
 | `codestral` | `codestral-latest` | Codestral API | Code generation and analysis |
@@ -290,7 +291,7 @@ venv/bin/python -m pytest --collect-only -q
 | `CODESTRAL_API_KEY` | — | Codestral API key (for cloud routing) |
 | `CLAUDE_API_KEY` | — | Anthropic API key used by gateway Claude Opus/Sonnet routes |
 | `OPENAI_API_KEY` | — | OpenAI API key (only for `/model switch openai`) |
-| `OPEN_ROUTER_API_KEY` | — | OpenRouter key for `nemotron-super` and vision fallback |
+| `OPEN_ROUTER_API_KEY` | — | OpenRouter key for `nemotron-super`, `nemotron-a3b`, and vision fallback |
 | `ANTHROPIC_API_KEY` / `GOOGLE_API_KEY` / `XAI_API_KEY` | — | Legacy optional keys used only by `ask_frontier` |
 
 ## Project Structure

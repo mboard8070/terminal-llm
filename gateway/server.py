@@ -7,6 +7,7 @@ route-handler methods from RoutesMixin.
 """
 
 import fcntl
+import html
 import http.client
 import json
 import os
@@ -70,6 +71,25 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         parsed = urlparse(path)
         query = parse_qs(parsed.query)
 
+        if parsed.path in ("/reset-cache", "/reset"):
+            logger.info("phone reset page from=%s ua=%s", self.client_address[0], self.headers.get("User-Agent", "")[:80])
+            self._serve_reset_cache_page()
+            return
+
+        if parsed.path in ("/plain-chat", "/plain", "/plainchat", "/chat-test", "/maude/plain-chat"):
+            self._serve_plain_chat()
+            return
+
+        if parsed.path == "/api/ping":
+            logger.info("phone ping from=%s ua=%s", self.client_address[0], self.headers.get("User-Agent", "")[:80])
+            self._json_response({"ok": True, "ts": time.time(), "client": self.client_address[0]})
+            return
+
+        if parsed.path in ("/diag", "/diagnostic", "/live-check"):
+            logger.info("phone diag page from=%s ua=%s", self.client_address[0], self.headers.get("User-Agent", "")[:80])
+            self._serve_gateway_diag()
+            return
+
         # WebSocket upgrade for terminal
         if parsed.path == "/ws/terminal":
             upgrade = self.headers.get("Upgrade", "").lower()
@@ -101,6 +121,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         if parsed.path == "/api/chat/stream":
             sid = query.get("sid", [None])[0]
             offset = int(query.get("offset", ["0"])[0] or "0")
+            logger.info("phone chat stream sid=%s offset=%s from=%s", sid, offset, self.client_address[0])
             if not sid:
                 self._json_response({"error": "missing sid"}, 400)
                 return
@@ -141,8 +162,10 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
                 self._json_response({"error": "no recent location"}, 404)
             return
         elif parsed.path.startswith("/api/command-center/"):
+            logger.info("phone command-center path=%s from=%s ua=%s", parsed.path, self.client_address[0], self.headers.get("User-Agent", "")[:80])
             self._handle_command_center(parsed.path, query)
         elif parsed.path == "/health":
+            logger.info("phone health from=%s ua=%s", self.client_address[0], self.headers.get("User-Agent", "")[:80])
             self._serve_health()
         elif parsed.path == "/vnc":
             self._redirect_vnc()
@@ -159,6 +182,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         elif parsed.path.startswith("/v1"):
             self._proxy_to_llm()
         elif parsed.path.startswith("/app") or parsed.path == "/":
+            logger.info("phone app load path=%s from=%s ua=%s", parsed.path, self.client_address[0], self.headers.get("User-Agent", "")[:80])
             self._serve_static(parsed.path)
         elif parsed.path == "/manifest.json":
             self._serve_static("/manifest.json")
@@ -175,6 +199,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             "/collab",
             "/command-center",
         ):
+            logger.info("phone app load path=%s from=%s ua=%s", parsed.path, self.client_address[0], self.headers.get("User-Agent", "")[:80])
             # SPA routes — serve index.html
             self._serve_static("/index.html")
         else:
@@ -186,6 +211,10 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
     def do_POST(self):
         path = unquote(self.path)
         parsed = urlparse(path)
+
+        if parsed.path in ("/plain-chat", "/plain", "/plainchat", "/chat-test", "/maude/plain-chat"):
+            self._handle_plain_chat_post()
+            return
 
         # HTTP terminal endpoints (iOS fallback)
         if parsed.path == "/api/terminal/create":
@@ -227,6 +256,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         # HTTP chat session create (iOS fallback — EventSource-based streaming)
         if parsed.path == "/api/chat/create":
             content_length = int(self.headers.get("Content-Length", 0))
+            logger.info("phone chat create bytes=%s from=%s ua=%s", content_length, self.client_address[0], self.headers.get("User-Agent", "")[:80])
             body = self.rfile.read(content_length) if content_length > 0 else b""
             try:
                 req = json.loads(body)
@@ -284,6 +314,111 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         else:
             self._proxy_to_llm()
 
+
+    def _serve_gateway_diag(self):
+        page = f"""<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAUDE Gateway Diagnostic</title>
+<style>body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:20px}}code,pre{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px;display:block;white-space:pre-wrap;word-break:break-word}}a{{display:block;margin-top:12px;padding:12px;border-radius:8px;background:#58a6ff;color:#07111f;text-align:center;text-decoration:none;font-weight:700;box-sizing:border-box}}small{{color:#8b949e}}</style>
+</head><body>
+<h1>MAUDE Gateway Live</h1>
+<p>This page was generated by the gateway process, not the React app.</p>
+<code>server_time: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}</code>
+<code>client_ip: {html.escape(self.client_address[0])}</code>
+<code>path: {html.escape(self.path)}</code>
+<a href="/api/ping?from=diag">Open /api/ping</a>
+<a href="/?fresh=diag-{int(time.time())}">Open MAUDE app fresh</a>
+<pre id="result">Testing fetch('/api/ping')...</pre>
+<script>
+fetch('/api/ping?from=diag-js', {{ cache: 'no-store' }})
+  .then(r => r.text().then(t => document.getElementById('result').textContent = 'fetch status: ' + r.status + '\n' + t))
+  .catch(e => document.getElementById('result').textContent = 'fetch failed: ' + e.name + ': ' + e.message);
+</script>
+<small>If this page does not load, the phone is not reaching port 30000.</small>
+</body></html>"""
+        body = page.encode()
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_plain_chat(self, answer: str = ""):
+        logger.info("plain chat page from=%s ua=%s", self.client_address[0], self.headers.get("User-Agent", "")[:80])
+        escaped = html.escape(answer)
+        response_block = ""
+        if escaped:
+            response_block = "<h2>Response</h2><pre>" + escaped + "</pre>"
+        page = """<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAUDE Plain Chat</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background:#0d1117; color:#e6edf3; margin:0; padding:16px; }
+textarea { width:100%; min-height:120px; box-sizing:border-box; font:16px -apple-system; background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:8px; padding:10px; }
+button { margin-top:10px; width:100%; padding:14px; font:600 16px -apple-system; border:0; border-radius:8px; background:#58a6ff; color:#07111f; }
+pre { white-space:pre-wrap; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; }
+small { color:#8b949e; }
+</style></head><body>
+<h1>MAUDE Plain Chat</h1>
+<small>No React. No service worker. No streaming fetch.</small>
+<form method="post" action="/plain-chat">
+<textarea name="message" placeholder="Message MAUDE"></textarea>
+<button type="submit">Send</button>
+</form>
+""" + response_block + """
+</body></html>"""
+        body = page.encode()
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_plain_chat_post(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(content_length).decode(errors="replace") if content_length else ""
+        params = parse_qs(raw)
+        message = (params.get("message") or [""])[0].strip()
+        logger.info("plain chat post bytes=%s from=%s ua=%s", content_length, self.client_address[0], self.headers.get("User-Agent", "")[:80])
+        if not message:
+            self._serve_plain_chat("No message entered.")
+            return
+        req = {
+            "model": "nemotron-super",
+            "messages": [
+                {"role": "system", "content": "You are MAUDE. Be concise and helpful."},
+                {"role": "user", "content": message},
+            ],
+            "stream": False,
+            "max_tokens": 1024,
+            "temperature": 0.3,
+        }
+        conn = None
+        try:
+            body = json.dumps(req).encode()
+            conn = http.client.HTTPConnection("localhost", 30080, timeout=180)
+            conn.request("POST", "/v1/chat/completions", body=body, headers={"Content-Type": "application/json", "Content-Length": str(len(body))})
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode(errors="replace"))
+            answer = data.get("choices", [{}])[0].get("message", {}).get("content") or data.get("error") or str(data)
+        except Exception as exc:
+            answer = f"Error: {exc}"
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        self._serve_plain_chat(answer)
+
     def _route_model_request(self, pre_parsed_req=None):
         """Route POST /v1/chat/completions to the right provider based on model field."""
         if pre_parsed_req is not None:
@@ -314,6 +449,13 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._json_response({"error": f"Unknown model: {model_name}"}, 400)
             return
 
+        req["_route_trace"] = {
+            "requested_model": model_name,
+            "resolved_model": resolved_name,
+            "provider": route["provider"],
+            "max_context": route.get("max_context", 0),
+        }
+
         if route["provider"] == "codex-cli":
             self._codex_cli_response(req, resolved_name)
             return
@@ -329,6 +471,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
                 return
             # Tool-capable local models -> same tool loop as cloud
             if TOOL_SUPPORT:
+                req["_route_trace"]["tool_mode"] = "server"
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
             # Fallback: raw proxy
@@ -348,9 +491,11 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         plain_api = bool(req.get("response_format"))
         if TOOL_SUPPORT and not client_sent_tools and not plain_api:
             if route["provider"] in ("mistral", "openrouter"):
+                req["_route_trace"]["tool_mode"] = "server"
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
             if route["provider"] == "anthropic":
+                req["_route_trace"]["tool_mode"] = "server"
                 self._claude_tool_loop(req, route, resolved_name)
                 return
 
@@ -619,5 +764,7 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
         self._add_cors()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         self.wfile.write(data)
