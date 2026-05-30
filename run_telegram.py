@@ -22,7 +22,7 @@ from openai import OpenAI
 # Use shared MAUDE core
 import maude_core
 from channels import IncomingMessage, get_gateway
-from channels.telegram import create_telegram_channel
+from channels.telegram import create_telegram_channel, get_telegram_bot_token
 from maude_core import (
     TOOLS,
     append_chat_log,
@@ -295,10 +295,10 @@ async def main(standalone: bool = True):
         print("MAUDE Telegram Bot", flush=True)
         print("=" * 50, flush=True)
 
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = get_telegram_bot_token()
     if not token:
         if standalone:
-            print("ERROR: TELEGRAM_BOT_TOKEN not set!", flush=True)
+            print("ERROR: MAUDE_TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN not set!", flush=True)
             sys.exit(1)
         return
 

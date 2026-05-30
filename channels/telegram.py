@@ -23,6 +23,11 @@ VOICE_SERVER_URL = os.environ.get("VOICE_SERVER_URL", "wss://localhost:8998/ws")
 VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "true").lower() == "true"
 VOICE_RESPONSE_ENABLED = os.environ.get("VOICE_RESPONSE_ENABLED", "true").lower() == "true"
 
+
+def get_telegram_bot_token() -> str | None:
+    """Return the MAUDE Telegram bot token, with legacy fallback."""
+    return os.environ.get("MAUDE_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
+
 # Try to import telegram library
 try:
     from telegram import Bot, Update
@@ -41,14 +46,14 @@ class TelegramChannel(Channel):
     name = "telegram"
 
     def __init__(self, token: str = None):
-        self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN")
+        self.token = token or get_telegram_bot_token()
         self.app: Application | None = None
         self.bot: Bot | None = None
         self._message_handler: Callable | None = None
         self.connected = False
 
         if not self.token:
-            console.print("[yellow]TELEGRAM_BOT_TOKEN not set[/yellow]")
+            console.print("[yellow]MAUDE_TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN not set[/yellow]")
 
     async def connect(self):
         """Connect to Telegram."""
@@ -56,7 +61,7 @@ class TelegramChannel(Channel):
             raise RuntimeError("python-telegram-bot not installed")
 
         if not self.token:
-            raise ValueError("TELEGRAM_BOT_TOKEN not set")
+            raise ValueError("MAUDE_TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN not set")
 
         try:
             self.app = Application.builder().token(self.token).build()
@@ -473,7 +478,7 @@ def create_telegram_channel(token: str = None) -> TelegramChannel | None:
     if not TELEGRAM_AVAILABLE:
         return None
 
-    token = token or os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = token or get_telegram_bot_token()
     if not token:
         return None
 

@@ -8,7 +8,7 @@ Designed to run as a systemd service.
 Usage:
     python maude_telegram_service.py
 
-Set TELEGRAM_BOT_TOKEN in .env or environment.
+Set MAUDE_TELEGRAM_BOT_TOKEN in .env or environment. This service intentionally does not fall back to TELEGRAM_BOT_TOKEN so scheduled reports cannot come from another bot.
 """
 
 import asyncio
@@ -264,9 +264,9 @@ async def main():
     log(f"Starting {SERVICE_NAME}")
 
     # Check for token
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    token = os.environ.get("MAUDE_TELEGRAM_BOT_TOKEN")
     if not token:
-        log("ERROR: TELEGRAM_BOT_TOKEN not set!")
+        log("ERROR: MAUDE_TELEGRAM_BOT_TOKEN not set; refusing to use generic TELEGRAM_BOT_TOKEN for scheduled reports.")
         sys.exit(1)
 
     # Initialize components

@@ -1669,7 +1669,7 @@ def main():
     transcription_thread.start()
 
     # Check if Telegram should be enabled
-    telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    telegram_token = os.environ.get("MAUDE_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
 
     if telegram_token:
         # Start Telegram bot in background thread
