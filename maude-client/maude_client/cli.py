@@ -937,13 +937,18 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    # Start task executor
-    print("Starting task executor...", end=" ", flush=True)
-    try:
-        start_task_executor()
-        print(color("OK", _TOOL))
-    except Exception as e:
-        print(f"Warning: {e}")
+    # Start task executor. On Windows this is opt-in because background
+    # PowerShell subprocesses can interfere with the interactive console.
+    enable_client_tasks = os.environ.get("MAUDE_CLIENT_TASKS") == "1"
+    if _IS_WINDOWS and not enable_client_tasks:
+        print("Task executor disabled on Windows (set MAUDE_CLIENT_TASKS=1 to enable).")
+    else:
+        print("Starting task executor...", end=" ", flush=True)
+        try:
+            start_task_executor()
+            print(color("OK", _TOOL))
+        except Exception as e:
+            print(f"Warning: {e}")
 
     print("\nType 'quit' to exit, '/help' for commands.\n")
 
