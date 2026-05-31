@@ -1160,11 +1160,10 @@ def main():
     except Exception as e:
         print(f"Warning: {e}")
 
-    # Start task executor. On Windows this is opt-in because background
-    # PowerShell subprocesses can interfere with the interactive console.
-    enable_client_tasks = os.environ.get("MAUDE_CLIENT_TASKS") == "1"
-    if _IS_WINDOWS and not enable_client_tasks:
-        print("Task executor disabled on Windows (set MAUDE_CLIENT_TASKS=1 to enable).")
+    # Start task executor. Windows shell tasks are launched detached from this
+    # console in process_utils, so they can run without corrupting chat input.
+    if os.environ.get("MAUDE_CLIENT_TASKS") == "0":
+        print("Task executor disabled (MAUDE_CLIENT_TASKS=0).")
     else:
         print("Starting task executor...", end=" ", flush=True)
         try:
