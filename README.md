@@ -2,7 +2,7 @@
 
 **Multi-Agent Unified Dispatch Engine** — a DGX Spark AI assistant with local models, cloud model routing, multi-client access, and tool execution.
 
-MAUDE defaults to the gateway-routed `nemotron-super` model, can run local llama-server models, and routes cloud requests to Mistral, Codestral, Devstral, Claude, OpenAI, OpenRouter, and the local Codex CLI. It is accessible from the server TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
+MAUDE defaults to the gateway-routed `nemotron-super` model, can run local llama-server models, and routes cloud requests to Mistral, Codestral, Devstral, Claude, OpenAI, OpenRouter, and the local Codex CLI. It is accessible from the supported `maude` terminal TUI, a Mac/PC CLI client, a phone PWA, and Telegram.
 
 ## Case Study
 
@@ -20,10 +20,10 @@ MAUDE defaults to the gateway-routed `nemotron-super` model, can run local llama
 
 ## Screenshots
 
-### Server TUI
+### Terminal TUI
 ![Server TUI](docs/screenshots/server-tui.png)
 
-The Textual-based TUI running on DGX Spark — animated fire banner, tool execution trace with args/timing, typewriter response display, and model switching.
+Supported `maude` terminal TUI with tool visibility, model switching, and native terminal copy/paste.
 
 ### Mac/PC Client
 ![Client CLI](docs/screenshots/client-cli.png)
@@ -44,8 +44,8 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
 │  │ Server   │  │ Mac/PC   │  │ Phone    │  │ Telegram │            │
 │  │ TUI      │  │ CLI      │  │ PWA      │  │ Bot      │            │
-│  │chat_local│  │maude-    │  │maude-    │  │run_      │            │
-│  │  .py     │  │ client   │  │ phone    │  │telegram  │            │
+│  │maude    │  │maude-    │  │maude-    │  │run_      │            │
+│  │terminal │  │ client   │  │ phone    │  │telegram  │            │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘            │
 │       │              │              │              │                  │
 │       │  local       │   Tailscale / HTTPS         │  local          │
@@ -84,14 +84,14 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 
 ## Features
 
-- **Multi-client access**: Server TUI, Mac/PC CLI, phone PWA, Telegram bot
+- **Multi-client access**: Terminal TUI, Mac/PC CLI, phone PWA, Telegram bot
 - **Model routing**: Routes local llama-server models, OpenRouter Nemotron Super, Mistral/Codestral/Devstral, Claude, OpenAI, and Codex CLI through the gateway
 - **Tool execution**: Files, shell, web browse/search, vision, image generation
 - **Parallel tool execution**: Read-only tools run concurrently via ThreadPoolExecutor; mutating tools stay sequential
 - **Planned execution**: `execute_plan` tool lets the model declare multi-stage tool plans with `$N.M` cross-stage references — collapses multiple LLM round-trips into one
 - **Tool result caching**: TTL-based cache (30min web, 5min vision) to reduce redundant calls
 - **Pipeline trace**: Inline display of tool calls, args, result previews, timing, and parallel execution indicators
-- **Typewriter effects**: Word-by-word response reveal on server TUI and client CLI
+- **Typewriter effects**: Word-by-word response reveal in client interfaces
 - **Shared folder**: Server-owned shared files in `shared/`, accessed by clients through HTTP routes
 - **Phone location awareness**: Phone GPS is cached by the gateway and injected into model context for location-aware replies
 - **Auto-routing**: Classifies messages and routes to specialized subagents
@@ -101,7 +101,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 - **Voice mode**: Speech input/output via Nemotron ASR + Magpie TTS
 - **HyperFrames video rendering**: Scaffold, lint, render, and share programmatic HTML/CSS/JS videos
 - **Conversation memory**: Persistent context across sessions
-- **Best-practice guides**: 10 markdown guides (coding, web design, graphic design, color theory, writing, API design, prompt engineering, image generation, cybersecurity, UI/UX patterns) auto-injected into system prompt based on task context
+- **Best-practice guides**: 11 markdown guides (coding, web design, graphic design, color theory, writing, API design, prompt engineering, image generation, video content, cybersecurity, UI/UX patterns) auto-injected into system prompt based on task context
 
 ## Models
 
@@ -128,11 +128,11 @@ Switch models at runtime with `/model switch mistral`, `/model switch claude`, `
 
 ## Clients
 
-### Server TUI (`chat_local.py`)
-Textual-based terminal UI running directly on the DGX Spark. Full tool access, animated banner, voice mode, typewriter response display.
+### Terminal TUI (`maude`)
+Supported terminal UI with direct model/tool access and native terminal copy/paste.
 
 ```bash
-./maude          # Starts all services + TUI
+maude           # Start the terminal TUI
 ```
 
 ### Mac/PC Client (`maude-client`)
@@ -185,7 +185,7 @@ The gateway (`python -m gateway`) runs on HTTPS port 30000, with an HTTP mirror 
 | `view_image` | Analyze local images with native vision or OpenRouter/local fallback |
 | `generate_image` | Generate images via local Flux/ComfyUI |
 | `generate_image_flux2` | Optional Flux 2 image generation via Replicate |
-| `hyperframes_doctor` / `hyperframes_browser_ensure` / `hyperframes_init` / `hyperframes_lint` / `hyperframes_render` | Diagnose, create, and render HyperFrames HTML-to-video projects |
+| `hyperframes_doctor` / `hyperframes_browser_ensure` / `hyperframes_init` / `hyperframes_lint` / `hyperframes_render` / `video_pre_publish_checklist` | Diagnose, create, render, and preflight HyperFrames/video projects |
 
 ### Shared Folder & Transfers
 | Tool | Description |
@@ -323,7 +323,7 @@ terminal-llm/
 │   ├── tools_substack.py  # 7 Substack newsletter tools (lazy-import)
 │   ├── tools_collab.py    # 6 collaboration/mesh tools (lazy-import)
 │   └── tools_plan.py      # Planned execution + PARALLEL_SAFE shared set
-├── chat_local.py          # Server TUI (Textual)
+├── maude                  # Service launcher / entry point
 ├── gateway.py             # Gateway — model routing, tool loops, SSE, structured logging
 ├── auto_router.py         # Message classification and subagent routing
 ├── agent_executor.py      # Parallel subagent execution with shared context
@@ -366,6 +366,7 @@ terminal-llm/
 │   ├── api-design-best-practices.md
 │   ├── prompt-engineering-best-practices.md
 │   ├── image-generation-best-practices.md
+│   ├── video-content-best-practices.md
 │   ├── cybersecurity-best-practices.md
 │   └── web-design-patterns.md
 ├── skills/                # Plugin system (Python-based tools)

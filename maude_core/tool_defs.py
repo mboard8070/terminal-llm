@@ -115,6 +115,94 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "xai_oauth_start",
+            "description": "Start xAI Grok OAuth login for SuperGrok or X Premium+ using the same PKCE loopback flow as Hermes/OpenClaw. Returns the authorization URL.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "xai_oauth_finish",
+            "description": "Finish a pending xAI Grok OAuth login after the callback page was reached and save tokens for MAUDE. If loopback capture failed, pass the final redirected callback_url.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "callback_url": {
+                        "type": "string",
+                        "description": "Optional full final redirect URL from the xAI OAuth callback page.",
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "Optional authorization code. Prefer callback_url because it includes OAuth state.",
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "Optional OAuth state when passing code manually.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "xai_oauth_doctor",
+            "description": "Run non-secret diagnostics for MAUDE's xAI Grok OAuth setup: pending login, callback capture, discovery, stored credentials, refresh token, and optional API test.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "refresh": {"type": "boolean", "description": "If true, force a token refresh check."},
+                    "test_api": {"type": "boolean", "description": "If true, send a small xAI API request."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "xai_oauth_status",
+            "description": "Check MAUDE's xAI Grok OAuth login status without exposing tokens.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "xai_oauth_test",
+            "description": "Send a small request to xAI using MAUDE's stored Grok OAuth bearer token.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Optional prompt to send"},
+                    "model": {"type": "string", "description": "Optional xAI model, defaults to grok-4.3"},
+                    "max_output_tokens": {"type": "integer", "description": "Optional output token cap"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "xai_x_search",
+            "description": "Search X posts via xAI's server-side x_search Responses API tool using the stored Grok OAuth token.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query for X"},
+                    "model": {"type": "string", "description": "Optional xAI model, defaults to grok-4.3"},
+                    "timeout_seconds": {"type": "number", "description": "Optional request timeout"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_view",
             "description": "Screenshot a webpage and analyze it visually using the active model's vision.",
             "parameters": {
@@ -286,6 +374,38 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "video_pre_publish_checklist",
+            "description": "Create a required markdown pre-publish checklist artifact for any video before publishing or posting. Use after rendering and before youtube_upload or social_post with video. Blocks if raw URLs are visible, link placement is missing, transitions are clipped, text is unreadable, placeholders remain, media is missing, or the MP4 has not been reviewed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Optional HyperFrames or video project directory; checklist is saved under project/reviews/ when provided."},
+                    "video_path": {"type": "string", "description": "Path to the rendered video file."},
+                    "platform": {"type": "string", "description": "Destination platform, e.g. YouTube Shorts, X, LinkedIn, TikTok, Instagram."},
+                    "title": {"type": "string", "description": "Final video/post title."},
+                    "description": {"type": "string", "description": "Final post/video description or caption. Put actual clickable links here."},
+                    "link_url": {"type": "string", "description": "Clean URL to include in the description/caption, if needed."},
+                    "link_placement": {"type": "string", "description": "Where the clickable link is placed, e.g. description, caption, profile link."},
+                    "cta_text": {"type": "string", "description": "Designed on-screen CTA text. Do not use raw URLs unless explicitly requested."},
+                    "timing_notes": {"type": "string", "description": "Notes confirming screen wipes/reveals/transitions had enough duration and hold time."},
+                    "render_review": {"type": "string", "description": "Notes from watching/scrubbing the rendered MP4."},
+                    "tags": {"type": "string", "description": "Comma-separated tags or hashtags."},
+                    "privacy": {"type": "string", "description": "Privacy or visibility setting."},
+                    "media_attached": {"type": "boolean", "description": "True only when the rendered media file exists and is the file to publish."},
+                    "transition_timing_ok": {"type": "boolean", "description": "True only after confirming screen wipes/reveals/transitions complete and hold."},
+                    "text_readable": {"type": "boolean", "description": "True only after confirming on-screen text is readable in the render."},
+                    "no_placeholders": {"type": "boolean", "description": "True only after confirming no placeholders, broken assets, or missing media are visible."},
+                    "render_reviewed": {"type": "boolean", "description": "True only after reviewing the actual rendered MP4, not just source HTML or a still frame."},
+                    "raw_url_in_video": {"type": "boolean", "description": "Must be false unless the user explicitly requested raw URLs on screen."},
+                    "link_in_description": {"type": "boolean", "description": "True when the real clickable link is in the description/caption/profile field."}
+                },
+                "required": ["video_path", "title", "description", "cta_text", "render_review"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_file",
             "description": "Search for text/pattern in a single file.",
             "parameters": {
@@ -340,7 +460,10 @@ TOOLS = [
                 "properties": {
                     "question": {"type": "string", "description": "The question requiring expert analysis"},
                     "context": {"type": "string", "description": "Relevant context"},
-                    "provider": {"type": "string", "description": "Optional: claude, openai, gemini, grok, mistral"},
+                    "provider": {
+                        "type": "string",
+                        "description": "Optional: claude, openai, gemini, grok-oauth, grok, mistral",
+                    },
                 },
                 "required": ["question"],
             },
@@ -1669,7 +1792,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "save_memory",
-            "description": "Save a piece of information to persistent memory. Use this proactively when the user shares facts, preferences, or context you should remember across conversations. Categories: 'fact', 'preference', 'person', 'task'.",
+            "description": "Save durable context to MAUDE's memory ledger. Use proactively for personal facts, preferences, project briefs, mission notes, and artifacts worth remembering.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1681,7 +1804,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     "category": {
                         "type": "string",
                         "description": "Memory category",
-                        "enum": ["fact", "preference", "person", "task"],
+                        "enum": ["fact", "preference", "person", "task", "project", "mission", "artifact"],
                     },
                 },
                 "required": ["key", "value"],
@@ -1692,7 +1815,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
         "type": "function",
         "function": {
             "name": "recall_memory",
-            "description": "Search persistent memory for relevant information. Use when the user references something from a previous conversation, or when you need context about the user, their preferences, or past interactions.",
+            "description": "Search MAUDE's memory ledger and compatibility memory for relevant context.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1700,7 +1823,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     "category": {
                         "type": "string",
                         "description": "Optional category filter",
-                        "enum": ["fact", "preference", "person", "task", "conversation"],
+                        "enum": ["fact", "preference", "person", "task", "project", "mission", "artifact", "conversation"],
                     },
                 },
                 "required": ["query"],
@@ -1718,7 +1841,7 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
                     "category": {
                         "type": "string",
                         "description": "Filter by category",
-                        "enum": ["fact", "preference", "person", "task", "conversation"],
+                        "enum": ["fact", "preference", "person", "task", "project", "mission", "artifact", "conversation"],
                     },
                     "limit": {"type": "integer", "description": "Maximum results (default 20)"},
                 },
@@ -1738,12 +1861,20 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_ledger_status",
+            "description": "Show MAUDE's memory ledger path, counts, files, and backend role split.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
     # MemPalace — layered long-term memory (L0 identity / L1 essential / L2 on-demand / L3 deep search)
     {
         "type": "function",
         "function": {
             "name": "palace_search",
-            "description": "Semantic search over MemPalace drawers (L3 deep search). Use for general-purpose recall when key/value memory doesn't find what you need. Returns ranked snippets.",
+            "description": "Optional deep-archive search over MemPalace drawers. Use only when recall_memory does not find enough context or when the user explicitly asks for MemPalace.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2064,9 +2195,264 @@ stages: [
     {
         "type": "function",
         "function": {
+            "name": "mission_status",
+            "description": "Show mission dashboard data — active missions, progress, next actions, blockers, artifacts, and schedules.",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "Max missions to return"}},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "node_status",
             "description": "Show connected nodes and service status — Spark services (gateway, llama, telegram), Tailscale peers, remote client heartbeats.",
             "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_create",
+            "description": "Create a persistent MAUDE Mission with an objective, success criteria, steps, and optional cadence/context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template": {
+                        "type": "string",
+                        "enum": [
+                            "content_engine",
+                            "research_lab",
+                            "codebase_steward",
+                            "personal_ops",
+                            "startup_builder",
+                        ],
+                        "description": "Optional starter template. Explicit title/objective/steps override template defaults.",
+                    },
+                    "title": {"type": "string", "description": "Short mission title"},
+                    "objective": {"type": "string", "description": "Concrete outcome this mission should achieve"},
+                    "success_criteria": {
+                        "description": "List or newline-delimited success criteria",
+                        "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
+                    },
+                    "steps": {
+                        "description": "List of step strings/objects or a newline-delimited checklist",
+                        "anyOf": [
+                            {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "object"}]}},
+                            {"type": "string"},
+                        ],
+                    },
+                    "cadence": {"type": "string", "description": "Optional recurrence or review rhythm"},
+                    "context": {"description": "Optional structured context for the mission"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_list",
+            "description": "List persistent MAUDE Missions, optionally filtered by status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "description": "Optional status filter"},
+                    "limit": {"type": "integer", "description": "Max missions to return (default 20, max 100)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_get",
+            "description": "Read a Mission JSON document by id.",
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "string", "description": "Mission id"}},
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_update",
+            "description": "Update Mission status, notes, or step statuses.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["active", "paused", "complete", "blocked", "archived"],
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "Step updates, e.g. [{'id':'s1','status':'done'}]",
+                        "items": {"type": "object"},
+                    },
+                    "notes": {"type": "string", "description": "Optional mission notes"},
+                    "cadence": {"type": "string", "description": "Optional recurrence or review rhythm"},
+                    "success_criteria": {
+                        "description": "Replacement list or newline-delimited success criteria",
+                        "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
+                    },
+                    "blockers": {
+                        "description": "Replacement list or newline-delimited blockers",
+                        "anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}],
+                    },
+                    "artifacts": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_log",
+            "description": "Append a timestamped event to a Mission and optionally attach artifact paths/URLs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "message": {"type": "string", "description": "Log message"},
+                    "kind": {"type": "string", "description": "Event type such as note, result, artifact, blocker"},
+                    "artifacts": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_run_next",
+            "description": "Run the next pending Mission step through execute_plan, then log and update the step status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "plan": {
+                        "type": "array",
+                        "description": "Optional execute_plan stages list. If omitted, uses the next step's stored plan.",
+                        "items": {"type": "array"},
+                    },
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_tick",
+            "description": "Advance a Mission by one checkpoint: run the next executable step, or log that the next manual step needs a plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "plan": {
+                        "type": "array",
+                        "description": "Optional execute_plan stages list for the next step.",
+                        "items": {"type": "array"},
+                    },
+                    "retry_blocked": {
+                        "type": "boolean",
+                        "description": "Retry a blocked executable step. Defaults to true.",
+                    },
+                    "auto_complete": {
+                        "type": "boolean",
+                        "description": "Mark the mission complete when all steps are done.",
+                    },
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_drain",
+            "description": "Advance a Mission through consecutive executable stored-plan steps until it completes or reaches a manual/blocking step.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "retry_blocked": {
+                        "type": "boolean",
+                        "description": "Retry blocked executable steps. Defaults to true.",
+                    },
+                    "auto_complete": {
+                        "type": "boolean",
+                        "description": "Mark the mission complete when all steps are done. Defaults to true.",
+                    },
+                    "max_steps": {
+                        "type": "integer",
+                        "description": "Safety cap for steps to run in one drain. Defaults to 10, max 25.",
+                    },
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_schedule",
+            "description": "Schedule, inspect, run, disable, enable, or remove recurring scheduler ticks for a Mission.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Mission id"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "remove", "enable", "disable", "run", "status"],
+                        "description": "Schedule action. Defaults to add.",
+                    },
+                    "cron": {
+                        "type": "string",
+                        "description": "Cron expression or shortcut such as @daily, @weekly, @morning. Defaults from mission cadence.",
+                    },
+                    "name": {"type": "string", "description": "Optional scheduler task name"},
+                    "prompt": {
+                        "type": "string",
+                        "description": "Optional scheduled prompt. Defaults to running mission_tick then mission_brief.",
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Optional scheduler task id. Defaults to the task saved on the mission.",
+                    },
+                    "replace": {
+                        "type": "boolean",
+                        "description": "Replace an existing mission schedule when adding.",
+                    },
+                    "auto_complete": {
+                        "type": "boolean",
+                        "description": "Ask scheduled ticks to complete the mission once all steps are done. Defaults to true.",
+                    },
+                    "channel": {"type": "string", "description": "Scheduler output channel. Defaults to cli."},
+                    "channel_id": {"type": "string", "description": "Scheduler output channel id. Defaults to default."},
+                },
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mission_brief",
+            "description": "Produce a compact Mission brief with objective, progress, next action, recent logs, and artifacts.",
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "string", "description": "Mission id"}},
+                "required": ["id"],
+            },
         },
     },
 ]

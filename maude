@@ -29,7 +29,9 @@ case "${1:-}" in
 
     restart)
         echo "Restarting MAUDE..."
-        systemctl --user restart maude.target
+        for svc in "${SERVICES[@]}"; do
+            systemctl --user restart "maude-${svc}.service"
+        done
         echo "Done."
         ;;
 

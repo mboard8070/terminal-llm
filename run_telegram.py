@@ -347,8 +347,10 @@ async def main(standalone: bool = True):
 
         print("\nReady.\n", flush=True)
 
-    # Start sync task for CLI messages
-    sync_task = asyncio.create_task(sync_cli_messages(gateway))
+    # CLI-to-Telegram mirroring is noisy for scheduled reports and Codex sessions.
+    sync_task = None
+    if os.environ.get("MAUDE_TELEGRAM_SYNC_CLI") == "1":
+        sync_task = asyncio.create_task(sync_cli_messages(gateway))
 
     # Start proactive heartbeat
     heartbeat_task = None
@@ -373,7 +375,8 @@ async def main(standalone: bool = True):
     except (KeyboardInterrupt, asyncio.CancelledError):
         if heartbeat_task:
             heartbeat_task.cancel()
-        sync_task.cancel()
+        if sync_task:
+            sync_task.cancel()
         await telegram.disconnect()
 
 

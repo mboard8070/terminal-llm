@@ -522,22 +522,45 @@ small { color:#8b949e; }
         host = parsed_url.hostname
         port = parsed_url.port or (443 if use_ssl else 80)
 
+        # Build path: provider base path + our request path
+        api_path = parsed_url.path.rstrip("/") + self.path
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Length": str(len(body)),
+            "Accept": "text/event-stream",
+        }
+
         try:
+            if not req.get("stream"):
+                attempts = 3
+                transient_statuses = {408, 409, 425, 429, 500, 502, 503, 504}
+                for attempt in range(1, attempts + 1):
+                    status, data = self._post_cloud_json(use_ssl, host, port, api_path, body, headers)
+                    if status not in transient_statuses or attempt == attempts:
+                        self.send_response(status)
+                        self._add_cors()
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    wait = 2 ** (attempt - 1)
+                    logger.warning(
+                        "Provider proxy transient status %d from %s, retry %d/%d in %ds",
+                        status,
+                        route["provider"],
+                        attempt,
+                        attempts,
+                        wait,
+                    )
+                    time.sleep(wait)
+
             if use_ssl:
                 ctx = ssl.create_default_context()
                 conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
             else:
                 conn = http.client.HTTPConnection(host, port, timeout=120)
-
-            # Build path: provider base path + our request path
-            api_path = parsed_url.path.rstrip("/") + self.path
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "Content-Length": str(len(body)),
-                "Accept": "text/event-stream",
-            }
-
             conn.request("POST", api_path, body=body, headers=headers)
             resp = conn.getresponse()
 

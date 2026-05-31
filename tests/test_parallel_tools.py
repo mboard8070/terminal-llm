@@ -1,6 +1,6 @@
 """
 Tests for parallel tool execution across all execution paths:
-- Direct tool loop (chat_local.py)
+- Direct tool loop
 - Gateway tool loops (Mistral + Claude)
 - Agent executor (agents get parallel tools via gateway)
 - PARALLEL_SAFE classification correctness
@@ -34,6 +34,7 @@ class TestParallelSafeClassification:
         "github_view_pr",
         "recall_memory",
         "list_memories",
+        "memory_ledger_status",
         "system_stats",
         "gpu_processes",
     }

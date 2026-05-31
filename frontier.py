@@ -5,11 +5,30 @@ Provides unified access to cloud LLMs: Claude, GPT, Gemini, Grok, Mistral.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 from providers import PROVIDERS, Provider, ProviderConfig, get_api_key
 
 log = logging.getLogger(__name__)
+
+_TRANSIENT_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "connection",
+    "connection reset",
+    "connection aborted",
+    "broken pipe",
+    "ssl",
+    "temporarily unavailable",
+    "too many requests",
+    "rate limit",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+)
 
 
 class RateLimitError(Exception):
@@ -35,8 +54,8 @@ class FrontierResponse:
 
 def get_default_provider() -> str | None:
     """Get first available provider based on configured API keys."""
-    # Priority order: Claude > GPT > Gemini > Grok > Mistral
-    priority = ["claude", "openai", "gemini", "grok", "mistral"]
+    # Priority order: Claude > GPT > Gemini > Grok OAuth > Grok API key > Mistral
+    priority = ["claude", "openai", "gemini", "grok-oauth", "grok", "mistral"]
     for name in priority:
         if name in PROVIDERS and get_api_key(name):
             return name
@@ -50,6 +69,30 @@ def list_available_providers() -> list[str]:
         if get_api_key(name):
             available.append(name)
     return available
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {408, 409, 425, 429, 500, 502, 503, 504}:
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def _with_retries(label: str, call):
+    attempts = 3
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except RateLimitError:
+            raise
+        except Exception as exc:
+            if attempt >= attempts or not _is_transient_error(exc):
+                raise
+            wait = 2 ** (attempt - 1)
+            log.warning("%s transient error, retry %d/%d in %ds: %s", label, attempt, attempts, wait, exc)
+            time.sleep(wait)
+    raise RuntimeError(f"{label} failed after retries")
 
 
 def ask_frontier(
@@ -77,6 +120,8 @@ def ask_frontier(
         if provider_name not in PROVIDERS:
             raise ValueError(f"Unknown provider: {provider_name}")
         if not get_api_key(provider_name):
+            if PROVIDERS[provider_name].auth_mode == "xai_oauth":
+                raise ValueError(f"No xAI OAuth login configured for {provider_name}. Run xai_oauth_start first.")
             raise ValueError(f"No API key configured for {provider_name}")
     else:
         provider_name = get_default_provider()
@@ -121,8 +166,11 @@ def _call_anthropic(
     # Filter out system messages (handled separately)
     user_messages = [m for m in messages if m["role"] != "system"]
 
-    response = client.messages.create(
-        model=config.default_model, max_tokens=4096, system=system, messages=user_messages
+    response = _with_retries(
+        config.name,
+        lambda: client.messages.create(
+            model=config.default_model, max_tokens=4096, system=system, messages=user_messages
+        ),
     )
 
     input_tokens = response.usage.input_tokens
@@ -158,7 +206,7 @@ def _call_google(config: ProviderConfig, api_key: str, messages: list, system_pr
         gemini_messages.append({"role": role, "parts": [msg["content"]]})
 
     try:
-        response = model.generate_content(gemini_messages)
+        response = _with_retries(config.name, lambda: model.generate_content(gemini_messages))
     except (ResourceExhausted, TooManyRequests) as e:
         error_str = str(e)
         # Parse retry-after if present
@@ -195,11 +243,34 @@ def _call_openai_compatible(config: ProviderConfig, api_key: str, messages: list
     """Call OpenAI-compatible API (OpenAI, xAI, Mistral)."""
     from openai import OpenAI
 
+    oauth_token_loader = None
+    if config.auth_mode == "xai_oauth":
+        from maude_core.tools_xai_oauth import get_oauth_access_token
+
+        oauth_token_loader = get_oauth_access_token
+        api_key = oauth_token_loader()
+
     client = OpenAI(api_key=api_key, base_url=config.base_url)
 
-    response = client.chat.completions.create(
-        model=config.default_model, messages=messages, max_tokens=4096, temperature=0.3
-    )
+    try:
+        response = _with_retries(
+            config.name,
+            lambda: client.chat.completions.create(
+                model=config.default_model, messages=messages, max_tokens=4096, temperature=0.3
+            ),
+        )
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        if config.auth_mode != "xai_oauth" or status_code != 401 or oauth_token_loader is None:
+            raise
+        api_key = oauth_token_loader(force_refresh=True)
+        client = OpenAI(api_key=api_key, base_url=config.base_url)
+        response = _with_retries(
+            config.name,
+            lambda: client.chat.completions.create(
+                model=config.default_model, messages=messages, max_tokens=4096, temperature=0.3
+            ),
+        )
 
     input_tokens = response.usage.prompt_tokens if response.usage else 0
     output_tokens = response.usage.completion_tokens if response.usage else 0

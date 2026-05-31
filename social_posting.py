@@ -40,12 +40,17 @@ def _type_human(page, text: str, delay_lo: int = 30, delay_hi: int = 80):
             time.sleep(random.uniform(0.2, 0.6))
 
 
-def _first_match(page, selectors: list):
+def _first_match(root, selectors: list):
     for sel in selectors:
         try:
-            loc = page.locator(sel)
-            if loc.count() > 0:
-                return loc.first
+            if hasattr(root, "locator"):
+                loc = root.locator(sel)
+                if loc.count() > 0:
+                    return loc.first
+            elif hasattr(root, "query_selector"):
+                handle = root.query_selector(sel)
+                if handle:
+                    return handle
         except Exception:
             continue
     return None
@@ -126,7 +131,7 @@ def _x_wait_for_media_ready(page, media_path: str) -> str | None:
     # X's video composer DOM changes frequently. Treat explicit media errors as fatal,
     # but do not require a specific preview selector before checking the Post button.
     settle_s = 20 if _is_video_media(media_path) else 5
-    for elapsed in range(settle_s):
+    for _elapsed in range(settle_s):
         state = _x_media_state(page)
         if state.get("error"):
             return f"Error: X media upload failed: {state['error']}"
@@ -136,6 +141,19 @@ def _x_wait_for_media_ready(page, media_path: str) -> str | None:
     state = _x_media_state(page)
     log(f"social_post x: media settle complete, continuing to post button wait, state={state}")
     return None
+
+
+def _x_can_continue_without_preview(page, is_video: bool) -> bool:
+    """X sometimes accepts video input but delays or hides the preview selector."""
+    if not is_video:
+        return False
+    state = _x_media_state(page)
+    return bool(state.get("postEnabled") and not state.get("error"))
+
+
+def _x_requires_preview_before_post(media_path: str) -> bool:
+    """Images should show a preview; X videos may stay previewless until post readiness."""
+    return not _is_video_media(media_path)
 
 
 def _x_wait_for_post_button(page, root, has_media: bool):
@@ -210,14 +228,20 @@ def _x_select_media(page, root, media_path: str) -> bool:
     ]
     for sel in selectors:
         try:
-            loc = root.locator(sel) if hasattr(root, "locator") else None
-            count = loc.count() if loc else 0
-            for idx in range(count):
-                candidate = loc.nth(idx)
-                accept = candidate.get_attribute("accept") or ""
-                if "image" in accept or "video" in accept or sel == 'input[type="file"]':
-                    candidate.set_input_files(media_path)
-                    return True
+            if hasattr(root, "locator"):
+                loc = root.locator(sel)
+                for idx in range(loc.count()):
+                    candidate = loc.nth(idx)
+                    accept = candidate.get_attribute("accept") or ""
+                    if "image" in accept or "video" in accept or sel == 'input[type="file"]':
+                        candidate.set_input_files(media_path)
+                        return True
+            elif hasattr(root, "query_selector_all"):
+                for candidate in root.query_selector_all(sel):
+                    accept = candidate.get_attribute("accept") or ""
+                    if "image" in accept or "video" in accept or sel == 'input[type="file"]':
+                        candidate.set_input_files(media_path)
+                        return True
         except Exception:
             continue
     return False
@@ -367,8 +391,19 @@ def _post_x(page, content: str, image_path: str | None) -> str:
                 return media_error
             state = _x_media_state(page)
             if not state.get("hasPreview"):
-                _screenshot(page, "x_media_no_preview")
-                return f"Error: X accepted the file input, but no media preview appeared. State: {state}"
+                if _x_can_continue_without_preview(page, _is_video_media(media_path)):
+                    log(
+                        "social_post x: no preview selector found, but video post button is enabled; "
+                        f"continuing. state={state}"
+                    )
+                elif _x_requires_preview_before_post(media_path):
+                    _screenshot(page, "x_media_no_preview")
+                    return f"Error: X accepted the file input, but no media preview appeared. State: {state}"
+                else:
+                    log(
+                        "social_post x: video has no preview selector after settle; "
+                        f"waiting for post button readiness. state={state}"
+                    )
             _screenshot(page, "x_media_ready")
             _human_pause(2, 4)
         else:

@@ -406,7 +406,10 @@ class BrowserSession:
 
                 # Scroll into view and click
                 element.scroll_into_view_if_needed(timeout=5_000)
-                element.click(timeout=ACTION_TIMEOUT_MS)
+                try:
+                    element.click(timeout=ACTION_TIMEOUT_MS)
+                except PlaywrightTimeout:
+                    element.click(timeout=5_000, force=True)
 
                 # Wait briefly for any navigation or DOM change
                 self._page.wait_for_load_state("domcontentloaded", timeout=5_000)

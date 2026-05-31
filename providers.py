@@ -4,9 +4,11 @@ Cloud/Frontier Model Provider Configurations for MAUDE.
 Supports: Anthropic (Claude), OpenAI, Google (Gemini), xAI (Grok), Mistral
 """
 
+import json
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 class Provider(Enum):
@@ -33,6 +35,7 @@ class ProviderConfig:
     supports_tools: bool
     cost_per_1k_input: float  # USD per 1K input tokens
     cost_per_1k_output: float  # USD per 1K output tokens
+    auth_mode: str = "api_key"
 
 
 # Provider configurations
@@ -120,11 +123,23 @@ PROVIDERS: dict[str, ProviderConfig] = {
         provider=Provider.XAI,
         api_key_env="XAI_API_KEY",
         base_url="https://api.x.ai/v1",
-        default_model="grok-2-latest",
+        default_model="grok-4.3",
         supports_vision=True,
         supports_tools=True,
         cost_per_1k_input=0.002,
         cost_per_1k_output=0.01,
+    ),
+    "grok-oauth": ProviderConfig(
+        name="xAI Grok OAuth",
+        provider=Provider.XAI,
+        api_key_env="",
+        base_url="https://api.x.ai/v1",
+        default_model="grok-4.3",
+        supports_vision=True,
+        supports_tools=True,
+        cost_per_1k_input=0.0,
+        cost_per_1k_output=0.0,
+        auth_mode="xai_oauth",
     ),
     # ─────────────────────────────────────────────────────────────────
     # MISTRAL
@@ -191,4 +206,13 @@ def get_api_key(provider_name: str) -> str | None:
     """Get API key for a provider, returns None if not set."""
     if provider_name not in PROVIDERS:
         return None
-    return os.environ.get(PROVIDERS[provider_name].api_key_env)
+    config = PROVIDERS[provider_name]
+    if config.auth_mode == "xai_oauth":
+        path = Path.home() / ".config" / "maude" / "xai_oauth.json"
+        try:
+            state = json.loads(path.read_text())
+            token = str((state.get("tokens") or {}).get("access_token") or "").strip()
+            return "oauth" if token else None
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+    return os.environ.get(config.api_key_env)

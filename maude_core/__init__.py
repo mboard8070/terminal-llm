@@ -2,7 +2,7 @@
 MAUDE Core — Shared tools and functionality.
 
 This package provides the core tool implementations used by both
-the TUI (chat_local.py) and Telegram (run_telegram.py) interfaces.
+the supported terminal TUI and Telegram (run_telegram.py) interfaces.
 
 All public names are re-exported here for backward compatibility:
     from maude_core import TOOLS, execute_tool, ...
@@ -72,10 +72,13 @@ from . import (
     tools_hyperframes,
     tools_media,
     tools_memory,
+    tools_missions,
     tools_schedule,
     tools_shared,
     tools_substack,
+    tools_video,
     tools_web,
+    tools_xai_oauth,
 )
 
 try:

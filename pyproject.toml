@@ -7,13 +7,13 @@ dependencies = [
     "openai>=1.0.0",
     "python-dotenv",
     "rich",
-    "pyfiglet",
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
     "ddgs>=7.0.0",
     "playwright>=1.40.0",
     "httpx>=0.25.0",
     "websockets>=12.0",
+    "croniter>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -113,7 +113,7 @@ python-version = "3.12"
 
 [tool.ty.rules]
 # Start lenient — surface clear errors, warn on everything else
-possibly-unbound-attribute = "warn"
+possibly-missing-attribute = "warn"
 invalid-argument-type = "warn"
 invalid-parameter-default = "warn"  # 162 cases of `x: str = None` — fix with RUF013 gradually
 unresolved-attribute = "warn"       # 121 cases — needs None-narrowing, fix gradually

@@ -12,6 +12,7 @@ import re
 import selectors
 import shutil
 import ssl
+import socket
 import string
 import subprocess
 import tempfile
@@ -32,6 +33,9 @@ from .state import (
 class CloudMixin:
     """Mixin providing cloud model tool loop methods for GatewayHandler."""
 
+    _cloud_conn_pool: dict[tuple[bool, str, int], list] = {}
+    _cloud_conn_pool_lock = threading.Lock()
+
     CODEX_MAUDE_TOOL_BRIDGE = """MAUDE TOOL BRIDGE FOR CODEX:
 You are running inside MAUDE on the DGX Spark. Do not use Codex's own imagegen skill for image generation.
 Call MAUDE tools through the local gateway when the task needs Maude capabilities:
@@ -49,6 +53,14 @@ Do not claim the image was generated until the MAUDE tool response says it succe
 
 HYPERFRAMES VIDEO:
 Maude has a HyperFrames skill and native HyperFrames tools. Use these for HTML/CSS/JS programmatic video, motion graphics, or requests that mention HyperFrames. Do not use Mochi; it has been removed.
+
+VIDEO CONTENT GUARDRAILS:
+- Do not rush source footage. If using a screen wipe, reveal, before/after clip, app recording, or product demo video, allocate enough timeline duration for the motion to complete and hold the final state long enough to understand.
+- Preview the rendered MP4 motion before publishing; a correct-looking still frame is not enough.
+- Never burn raw URLs, query strings, app-store URLs, or download links into the video frame unless explicitly requested. Use designed CTA text such as "Try Pixelus.io" or "Link in description". Put the actual clickable URL in the video/post description or caption.
+- Every publish plan must include title, caption/description, clean link placement, tags/hashtags, and platform/privacy setting.
+- Before any youtube_upload or social_post with video, call video_pre_publish_checklist and create the checklist artifact. Do not publish if the checklist status is BLOCKED.
+- Do not publish if media is missing, a transition is clipped, text is unreadable, or a placeholder/raw link is visible.
 
 Check readiness:
 curl -s -X POST http://localhost:30080/api/tools/execute \
@@ -500,6 +512,17 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
 
+    def _write_sse_chunk(self, line: bytes, flush: bool = True) -> bool:
+        """Write one HTTP chunk. False means the client has disconnected."""
+        try:
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+            if flush:
+                self.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError, socket.timeout, OSError):
+            self.close_connection = True
+            return False
+
     def _send_trace_sse(self, trace_type: str, data: dict):
         """Send a trace event via SSE.
 
@@ -511,11 +534,7 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             line = f"event: trace\ndata: {payload}\n\n".encode()
         else:
             line = f": trace {payload}\n\n".encode()
-        try:
-            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
-            self.wfile.flush()
-        except Exception:
-            pass
+        self._write_sse_chunk(line)
 
     @staticmethod
     def _tool_task_label(name: str, args: dict | None = None) -> str:
@@ -620,9 +639,12 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             self._send_trace_sse("error", {"message": error_msg})
             # Send [DONE] and close chunked encoding
             done_line = b"data: [DONE]\n\n"
-            self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+            if not self._write_sse_chunk(done_line, flush=False):
+                return
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError, socket.timeout, OSError):
+            self.close_connection = True
         except Exception:
             pass
 
@@ -768,8 +790,8 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 }
             )
             line = f"data: {sse_data}\n\n".encode()
-            self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
-            self.wfile.flush()
+            if not self._write_sse_chunk(line):
+                break
 
     def _send_sse_done(self, model_name: str, chunk_id: str, created: int):
         """Send finish + [DONE] events and close chunked encoding."""
@@ -789,13 +811,68 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             }
         )
         finish_line = f"data: {finish_data}\n\n".encode()
-        self.wfile.write(b"%x\r\n%s\r\n" % (len(finish_line), finish_line))
+        if not self._write_sse_chunk(finish_line, flush=False):
+            return
 
         done_line = b"data: [DONE]\n\n"
-        self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+        if not self._write_sse_chunk(done_line, flush=False):
+            return
 
-        self.wfile.write(b"0\r\n\r\n")
-        self.wfile.flush()
+        try:
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError, socket.timeout, OSError):
+            self.close_connection = True
+
+    @classmethod
+    def _new_cloud_connection(cls, use_ssl: bool, host: str, port: int):
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            return http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
+        return http.client.HTTPConnection(host, port, timeout=300)
+
+    @classmethod
+    def _get_cloud_connection(cls, use_ssl: bool, host: str, port: int):
+        key = (use_ssl, host, port)
+        with cls._cloud_conn_pool_lock:
+            pool = cls._cloud_conn_pool.get(key) or []
+            if pool:
+                return pool.pop()
+        return cls._new_cloud_connection(use_ssl, host, port)
+
+    @classmethod
+    def _release_cloud_connection(cls, use_ssl: bool, host: str, port: int, conn) -> None:
+        key = (use_ssl, host, port)
+        with cls._cloud_conn_pool_lock:
+            pool = cls._cloud_conn_pool.setdefault(key, [])
+            if len(pool) < 4:
+                pool.append(conn)
+                return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    @classmethod
+    def _discard_cloud_connection(cls, conn) -> None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    def _post_cloud_json(self, use_ssl: bool, host: str, port: int, api_path: str, body: bytes, headers: dict):
+        """POST to a provider using a small reusable connection pool."""
+        conn = self._get_cloud_connection(use_ssl, host, port)
+        try:
+            conn.request("POST", api_path, body=body, headers=headers)
+            resp = conn.getresponse()
+            status = resp.status
+            data = resp.read()
+            self._release_cloud_connection(use_ssl, host, port, conn)
+            return status, data
+        except Exception:
+            self._discard_cloud_connection(conn)
+            raise
 
     def _cloud_model_with_tools(self, req, route, resolved_name):
         """Handle cloud model request with server-side tool execution loop.
@@ -898,13 +975,6 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             llm_start = time.time()
 
             try:
-                # Fresh connection per iteration — avoids stale sockets after long tool calls
-                if use_ssl:
-                    ctx = ssl.create_default_context()
-                    conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
-                else:
-                    conn = http.client.HTTPConnection(host, port, timeout=300)
-
                 headers = {
                     "Content-Type": "application/json",
                     "Content-Length": str(len(body)),
@@ -917,11 +987,9 @@ If the tool returns an OAuth or credential error, report that exact tool result.
 
                 def _llm_call():
                     try:
-                        conn.request("POST", api_path, body=body, headers=headers)
-                        resp = conn.getresponse()
-                        llm_result_box[0] = resp.status
-                        llm_result_box[1] = resp.read()
-                        conn.close()
+                        status_out, body_out = self._post_cloud_json(use_ssl, host, port, api_path, body, headers)
+                        llm_result_box[0] = status_out
+                        llm_result_box[1] = body_out
                     except Exception as exc:
                         llm_result_box[2] = exc
 
@@ -1247,7 +1315,6 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 self._send_sse_done(resolved_name, chunk_id, created)
             else:
                 self._send_as_sse(final_content, resolved_name)
-            conn.close()
             return
 
         # Max iterations reached (shouldn't normally happen — last iteration drops tools)

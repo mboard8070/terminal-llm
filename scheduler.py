@@ -6,6 +6,8 @@ Schedule MAUDE to run tasks and message you first.
 
 import asyncio
 import json
+import os
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -42,6 +44,14 @@ class ScheduledTask:
     next_run: str | None = None
     run_count: int = 0
     last_result: str | None = None
+    last_status: str | None = None
+    last_duration_seconds: float | None = None
+    failure_count: int = 0
+    last_error: str | None = None
+    task_type: str = "prompt"
+    mission_id: str | None = None
+    mission_auto_complete: bool | None = None
+    mission_max_steps: int = 10
 
 
 class ProactiveScheduler:
@@ -66,6 +76,7 @@ class ProactiveScheduler:
         self.gateway = None  # Channel gateway for sending messages
         self.running = False
         self._loop_task: asyncio.Task | None = None
+        self._running_task_ids: set[str] = set()
         self._load_tasks()
 
     def _load_tasks(self):
@@ -73,7 +84,9 @@ class ProactiveScheduler:
         if self.CONFIG_FILE.exists():
             try:
                 data = json.loads(self.CONFIG_FILE.read_text())
+                field_names = set(ScheduledTask.__dataclass_fields__)
                 for task_data in data:
+                    task_data = {key: value for key, value in task_data.items() if key in field_names}
                     task = ScheduledTask(**task_data)
                     # Recalculate next_run
                     task.next_run = self._calculate_next_run(task.cron)
@@ -112,7 +125,179 @@ class ProactiveScheduler:
         """Set the channel gateway for sending messages."""
         self.gateway = gateway
 
-    def schedule(self, name: str, cron: str, prompt: str, channel: str = "cli", channel_id: str = "default") -> str:
+    def _mission_report_from_state(self, task: ScheduledTask, result: str) -> str | None:
+        """Build a concrete scheduled mission report from persisted mission state."""
+        mission_id = self._mission_id_from_task(task)
+        if not mission_id:
+            return None
+
+        missions_dir = Path(os.environ.get("MAUDE_MISSIONS_DIR", Path(__file__).parent / "data" / "missions"))
+        mission_path = missions_dir / f"{mission_id}.json"
+        if not mission_path.exists():
+            return None
+
+        try:
+            mission = json.loads(mission_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        steps = mission.get("steps") or []
+        latest = None
+        for step in steps:
+            if step.get("last_run_at"):
+                if latest is None or str(step.get("last_run_at")) > str(latest.get("last_run_at")):
+                    latest = step
+        if latest is None:
+            latest = next((step for step in steps if step.get("status") != "done"), None)
+        if latest is None:
+            latest = steps[-1] if steps else {}
+
+        done = sum(1 for step in steps if step.get("status") == "done")
+        total = len(steps)
+        next_step = next((step for step in steps if step.get("status") != "done"), None)
+        blockers = mission.get("blockers") or []
+        artifacts = mission.get("artifacts") or []
+        last_result = str(latest.get("last_result") or result or "")
+
+        evidence = self._extract_report_lines(last_result, limit=4)
+        optimization = self._extract_optimization_finding(last_result) or self._extract_optimization_finding(result)
+        if not optimization:
+            optimization = "No new speed, token, or runtime issue was recorded in this tick."
+
+        changed = "No new artifact paths were added."
+        if artifacts:
+            changed = "Tracked artifacts: " + ", ".join(str(item) for item in artifacts[-3:])
+
+        lines = [
+            "**Done**",
+            (
+                f"Ran `{latest.get('id', 'unknown')}: {latest.get('title', 'unknown')}` "
+                f"with status `{latest.get('status', 'unknown')}`. "
+                f"Mission progress is {done}/{total} steps."
+            ),
+            "",
+            "**Evidence**",
+            evidence or "No detailed execution evidence was recorded.",
+            "",
+            "**Files / artifacts**",
+            changed,
+            "",
+            "**Optimization finding**",
+            optimization,
+            "",
+            "**Blockers**",
+            "; ".join(str(item) for item in blockers) if blockers else "None.",
+            "",
+            "**Next**",
+            (
+                f"Next mission step is `{next_step.get('id')}: {next_step.get('title')}`."
+                if next_step
+                else "No pending mission steps remain; review whether to reset or extend the mission."
+            ),
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _mission_id_from_task(task: ScheduledTask) -> str:
+        """Extract a scheduled mission id from the task prompt."""
+        if task.mission_id:
+            return Path(str(task.mission_id)).name
+        patterns = [
+            r"mission_tick tool with id '([^']+)'",
+            r"mission_tick[^\n]*\bid['\"]?\s*[:=]\s*['\"]([^'\"]+)",
+            r"mission_drain[^\n]*\bid['\"]?\s*[:=]\s*['\"]([^'\"]+)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, task.prompt)
+            if match:
+                return Path(match.group(1)).name
+        return ""
+
+    @staticmethod
+    def _mission_auto_complete_from_task(task: ScheduledTask) -> bool:
+        if task.mission_auto_complete is not None:
+            return bool(task.mission_auto_complete)
+        match = re.search(r"auto_complete\s*=?\s*(true|false)", task.prompt, flags=re.IGNORECASE)
+        return match is None or match.group(1).lower() == "true"
+
+    async def _run_mission_task(self, task: ScheduledTask) -> str | None:
+        """Run scheduled mission steps directly so cadence does not depend on prompt wording."""
+        mission_id = self._mission_id_from_task(task)
+        if not mission_id:
+            return None
+
+        from maude_core import execute_tool
+
+        return execute_tool(
+            "mission_drain",
+            {
+                "id": mission_id,
+                "auto_complete": self._mission_auto_complete_from_task(task),
+                "max_steps": task.mission_max_steps,
+            },
+        )
+
+    @staticmethod
+    def _extract_report_lines(text: str, limit: int = 4) -> str:
+        preferred = []
+        fallback = []
+        useful = (
+            "Plan executed",
+            "Matches for",
+            "No matches",
+            "issues=",
+            "skills_checked",
+            "skill_scan_seconds",
+            "grep_elapsed",
+            "Mission step",
+            "Successfully",
+            "Logged mission event",
+        )
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith(("###", "## Stage", "File:", "Directory:")):
+                continue
+            if re.match(r"^\d+\s+\|", line):
+                continue
+            if len(line) > 220:
+                line = line[:217].rstrip() + "..."
+            if any(marker in line for marker in useful):
+                preferred.append(line)
+            elif not line.startswith(("---", "```", "[DIR]", "[FILE]")):
+                fallback.append(line)
+        lines = (preferred + fallback)[:limit]
+        return "\n".join(f"- {line}" for line in lines)
+
+    @staticmethod
+    def _extract_optimization_finding(text: str | None) -> str:
+        if not text:
+            return ""
+        patterns = [
+            r"Optimization finding\*\*\s*(.+?)(?:\n\*\*|\Z)",
+            r"Optimization finding\s*(.+?)(?:\n[A-Z][A-Za-z ]+:|\Z)",
+            r"(?:elapsed|took|latency|token|runtime|slow|grep_elapsed|scan_seconds)[^\n]*(?:\n[^\n]*)?",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+            if match:
+                finding = " ".join(match.group(1 if match.lastindex else 0).split())
+                return finding[:500]
+        return ""
+
+    def schedule(
+        self,
+        name: str,
+        cron: str,
+        prompt: str,
+        channel: str = "cli",
+        channel_id: str = "default",
+        task_type: str = "prompt",
+        mission_id: str | None = None,
+        mission_auto_complete: bool | None = None,
+        mission_max_steps: int = 10,
+    ) -> str:
         """Schedule a new task."""
 
         # Validate cron
@@ -125,7 +310,17 @@ class ProactiveScheduler:
         task_id = str(uuid.uuid4())[:8]
 
         task = ScheduledTask(
-            id=task_id, name=name, cron=cron, prompt=prompt, channel=channel, channel_id=channel_id, next_run=next_run
+            id=task_id,
+            name=name,
+            cron=cron,
+            prompt=prompt,
+            channel=channel,
+            channel_id=channel_id,
+            next_run=next_run,
+            task_type=task_type,
+            mission_id=Path(str(mission_id)).name if mission_id else None,
+            mission_auto_complete=mission_auto_complete,
+            mission_max_steps=max(1, min(int(mission_max_steps or 10), 25)),
         )
         self.tasks[task_id] = task
         self._save_tasks()
@@ -181,19 +376,28 @@ class ProactiveScheduler:
 
     async def run_task(self, task: ScheduledTask) -> str:
         """Execute a scheduled task."""
-        if not self.maude_callback:
-            return "No MAUDE callback configured"
-
         console.print(f"[cyan]Running scheduled task: {task.name}[/cyan]")
+        started_at = datetime.now()
 
         try:
-            # Call MAUDE with the prompt
-            result = await self.maude_callback(task.prompt)
+            result = await self._run_mission_task(task)
+            if result is None:
+                if not self.maude_callback:
+                    return "No MAUDE callback configured"
+                # Call MAUDE with the prompt
+                result = await self.maude_callback(task.prompt)
+            report = self._mission_report_from_state(task, result)
+            if report:
+                result = report
 
             # Update task state
             task.last_run = datetime.now().isoformat()
             task.run_count += 1
-            task.last_result = result[:500] if result else None  # Store truncated result
+            task.last_result = result[:2000] if result else None  # Store a compact status snapshot
+            task.last_status = "ok"
+            task.last_duration_seconds = round((datetime.now() - started_at).total_seconds(), 3)
+            task.failure_count = 0
+            task.last_error = None
             task.next_run = self._calculate_next_run(task.cron)
             self._save_tasks()
 
@@ -215,13 +419,32 @@ class ProactiveScheduler:
         except Exception as e:
             error_msg = f"Error running task '{task.name}': {e}"
             console.print(f"[red]{error_msg}[/red]")
+            task.last_run = datetime.now().isoformat()
+            task.run_count += 1
+            task.last_result = error_msg[:2000]
+            task.last_status = "error"
+            task.last_duration_seconds = round((datetime.now() - started_at).total_seconds(), 3)
+            task.failure_count += 1
+            task.last_error = str(e)[:1000]
+            task.next_run = self._calculate_next_run(task.cron)
+            self._save_tasks()
             return error_msg
 
     async def run_task_by_id(self, task_id: str) -> str:
         """Run a specific task by ID."""
         if task_id not in self.tasks:
             return f"Task {task_id} not found"
-        return await self.run_task(self.tasks[task_id])
+        return await self._run_task_once(self.tasks[task_id])
+
+    async def _run_task_once(self, task: ScheduledTask) -> str:
+        """Run a scheduled task with duplicate suppression."""
+        if task.id in self._running_task_ids:
+            return f"Task {task.id} is already running"
+        self._running_task_ids.add(task.id)
+        try:
+            return await self.run_task(task)
+        finally:
+            self._running_task_ids.discard(task.id)
 
     async def _scheduler_loop(self):
         """Main scheduler loop - check and run due tasks."""
@@ -236,9 +459,9 @@ class ProactiveScheduler:
 
                 try:
                     next_run = datetime.fromisoformat(task.next_run)
-                    if now >= next_run:
+                    if now >= next_run and task.id not in self._running_task_ids:
                         # Task is due
-                        _task = asyncio.create_task(self.run_task(task))  # noqa: RUF006
+                        _task = asyncio.create_task(self._run_task_once(task))  # noqa: RUF006
                 except:
                     pass
 
