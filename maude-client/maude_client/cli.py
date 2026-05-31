@@ -22,11 +22,14 @@ _IS_WINDOWS = sys.platform == "win32"
 if _IS_WINDOWS:
     # Force-remove readline/pyreadline to prevent it from hooking input()
     sys.modules.pop("readline", None)
-    # Enable ANSI/VT processing on Windows console
+    # Enable ANSI/VT processing without clobbering existing console flags.
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
-        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
     except Exception:
         pass
 else:
@@ -897,15 +900,7 @@ def main():
     try:
         while True:
             try:
-                if _IS_WINDOWS:
-                    sys.stdout.write("\nYou: ")
-                    sys.stdout.flush()
-                    user_input = sys.stdin.readline()
-                    if not user_input:
-                        break
-                    user_input = user_input.strip()
-                else:
-                    user_input = input("\nYou: ").strip()
+                user_input = input("\nYou: ").strip()
 
                 if not user_input:
                     continue
