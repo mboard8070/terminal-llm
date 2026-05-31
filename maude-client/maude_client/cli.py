@@ -1249,6 +1249,9 @@ def main():
                         capture_output=False,
                     )
                     if result.returncode == 0:
+                        if _IS_WINDOWS:
+                            print("\nUpdate complete. Close this window and start MAUDE again.")
+                            break
                         print("\nUpdate complete. Restarting...")
                         os.execv(sys.executable, [sys.executable, "-m", "maude_client"])
                     else:
