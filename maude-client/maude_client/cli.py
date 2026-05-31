@@ -65,7 +65,7 @@ from maude_client.task_executor import start_task_executor, stop_task_executor
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _ASCII_SPIN = "|/-\\"
 
-_COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+_COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and (not _IS_WINDOWS or os.environ.get("MAUDE_WINDOWS_COLOR") == "1")
 _RESET = "\033[0m" if _COLOR_ENABLED else ""
 _USER = "\033[92m" if _COLOR_ENABLED else ""
 _ASSISTANT = "\033[95m" if _COLOR_ENABLED else ""
@@ -80,9 +80,12 @@ def color(text: str, style: str) -> str:
 
 
 def prompt_input(label: str) -> str:
+    # Keep Windows input plain. ANSI around input() can leave PowerShell/ConHost
+    # in a bad edit state where typed text jumps, changes color, or lags.
+    if _IS_WINDOWS:
+        return input(f"\n{label}: ").strip()
     if _COLOR_ENABLED:
-        value = input(f"\n{_USER}{label}: ")
-        print(_RESET, end="")
+        value = input(f"\n{_USER}{label}: {_RESET}")
         return value.strip()
     return input(f"\n{label}: ").strip()
 
@@ -1164,14 +1167,14 @@ Features:
                 spinner = Spinner("thinking")
                 spinner.start()
                 first_chunk = True
-                for chunk in stream_chat(user_input):
-                    if first_chunk:
-                        spinner.stop()
-                        print(color("MAUDE: ", _ASSISTANT), end="", flush=True)
-                        first_chunk = False
-                    typewriter_print(chunk)
-                if first_chunk:
-                    # No chunks received at all
+                try:
+                    for chunk in stream_chat(user_input):
+                        if first_chunk:
+                            spinner.stop()
+                            print(color("MAUDE: ", _ASSISTANT), end="", flush=True)
+                            first_chunk = False
+                        typewriter_print(chunk)
+                finally:
                     spinner.stop()
                 print()
 
