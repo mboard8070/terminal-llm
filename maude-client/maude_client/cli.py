@@ -65,6 +65,27 @@ from maude_client.task_executor import start_task_executor, stop_task_executor
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _ASCII_SPIN = "|/-\\"
 
+_COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+_RESET = "\033[0m" if _COLOR_ENABLED else ""
+_USER = "\033[92m" if _COLOR_ENABLED else ""
+_ASSISTANT = "\033[95m" if _COLOR_ENABLED else ""
+_RESPONSE = "\033[97m" if _COLOR_ENABLED else ""
+_TOOL = "\033[96m" if _COLOR_ENABLED else ""
+_DIM = "\033[2m" if _COLOR_ENABLED else ""
+_WARN = "\033[93m" if _COLOR_ENABLED else ""
+
+
+def color(text: str, style: str) -> str:
+    return f"{style}{text}{_RESET}" if style else text
+
+
+def prompt_input(label: str) -> str:
+    if _COLOR_ENABLED:
+        value = input(f"\n{_USER}{label}: ")
+        print(_RESET, end="")
+        return value.strip()
+    return input(f"\n{label}: ").strip()
+
 class Spinner:
     """Spinner shown while waiting for first response chunk."""
 
@@ -83,7 +104,7 @@ class Spinner:
         i = 0
         while self._running:
             frame = self._frames[i % len(self._frames)]
-            print(f"\r{frame} {self._label}...", end="", flush=True)
+            print(f"\r{_DIM}{frame} {self._label}...{_RESET}", end="", flush=True)
             time.sleep(0.1)
             i += 1
 
@@ -101,17 +122,17 @@ def typewriter_print(chunk: str):
     """Print a chunk with typewriter effect for large pieces, instant for small."""
     if not chunk:
         return
-    # Skip typewriter for tool output and errors
-    if chunk.startswith("[Tool:") or chunk.startswith("[Error"):
-        print(chunk, end="", flush=True)
+    if chunk.startswith("[Tool:"):
+        print(color(chunk, _TOOL), end="", flush=True)
         return
-    # Small chunks (natural streaming) → instant
+    if chunk.startswith("[Error"):
+        print(color(chunk, _WARN), end="", flush=True)
+        return
     if len(chunk) <= 40:
-        print(chunk, end="", flush=True)
+        print(f"{_RESPONSE}{chunk}{_RESET}" if _COLOR_ENABLED else chunk, end="", flush=True)
         return
-    # Large chunks → char-by-char
     for ch in chunk:
-        print(ch, end="", flush=True)
+        print(f"{_RESPONSE}{ch}{_RESET}" if _COLOR_ENABLED else ch, end="", flush=True)
         if ch not in ("\n", " "):
             time.sleep(0.006)
 
@@ -191,14 +212,14 @@ class VoiceMode:
             print("Loading local Whisper (faster-whisper)...", end=" ", flush=True)
             self.whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
             self._whisper_type = "faster"
-            print("OK")
+            print(color("OK", _TOOL))
         except ImportError:
             try:
                 import whisper
                 print("Loading local Whisper...", end=" ", flush=True)
                 self.whisper_model = whisper.load_model("tiny")
                 self._whisper_type = "original"
-                print("OK")
+                print(color("OK", _TOOL))
             except ImportError:
                 raise RuntimeError("Neither faster-whisper nor whisper installed")
 
@@ -857,9 +878,9 @@ def main():
     # Check connection
     print("Checking server connection...", end=" ", flush=True)
     if check_server_connection():
-        print("OK")
+        print(color("OK", _TOOL))
     else:
-        print("FAILED")
+        print(color("FAILED", _WARN))
         print("\nCannot connect to server. Make sure:")
         print("  1. Tailscale is connected")
         print(f"  2. Server is running on spark-e26c:{SERVER_LLM_PORT}")
@@ -875,15 +896,15 @@ def main():
         tool_count = len(router._all_tools)
         print(f"OK ({tool_count} tools)")
     else:
-        print("OFFLINE (local tools only)")
+        print(color("OFFLINE (local tools only)", _WARN))
     for warning in router.health_warnings():
-        print(f"  WARNING: {warning}")
+        print(color(f"  WARNING: {warning}", _WARN))
 
     # Start heartbeat
     print("Starting heartbeat...", end=" ", flush=True)
     try:
         start_heartbeat()
-        print("OK")
+        print(color("OK", _TOOL))
     except Exception as e:
         print(f"Warning: {e}")
 
@@ -891,7 +912,7 @@ def main():
     print("Starting task executor...", end=" ", flush=True)
     try:
         start_task_executor()
-        print("OK")
+        print(color("OK", _TOOL))
     except Exception as e:
         print(f"Warning: {e}")
 
@@ -900,18 +921,18 @@ def main():
     try:
         while True:
             try:
-                user_input = input("\nYou: ").strip()
+                user_input = prompt_input("You")
 
                 if not user_input:
                     continue
 
                 if user_input.lower() == 'quit':
-                    print("Goodbye!")
+                    print(color("Goodbye!", _DIM))
                     break
 
                 if user_input.lower() == 'clear':
                     messages.clear()
-                    print("Conversation cleared.")
+                    print(color("Conversation cleared.", _DIM))
                     continue
 
                 # Handle /voice commands
@@ -976,7 +997,7 @@ def main():
 
                 # Handle /version command
                 if user_input == "/version":
-                    print(f"MAUDE client v{__version__}")
+                    print(color(f"MAUDE client v{__version__}", _DIM))
                     continue
 
                 # Handle /help
@@ -1010,7 +1031,7 @@ Features:
                 for chunk in stream_chat(user_input):
                     if first_chunk:
                         spinner.stop()
-                        print("MAUDE: ", end="", flush=True)
+                        print(color("MAUDE: ", _ASSISTANT), end="", flush=True)
                         first_chunk = False
                     typewriter_print(chunk)
                 if first_chunk:
