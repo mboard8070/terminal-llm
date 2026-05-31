@@ -116,6 +116,55 @@ def prompt_input(label: str) -> str:
     return input(f"\n{label}: ").strip()
 
 
+def _windows_console_mode(handle_id: int) -> str:
+    if not _IS_WINDOWS:
+        return "n/a"
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(handle_id)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return f"0x{mode.value:08x}"
+        return "not-a-console"
+    except Exception as exc:
+        return f"error: {exc}"
+
+
+def debug_windows_input() -> None:
+    print(f"MAUDE client v{__version__}")
+    print(f"Python: {sys.executable}")
+    print(f"Platform: {sys.platform}")
+    print(f"Args: {sys.argv}")
+    print(f"stdin mode: {_windows_console_mode(-10)}")
+    print(f"stdout mode: {_windows_console_mode(-11)}")
+    print(f"WT_SESSION: {os.environ.get('WT_SESSION', '')}")
+    print(f"TERM_PROGRAM: {os.environ.get('TERM_PROGRAM', '')}")
+    print(f"MAUDE_CLIENT_TASKS: {os.environ.get('MAUDE_CLIENT_TASKS', '')}")
+    if not _IS_WINDOWS:
+        print("Input diagnostic is only meaningful on Windows.")
+        return
+
+    import msvcrt
+
+    print("Press keys. Ctrl-C exits. Enter records CR. Esc exits.")
+    idx = 0
+    while True:
+        ch = msvcrt.getwch()
+        code = ord(ch)
+        name = repr(ch)
+        if ch in ("\x00", "\xe0"):
+            nxt = msvcrt.getwch()
+            print(f"key {idx}: prefix={name} ord={code} next={nxt!r} next_ord={ord(nxt)}")
+        else:
+            print(f"key {idx}: char={name} ord={code}")
+        sys.stdout.flush()
+        idx += 1
+        if ch in ("\x03", "\x1b"):
+            break
+
+
 class Spinner:
     """Spinner shown while waiting for first response chunk."""
 
@@ -1029,6 +1078,10 @@ def print_banner():
 
 def main():
     """Main chat loop."""
+    if "--diag-input" in sys.argv or os.environ.get("MAUDE_DIAG_INPUT") == "1":
+        debug_windows_input()
+        return
+
     print_banner()
 
     # Check connection
