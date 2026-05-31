@@ -20,11 +20,19 @@ import threading
 _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
-    # Force-remove readline/pyreadline and do not mutate console modes.
-    # PowerShell/ConHost input can become corrupted if another process toggles
-    # terminal state while Python is using cooked input. Windows input below uses
-    # msvcrt.getwch() and echoes directly.
+    # Force-remove readline/pyreadline. Keep input private/raw below, but enable
+    # ANSI on stdout so MAUDE output remains readable in modern terminals.
     sys.modules.pop("readline", None)
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        pass
 else:
     try:
         import readline
@@ -58,7 +66,7 @@ from maude_client.task_executor import start_task_executor, stop_task_executor
 _BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _ASCII_SPIN = "|/-\\"
 
-_COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and (not _IS_WINDOWS or os.environ.get("MAUDE_WINDOWS_COLOR") == "1")
+_COLOR_ENABLED = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 _RESET = "\033[0m" if _COLOR_ENABLED else ""
 _USER = "\033[92m" if _COLOR_ENABLED else ""
 _ASSISTANT = "\033[95m" if _COLOR_ENABLED else ""
