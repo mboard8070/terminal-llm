@@ -115,7 +115,7 @@ def _windows_input(label: str) -> str:
 
     restore_console = _windows_input_restore()
     try:
-        sys.stdout.write(f"\r\n{label}: ")
+        sys.stdout.write(f"\r\n{color(label + ':', _USER)} ")
         sys.stdout.flush()
         chars: list[str] = []
         while True:
@@ -153,7 +153,7 @@ def prompt_input(label: str) -> str:
     if _IS_WINDOWS:
         return _windows_input(label)
     if _COLOR_ENABLED:
-        value = input(f"\n{_USER}{label}: {_RESET}")
+        value = input(f"\n{color(label + ':', _USER)} ")
         return value.strip()
     return input(f"\n{label}: ").strip()
 
