@@ -20,18 +20,11 @@ import threading
 _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
-    # Force-remove readline/pyreadline to prevent it from hooking input()
+    # Force-remove readline/pyreadline and do not mutate console modes.
+    # PowerShell/ConHost input can become corrupted if another process toggles
+    # terminal state while Python is using cooked input. Windows input below uses
+    # msvcrt.getwch() and echoes directly.
     sys.modules.pop("readline", None)
-    # Enable ANSI/VT processing without clobbering existing console flags.
-    try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)
-        mode = ctypes.c_uint32()
-        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-    except Exception:
-        pass
 else:
     try:
         import readline
@@ -79,11 +72,44 @@ def color(text: str, style: str) -> str:
     return f"{style}{text}{_RESET}" if style else text
 
 
+def _windows_input(label: str) -> str:
+    import msvcrt
+
+    sys.stdout.write(f"\n{label}: ")
+    sys.stdout.flush()
+    chars: list[str] = []
+    while True:
+        ch = msvcrt.getwch()
+        if ch in ("\r", "\n"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return "".join(chars).strip()
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        if ch == "\x1a":
+            raise EOFError
+        if ch in ("\x00", "\xe0"):
+            # Extended key prefix: consume the key code and ignore arrows/F-keys.
+            msvcrt.getwch()
+            continue
+        if ch == "\t":
+            # Do not let an accidental tab move the console cursor.
+            continue
+        if ch in ("\b", "\x7f"):
+            if chars:
+                chars.pop()
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+            continue
+        if ch >= " ":
+            chars.append(ch)
+            sys.stdout.write(ch)
+            sys.stdout.flush()
+
+
 def prompt_input(label: str) -> str:
-    # Keep Windows input plain. ANSI around input() can leave PowerShell/ConHost
-    # in a bad edit state where typed text jumps, changes color, or lags.
     if _IS_WINDOWS:
-        return input(f"\n{label}: ").strip()
+        return _windows_input(label)
     if _COLOR_ENABLED:
         value = input(f"\n{_USER}{label}: {_RESET}")
         return value.strip()
