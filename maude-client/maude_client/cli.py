@@ -72,39 +72,73 @@ def color(text: str, style: str) -> str:
     return f"{style}{text}{_RESET}" if style else text
 
 
+def _windows_input_restore():
+    """Put the Windows console in a private, non-line-editing input mode."""
+    if not _IS_WINDOWS:
+        return lambda: None
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)
+        original = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(original)):
+            return lambda: None
+
+        ENABLE_PROCESSED_INPUT = 0x0001
+        ENABLE_WINDOW_INPUT = 0x0008
+        ENABLE_EXTENDED_FLAGS = 0x0080
+        raw_mode = ENABLE_PROCESSED_INPUT | ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS
+        kernel32.SetConsoleMode(handle, raw_mode)
+
+        def restore() -> None:
+            try:
+                kernel32.SetConsoleMode(handle, original.value)
+            except Exception:
+                pass
+
+        return restore
+    except Exception:
+        return lambda: None
+
+
 def _windows_input(label: str) -> str:
     import msvcrt
 
-    sys.stdout.write(f"\n{label}: ")
-    sys.stdout.flush()
-    chars: list[str] = []
-    while True:
-        ch = msvcrt.getwch()
-        if ch in ("\r", "\n"):
-            sys.stdout.write("\n")
-            sys.stdout.flush()
-            return "".join(chars).strip()
-        if ch == "\x03":
-            raise KeyboardInterrupt
-        if ch == "\x1a":
-            raise EOFError
-        if ch in ("\x00", "\xe0"):
-            # Extended key prefix: consume the key code and ignore arrows/F-keys.
-            msvcrt.getwch()
-            continue
-        if ch == "\t":
-            # Do not let an accidental tab move the console cursor.
-            continue
-        if ch in ("\b", "\x7f"):
-            if chars:
-                chars.pop()
-                sys.stdout.write("\b \b")
+    restore_console = _windows_input_restore()
+    try:
+        sys.stdout.write(f"\r\n{label}: ")
+        sys.stdout.flush()
+        chars: list[str] = []
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                sys.stdout.write("\r\n")
                 sys.stdout.flush()
-            continue
-        if ch >= " ":
-            chars.append(ch)
-            sys.stdout.write(ch)
-            sys.stdout.flush()
+                return "".join(chars).strip()
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch == "\x1a":
+                raise EOFError
+            if ch in ("\x00", "\xe0"):
+                # Extended key prefix: consume the key code and ignore arrows/F-keys.
+                msvcrt.getwch()
+                continue
+            if ch == "\t":
+                # Never move the cursor on tab while MAUDE owns the prompt.
+                continue
+            if ch in ("\b", "\x7f"):
+                if chars:
+                    chars.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            if ch >= " ":
+                chars.append(ch)
+                sys.stdout.write(ch)
+                sys.stdout.flush()
+    finally:
+        restore_console()
 
 
 def prompt_input(label: str) -> str:
@@ -134,6 +168,7 @@ def _windows_console_mode(handle_id: int) -> str:
 
 def debug_windows_input() -> None:
     print(f"MAUDE client v{__version__}")
+    print("Windows input path: raw msvcrt + private console mode")
     print(f"Python: {sys.executable}")
     print(f"Platform: {sys.platform}")
     print(f"Args: {sys.argv}")
@@ -1130,6 +1165,8 @@ def main():
         except Exception as e:
             print(f"Warning: {e}")
 
+    if _IS_WINDOWS:
+        print("Windows input path: raw msvcrt + private console mode")
     print("\nType 'quit' to exit, '/help' for commands.\n")
 
     try:
