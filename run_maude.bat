@@ -6,6 +6,6 @@ set LLM_SERVER_URL=http://spark-e26c:30000/v1
 
 :: Run supported simple MAUDE TUI
 echo Starting MAUDE Terminal (connecting to Spark at %LLM_SERVER_URL%)
-maude
+python -m maude_client
 
 pause
