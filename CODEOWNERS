@@ -9,7 +9,6 @@
 /routing.py @mboard8070
 /chat.py @mboard8070
 /chat_lite.py @mboard8070
-/chat_local.py @mboard8070
 
 [CI, release, and package controls]
 /.gitlab-ci.yml @mboard8070

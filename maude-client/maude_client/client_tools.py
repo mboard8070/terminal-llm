@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Optional
 from maude_client.config import SERVER_SSH_HOST, SERVER_WORK_DIR, LOCAL_TRANSFER_DIR, LOCAL_SHARED_DIR, SERVER_SHARED_DIR, FILE_SERVER_URL
+from maude_client.process_utils import run_process, shell_command
 import requests as _requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -221,26 +222,19 @@ def search_files(pattern: str, path: str = ".", file_pattern: str = None) -> str
 
 
 def run_command(command: str) -> str:
-    """Run a local shell command."""
+    """Run a local shell command with process-tree cleanup on timeout."""
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=os.getcwd()
-        )
+        result = run_process(shell_command(command), timeout=60, cwd=os.getcwd())
 
         output = result.stdout
         if result.stderr:
             output += f"\n[stderr]: {result.stderr}"
-        if result.returncode != 0:
+        if result.timed_out:
+            output += "\n[timeout: command process tree terminated after 60 seconds]"
+        elif result.returncode != 0:
             output += f"\n[exit code: {result.returncode}]"
 
         return output.strip() or "(no output)"
-    except subprocess.TimeoutExpired:
-        return "Error: Command timed out after 60 seconds"
     except Exception as e:
         return f"Error running command: {e}"
 

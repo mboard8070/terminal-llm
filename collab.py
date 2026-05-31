@@ -297,6 +297,9 @@ class ProjectManager:
 # ── Task Dispatcher ──────────────────────────────────────────────
 
 
+CLIENT_TASK_RUNNING_TIMEOUT = 300  # seconds; client commands time out at 120s
+
+
 class TaskDispatcher:
     """Creates tasks, forwards to remote gateways, tracks state."""
 
@@ -333,8 +336,35 @@ class TaskDispatcher:
             _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
         return task
 
+    def expire_stale_running(self, max_age: int = CLIENT_TASK_RUNNING_TIMEOUT) -> int:
+        """Mark client-targeted running tasks failed if they have stopped reporting.
+
+        A polling client claims a task before executing it. If the client dies,
+        loses network, or a subprocess wedges before reporting a result, the
+        task would otherwise remain `running` forever.
+        """
+        now = time.time()
+        expired = 0
+        with self._lock:
+            for f in TASKS_DIR.glob("task-*.json"):
+                task = _read_json(f, None)
+                if not task or task.get("status") != "running":
+                    continue
+                if not (task.get("target_client_id") or task.get("target_platform")):
+                    continue
+                age = now - float(task.get("updated_at", task.get("created_at", now)))
+                if age <= max_age:
+                    continue
+                task["status"] = "failed"
+                task["result"] = f"Client task expired after {int(age)}s without a result"
+                task["updated_at"] = now
+                _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
+                expired += 1
+        return expired
+
     def get_queued_for_client(self, client_id: str) -> list[dict]:
         """Return tasks with status='queued' targeting this client_id."""
+        self.expire_stale_running()
         tasks = []
         for f in TASKS_DIR.glob("task-*.json"):
             task = _read_json(f, None)
@@ -386,6 +416,7 @@ class TaskDispatcher:
         return task
 
     def list_all(self, status: str = None) -> list[dict]:
+        self.expire_stale_running()
         tasks = []
         for f in TASKS_DIR.glob("task-*.json"):
             task = _read_json(f, None)

@@ -355,7 +355,7 @@ def _dispatch_node_status(args):
     tmux_out = _run(["tmux", "list-sessions", "-F", "#{session_name}"])
     tmux_sessions = set(tmux_out.split("\n")) if tmux_out else set()
 
-    maude_running = "maude" in tmux_sessions or bool(_run(["pgrep", "-f", "chat_local.py"]))
+    maude_running = "maude" in tmux_sessions or bool(_run(["pgrep", "-f", "maude"]))
     gateway_running = bool(_run(["pgrep", "-f", "python -m gateway"])) or bool(_run(["pgrep", "-f", "gateway.py"]))
     llama_running = bool(_run(["pgrep", "-f", "llama-server"]))
     telegram_running = bool(_run(["pgrep", "-f", "run_telegram"]))

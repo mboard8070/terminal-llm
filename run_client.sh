@@ -32,9 +32,5 @@ else
     echo ""
 fi
 
-# Activate venv and run
-if [ -d "venv" ]; then
-    source venv/bin/activate 2>/dev/null || source venv/Scripts/activate 2>/dev/null
-fi
-
-python3 chat_local.py "$@"
+# Run the supported simple MAUDE TUI.
+exec maude "$@"
