@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maude-client"
-version = "1.10.1"
+version = "1.10.2"
 description = "MAUDE AI assistant client — connects to Spark server via Tailscale"
 requires-python = ">=3.10"
 dependencies = ["requests>=2.31.0"]
