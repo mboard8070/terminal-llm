@@ -6,13 +6,13 @@ import os
 import sys
 import time
 import platform
-import subprocess
 import threading
 import requests
 from typing import Optional, Callable
 
 from maude_client.config import SERVER_HOST, SERVER_LLM_PORT
 from maude_client.heartbeat import get_client_id
+from maude_client.process_utils import run_process, shell_command
 
 # Configuration
 POLL_INTERVAL = 10  # seconds
@@ -73,34 +73,24 @@ class TaskExecutor:
             pass
 
     def _execute_command(self, command: str) -> tuple:
-        """Execute a shell command. Returns (status, output)."""
-        try:
-            if self._platform == "windows":
-                # Use PowerShell on Windows
-                result = subprocess.run(
-                    ["powershell", "-Command", command],
-                    capture_output=True, text=True,
-                    timeout=COMMAND_TIMEOUT,
-                )
-            else:
-                # Use bash on macOS/Linux
-                result = subprocess.run(
-                    ["bash", "-c", command],
-                    capture_output=True, text=True,
-                    timeout=COMMAND_TIMEOUT,
-                )
+        """Execute a shell command. Returns (status, output).
 
+        Commands are launched in their own process group so a timeout cleans up
+        shell grandchildren too. This prevents Mac helper processes from being
+        orphaned after a dispatched task times out.
+        """
+        try:
+            result = run_process(shell_command(command), timeout=COMMAND_TIMEOUT)
             output = result.stdout
             if result.stderr:
                 output += ("\n" if output else "") + result.stderr
 
+            if result.timed_out:
+                return ("failed", f"Command timed out after {COMMAND_TIMEOUT}s and its process tree was terminated")
             if result.returncode == 0:
                 return ("completed", output or "(no output)")
-            else:
-                return ("completed", f"(exit code {result.returncode})\n{output}" if output else f"(exit code {result.returncode})")
+            return ("completed", f"(exit code {result.returncode})\n{output}" if output else f"(exit code {result.returncode})")
 
-        except subprocess.TimeoutExpired:
-            return ("failed", f"Command timed out after {COMMAND_TIMEOUT}s")
         except Exception as e:
             return ("failed", str(e))
 
