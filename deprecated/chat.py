@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-Terminal LLM Chat — multi-model client.
-Supports local (NVIDIA), Mistral, Codestral, and Claude models.
+DEPRECATED: Legacy MAUDE terminal chat client.
+
+This script is not used by the current MAUDE launch path. The active terminal
+client is ../chat_lite.py, launched through ../maude.
+
+Kept only as historical reference/manual fallback.
+
+Original purpose: Terminal LLM Chat, a multi-model client supporting local
+NVIDIA, Mistral, Codestral, and Claude models.
 """
 
 import os
@@ -19,8 +26,8 @@ from rich.panel import Panel
 import conversation_sync
 from collab import get_hub as get_collab_hub
 
-# Load environment variables
-env_path = Path(__file__).parent / "variables.env"
+# Load environment variables from the project root.
+env_path = Path(__file__).resolve().parent.parent / "variables.env"
 load_dotenv(env_path)
 
 # Initialize console for rich output

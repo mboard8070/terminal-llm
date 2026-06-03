@@ -7,7 +7,7 @@
 /providers.py @mboard8070
 /auto_router.py @mboard8070
 /routing.py @mboard8070
-/chat.py @mboard8070
+/deprecated/chat.py @mboard8070
 /chat_lite.py @mboard8070
 
 [CI, release, and package controls]
