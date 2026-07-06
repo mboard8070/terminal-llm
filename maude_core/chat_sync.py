@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 Lightweight Chat Sync — file-based, non-blocking message log.
 """
@@ -6,7 +10,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-CHAT_LOG_PATH = Path.home() / ".config" / "maude" / "chat_sync.jsonl"
+from maude.config import runtime_paths
+
+CHAT_LOG_PATH = runtime_paths().chat_sync_file
 
 
 def append_chat_log(channel: str, role: str, content: str):

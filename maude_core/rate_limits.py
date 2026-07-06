@@ -1,18 +1,14 @@
-"""
-Rate limiting counters — reset per turn by caller.
-"""
+from maude_bootstrap import ensure_local_maude
 
-from .cache import _tool_cache
+ensure_local_maude()
 
-vision_call_count = 0
-web_call_count = 0
-claude_call_count = 0
+"""Compatibility shim for tool loop rate-limit counters."""
 
+import sys
+from pathlib import Path
 
-def reset_rate_limits():
-    """Reset per-turn rate limits. Call at start of each user turn."""
-    global claude_call_count, vision_call_count, web_call_count
-    claude_call_count = 0
-    vision_call_count = 0
-    web_call_count = 0
-    _tool_cache.evict_expired()
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from maude.orchestration.tool_rate_limits import *  # noqa: F403

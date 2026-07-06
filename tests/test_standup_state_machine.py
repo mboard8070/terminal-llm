@@ -76,7 +76,7 @@ class StandupMachine:
         status, body = _get(self.base_url, "/models")
         assert status == 200
         ids = {model["id"] for model in body["models"]}
-        assert {"nemotron", "nemotron-super", "nemotron-a3b"}.issubset(ids)
+        assert {"nemotron", "nemotron-super", "nemotron-ultra", "nemotron-a3b"}.issubset(ids)
         self.observations["model_count"] = len(ids)
         self.transition(StandupState.HEALTH_OK, StandupState.MODELS_LISTED)
 

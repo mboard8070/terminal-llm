@@ -278,6 +278,9 @@ def list_server_files(path: str = None) -> str:
 
 def run_server_command(command: str) -> str:
     """Run a command on the server via SSH."""
+    if not SERVER_SSH_HOST:
+        return "Error: MAUDE_SERVER_SSH_HOST or SERVER_SSH_HOST must be set to use SSH server commands."
+
     try:
         result = subprocess.run(
             ["ssh", SERVER_SSH_HOST, f"cd {SERVER_WORK_DIR} && {command}"],
@@ -301,6 +304,9 @@ def run_server_command(command: str) -> str:
 
 def send_to_server_maude(message: str) -> str:
     """Send a message to the server MAUDE instance via tmux."""
+    if not SERVER_SSH_HOST:
+        return "Error: MAUDE_SERVER_SSH_HOST or SERVER_SSH_HOST must be set to send messages over SSH."
+
     try:
         # Sanitize message - keep only safe characters
         safe_msg = ''.join(c for c in message if c.isalnum() or c in ' .,!?-_:@')

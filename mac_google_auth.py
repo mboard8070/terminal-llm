@@ -35,4 +35,4 @@ with open(token_path, "w") as f:
 
 print(f"\nSuccess! Token saved to {token_path}")
 print("\nNow run this to copy it to the server:")
-print(f"  scp {token_path} mboard76@spark-e26c:.config/maude/google_token.json")
+print(f"  scp {token_path} mboard76-e26c:<configured-maude-config-dir>/google_token.json")

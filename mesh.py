@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Mesh Network - Discovery and routing for remote subagents.
 
@@ -20,6 +24,7 @@ from pathlib import Path
 import requests
 from rich.console import Console
 
+from maude.config import runtime_paths
 from capabilities import (
     Capability,
     CapabilityType,
@@ -75,7 +80,7 @@ class MeshConfig:
 class MaudeMesh:
     """Mesh network of MAUDE instances for remote subagent routing."""
 
-    CONFIG_FILE = Path.home() / ".config" / "maude" / "mesh.json"
+    CONFIG_FILE = runtime_paths().config_dir / "mesh.json"
 
     def __init__(self, my_capabilities: list[str] = None):
         self.my_hostname = socket.gethostname()
@@ -372,7 +377,7 @@ class MaudeMesh:
     def _load_manual_capabilities(self, hostname: str) -> list[Capability]:
         """Load manually registered capabilities for a node from config."""
         caps = []
-        config_file = Path.home() / ".config" / "maude" / "capabilities.json"
+        config_file = runtime_paths().config_dir / "capabilities.json"
 
         if not config_file.exists():
             return caps
@@ -393,7 +398,7 @@ class MaudeMesh:
 
     def register_capability(self, hostname: str, capability: Capability) -> bool:
         """Register a capability manually for a node."""
-        config_file = Path.home() / ".config" / "maude" / "capabilities.json"
+        config_file = runtime_paths().config_dir / "capabilities.json"
         config_file.parent.mkdir(parents=True, exist_ok=True)
 
         data = {}

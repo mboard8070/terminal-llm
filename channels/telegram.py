@@ -28,11 +28,19 @@ def get_telegram_bot_token() -> str | None:
     """Return the MAUDE Telegram bot token, with legacy fallback."""
     return os.environ.get("MAUDE_TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
 
+
 # Try to import telegram library
 try:
     from telegram import Bot, Update
     from telegram.constants import ChatAction, ParseMode
-    from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+    from telegram.ext import (
+        Application,
+        CallbackQueryHandler,
+        CommandHandler,
+        ContextTypes,
+        MessageHandler,
+        filters,
+    )
 
     TELEGRAM_AVAILABLE = True
 except ImportError:
@@ -74,6 +82,8 @@ class TelegramChannel(Channel):
             self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
             self.app.add_handler(MessageHandler(filters.PHOTO, self._handle_photo))
             self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self._handle_voice))
+            # Inline-button approvals (e.g. weekly X-article publish).
+            self.app.add_handler(CallbackQueryHandler(self._handle_callback_query))
 
             # Initialize and start
             await self.app.initialize()
@@ -87,6 +97,115 @@ class TelegramChannel(Channel):
         except Exception as e:
             console.print(f"[red]Telegram connection failed: {e}[/red]")
             raise
+
+    async def _handle_callback_query(self, update: "Update", context):
+        """Handle inline-button taps for X approvals.
+
+        callback_data is one of:
+          xpub:/xskip:<token>     -> weekly article thread (publish_thread.py)
+          xrep:/xrepskip:<token>  -> a single drafted reply (publish_reply.py)
+        The actual posting runs in the x-growth-ops env (system python3, which
+        has the X API deps) so the bot stays decoupled from that toolchain.
+        """
+        query = update.callback_query
+        data = (query.data or "") if query else ""
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
+        xgrowth = "/home/mboard76/nvidia-workbench/terminal-llm/shared/x-growth-ops"
+
+        async def _edit(text: str):
+            for editor in (
+                lambda: query.edit_message_caption(caption=text),
+                lambda: query.edit_message_text(text=text),
+            ):
+                try:
+                    await editor()
+                    return
+                except Exception:
+                    continue
+
+        # Route by callback prefix:
+        #   xpub:/xskip:      -> weekly article thread (publish_thread.py)
+        #   xrep:/xrepskip:   -> a single drafted reply  (publish_reply.py)
+        if data.startswith(("xpub:", "xskip:")):
+            publisher = f"{xgrowth}/publish_thread.py"
+            skip = data.startswith("xskip:")
+            working, skipped_msg, posted_label = (
+                "Publishing thread to X...",
+                "❌ Skipped this week's article.",
+                "✅ Posted to X",
+            )
+        elif data.startswith(("xrep:", "xrepskip:")):
+            publisher = f"{xgrowth}/publish_reply.py"
+            skip = data.startswith("xrepskip:")
+            working, skipped_msg, posted_label = "Posting reply to X...", "❌ Skipped this reply.", "✅ Reply posted"
+        else:
+            return
+
+        token = data.split(":", 1)[1]
+        cmd = ["/usr/bin/python3", publisher, "--token", token] + (["--skip"] if skip else [])
+
+        if skip:
+            await self._run_blocking(cmd, timeout=60)
+            await _edit(skipped_msg)
+            return
+
+        await _edit(working)
+        proc = await self._run_blocking(cmd, timeout=600)
+        out = (proc.stdout or "").strip().splitlines() if proc else []
+        last = out[-1] if out else ""
+        if proc and proc.returncode == 0 and last.startswith("PUBLISHED"):
+            await _edit(f"{posted_label}: {last.split(' ', 1)[1] if ' ' in last else ''}")
+        elif last.startswith("ALREADY_PUBLISHED"):
+            await _edit("Already posted.")
+        else:
+            tail = (proc.stderr or proc.stdout or "no output")[-200:] if proc else "error"
+            await _edit(f"❌ Publish failed: {tail}")
+
+    # Matches an X/Twitter status URL anywhere in a message.
+    _X_STATUS_RE = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/\S*?status(?:es)?/\d+\S*")
+
+    async def _maybe_draft_reply(self, update: Update) -> bool:
+        """If the message contains an X status URL, draft a reply to it and send
+        an Approve/Skip card. Returns True if handled (caller should stop)."""
+        text = update.message.text or ""
+        m = self._X_STATUS_RE.search(text)
+        if not m:
+            return False
+        url = m.group(0)
+        try:
+            await update.message.reply_text("Drafting a reply to that tweet...")
+        except Exception:
+            pass
+        xgrowth = "/home/mboard76/nvidia-workbench/terminal-llm/shared/x-growth-ops"
+        cmd = ["/usr/bin/python3", f"{xgrowth}/reply_draft.py", "--url", url]
+        proc = await self._run_blocking(cmd, timeout=180)
+        out = (proc.stdout or "").strip().splitlines() if proc else []
+        last = out[-1] if out else ""
+        # reply_draft.py sends the Approve/Skip card itself on success; only
+        # surface failures here (success card already arrived).
+        if not (proc and proc.returncode == 0 and last.startswith(("DRAFTED", "ALREADY_REPLIED"))):
+            tail = last or ((proc.stderr or "")[-200:] if proc else "no output")
+            try:
+                await update.message.reply_text(f"❌ Couldn't draft a reply: {tail}")
+            except Exception:
+                pass
+        return True
+
+    async def _run_blocking(self, cmd: list, timeout: int):
+        """Run a blocking subprocess off the event loop."""
+
+        def run():
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, run)
+        except Exception as e:
+            console.print(f"[red]callback subprocess failed: {e}[/red]")
+            return None
 
     async def disconnect(self):
         """Disconnect from Telegram."""
@@ -198,6 +317,12 @@ class TelegramChannel(Channel):
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text message."""
         print(f">>> Telegram: received from {update.effective_user.first_name}: {update.message.text}", flush=True)
+
+        # Paste-a-target reply flow: if the message contains an X/Twitter status
+        # URL, draft a reply to it and send an Approve/Skip card instead of
+        # routing the URL to the MAUDE chat agent.
+        if await self._maybe_draft_reply(update):
+            return
 
         if not self._message_handler:
             print(">>> Telegram: No message handler set!", flush=True)

@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 Persistent Memory System for MAUDE.
 
@@ -13,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from maude.config import runtime_paths
 from openai import OpenAI
 
 
@@ -32,7 +37,7 @@ class Memory:
 class MaudeMemory:
     """Persistent memory with semantic search capabilities."""
 
-    DB_PATH = Path.home() / ".config" / "maude" / "memory.db"
+    DB_PATH = runtime_paths().config_dir / "memory.db"
 
     def __init__(self, embed_url: str = None):
         """

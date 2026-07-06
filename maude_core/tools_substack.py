@@ -1,56 +1,18 @@
-"""
-Substack tools — lazy-import registrations.
-"""
+from maude_bootstrap import ensure_local_maude
 
-from tool_registry import register_tool
+ensure_local_maude()
 
+"""Compatibility shim for migrated MAUDE integration handler."""
 
-@register_tool("substack_create_draft")
-def _dispatch_substack_create_draft(args):
-    from substack_tools import substack_create_draft
+from pathlib import Path
+import sys
 
-    return substack_create_draft(
-        args.get("title", ""), args.get("body", ""), args.get("subtitle", ""), args.get("audience", "everyone")
-    )
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
+from maude.integrations import substack as _canonical
 
-@register_tool("substack_list_drafts")
-def _dispatch_substack_list_drafts(args):
-    from substack_tools import substack_list_drafts
+globals().update({name: value for name, value in vars(_canonical).items() if not name.startswith("__")})
 
-    return substack_list_drafts(args.get("limit", 10))
-
-
-@register_tool("substack_list_posts")
-def _dispatch_substack_list_posts(args):
-    from substack_tools import substack_list_posts
-
-    return substack_list_posts(args.get("limit", 10), args.get("offset", 0))
-
-
-@register_tool("substack_get_post")
-def _dispatch_substack_get_post(args):
-    from substack_tools import substack_get_post
-
-    return substack_get_post(args.get("post_id", ""))
-
-
-@register_tool("substack_update_draft")
-def _dispatch_substack_update_draft(args):
-    from substack_tools import substack_update_draft
-
-    return substack_update_draft(args.get("draft_id", ""), args.get("title"), args.get("body"), args.get("subtitle"))
-
-
-@register_tool("substack_delete_draft")
-def _dispatch_substack_delete_draft(args):
-    from substack_tools import substack_delete_draft
-
-    return substack_delete_draft(args.get("draft_id", ""))
-
-
-@register_tool("substack_get_stats")
-def _dispatch_substack_get_stats(args):
-    from substack_tools import substack_get_stats
-
-    return substack_get_stats()
+__all__ = [name for name in globals() if not name.startswith("__")]

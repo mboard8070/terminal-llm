@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 API Cost Tracking for MAUDE.
 
@@ -10,6 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from maude.config import runtime_paths
 from providers import PROVIDERS
 
 
@@ -30,7 +35,7 @@ class APICall:
 class CostTracker:
     """Track API costs with daily limits."""
 
-    LOG_DIR = Path.home() / ".config" / "maude" / "logs"
+    LOG_DIR = runtime_paths().logs_dir
 
     def __init__(self, daily_limit: float = None):
         self.daily_limit = daily_limit or float(os.environ.get("MAUDE_COST_LIMIT", "5.00"))

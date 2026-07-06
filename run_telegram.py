@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Telegram bot.
 Uses shared maude_core for full tool access.
@@ -259,10 +263,11 @@ async def sync_cli_messages(gateway):
     """Watch for CLI messages and push to Telegram."""
     import os
 
+    from maude.config import runtime_paths
     from channels import OutgoingMessage
 
     # Start from end of file
-    log_path = os.path.expanduser("~/.config/maude/chat_sync.jsonl")
+    log_path = str(runtime_paths().chat_sync_file)
     try:
         position = os.path.getsize(log_path) if os.path.exists(log_path) else 0
     except:

@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 Command Center tools — system monitoring, sessions, activity, scheduler, nodes.
 
@@ -9,9 +13,10 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from maude.config import runtime_paths
 from tool_registry import register_tool
 
-MAUDE_DATA = Path.home() / ".config" / "maude"
+MAUDE_DATA = runtime_paths().config_dir
 
 
 def _run(cmd: list[str], timeout: int = 5) -> str:

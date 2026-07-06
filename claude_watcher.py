@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 Claude Permission Watcher - Monitors Claude Code for permission prompts
 and forwards them to MAUDE for approval.
@@ -10,12 +14,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from maude.config import runtime_paths
+
 # Configuration
 CLAUDE_SESSION = "claude"
 MAUDE_SESSION = "maude"
 POLL_INTERVAL = 0.5  # seconds
-ACTIVITY_LOG = Path.home() / ".config" / "maude" / "activity.log"
-KILL_SWITCH = Path.home() / ".config" / "maude" / "stop"
+ACTIVITY_LOG = runtime_paths().logs_dir / "activity.log"
+KILL_SWITCH = runtime_paths().config_dir / "stop"
 
 # Patterns that indicate Claude is waiting for permission
 # Must be specific to actual Claude Code permission dialogs, not conversational questions

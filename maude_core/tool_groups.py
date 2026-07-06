@@ -562,9 +562,14 @@ def get_tools_for_message(message: str) -> list:
                 active_names.update(group["tools"])
                 break
 
-    # Flux 2 is cloud/paid. Do not offer it as a fallback for normal image
-    # generation; only expose it when the user explicitly asks for Flux 2.
-    if "flux 2" in msg_lower or "flux2" in msg_lower:
+    wants_flux2 = "flux 2" in msg_lower or "flux2" in msg_lower
+    wants_klein = "klein" in msg_lower or "4b" in msg_lower
+    if wants_flux2 and wants_klein:
+        active_names.add("generate_image_flux2_klein")
+        active_names.add("generate_image")
+    elif wants_flux2:
+        # Generic Flux 2 is cloud/paid. Do not offer it as a fallback for normal image
+        # generation; only expose it when the user explicitly asks for Flux 2.
         active_names.add("generate_image_flux2")
 
     # Build filtered list preserving order

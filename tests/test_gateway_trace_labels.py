@@ -61,3 +61,23 @@ class TestModelRouteTrace:
         assert payload["route_kind"] == "direct"
         assert payload["summary"] == "gemma-4-31b"
         assert payload["endpoint"] == "localhost:30013"
+    def test_model_call_metadata_payload_includes_audit_fields(self):
+        payload = CloudMixin._model_call_metadata_payload(
+            {"reason": "matched alias", "prompt_version": "chat:001"},
+            {"provider": "anthropic"},
+            "claude-sonnet-4-20250514",
+            100,
+            25,
+            1.234,
+        )
+
+        assert payload["provider"] == "anthropic"
+        assert payload["model"] == "claude-sonnet-4-20250514"
+        assert payload["model_version"] == "claude-sonnet-4-20250514"
+        assert payload["prompt_version"] == "chat:001"
+        assert payload["routing_decision"] == "matched alias"
+        assert payload["prompt_tokens"] == 100
+        assert payload["completion_tokens"] == 25
+        assert payload["elapsed"] == 1.23
+        assert payload["cost_usd"] == 0.0
+

@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Tool Catalog — single source of truth for all tool definitions.
 

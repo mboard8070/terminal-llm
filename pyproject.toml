@@ -7,6 +7,7 @@ dependencies = [
     "openai>=1.0.0",
     "python-dotenv",
     "rich",
+    "pyfiglet",
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
     "ddgs>=7.0.0",
@@ -15,6 +16,9 @@ dependencies = [
     "websockets>=12.0",
     "croniter>=2.0",
 ]
+
+[project.scripts]
+maude = "maude_cli:main"
 
 [project.optional-dependencies]
 cloud = [
@@ -57,7 +61,7 @@ all = [
 target-version = "py312"
 line-length = 120
 # Only lint our own code
-include = ["*.py", "maude_core/**/*.py", "tests/**/*.py"]
+include = ["*.py", "maude_core/**/*.py", "src/**/*.py", "tests/**/*.py"]
 exclude = ["venv", "llama.cpp", "maude-client", "maude-phone", "__pycache__"]
 
 [tool.ruff.lint]
@@ -98,7 +102,7 @@ ignore = [
 "voice.py" = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["maude_core"]
+known-first-party = ["maude", "maude_core"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -128,3 +132,11 @@ unknown-argument = "error"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 30
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["maude*"]

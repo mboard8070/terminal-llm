@@ -1,7 +1,11 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 Secure API Key Management for MAUDE.
 
-Stores API keys encrypted in ~/.config/maude/keys.json.enc
+Stores API keys encrypted in the configured MAUDE keys file
 Uses system keychain for the encryption key.
 """
 
@@ -9,13 +13,14 @@ import json
 import os
 from pathlib import Path
 
+from maude.config import runtime_paths
 from providers import PROVIDERS
 
 
 class KeyManager:
     """Manages API keys with encrypted file storage."""
 
-    CONFIG_DIR = Path.home() / ".config" / "maude"
+    CONFIG_DIR = runtime_paths().config_dir
     KEYS_FILE = CONFIG_DIR / "keys.json"  # Simple JSON for now, can add encryption later
 
     def __init__(self):

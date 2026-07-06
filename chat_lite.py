@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Lite — Terminal chat with full tool visibility and native copy/paste.
 
@@ -25,6 +29,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 
+from maude.config import runtime_paths
+
 import conversation_sync
 from collab import get_hub as get_collab_hub
 
@@ -34,11 +40,13 @@ env_path = Path(__file__).parent / "variables.env"
 load_dotenv(env_path)
 
 GATEWAY_URL = "http://localhost:30080/v1"
-HISTORY_FILE = Path.home() / ".config" / "maude" / "chat_lite_history"
+HISTORY_FILE = runtime_paths().config_dir / "chat_lite_history"
 
 MODELS = {
     "nemotron": "nemotron",
     "nemotron-super": "nemotron-super",
+    "nemotron-ultra": "nemotron-ultra",
+    "ultra": "nemotron-ultra",
     "nemotron-a3b": "nemotron-a3b",
     "a3b": "nemotron-a3b",
     "llava": "llava",
@@ -53,6 +61,8 @@ MODELS = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
+    "grok": "grok-4.3",
+    "grok-oauth": "grok-4.3",
 }
 
 DEFAULT_MODEL = "nemotron-super"
@@ -356,7 +366,7 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
                     return True
             except Exception:
                 continue
-        p = Path.home() / ".config" / "maude" / "last_response.txt"
+        p = runtime_paths().config_dir / "last_response.txt"
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(_last_response)
         console.print(f"[dim]Saved to {p}[/dim]\n")

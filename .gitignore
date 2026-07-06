@@ -60,6 +60,7 @@ data/conversations/
 data/sandbox/
 data/workflow_runs/
 data/workflows/
+data/hyperframes/
 
 # Local LLM setup
 venv/

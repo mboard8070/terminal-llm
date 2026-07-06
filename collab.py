@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Collaboration Hub — Presence, activity feed, projects, task dispatch, gossip sync.
 
@@ -17,9 +21,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from maude.config import runtime_paths
+
 # ── Storage helpers ──────────────────────────────────────────────
 
-COLLAB_DIR = Path(__file__).parent / "data" / "collab"
+COLLAB_DIR = runtime_paths().data_dir / "collab"
 PROJECTS_DIR = COLLAB_DIR / "projects"
 TASKS_DIR = COLLAB_DIR / "tasks"
 

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadCertificateFileName</key>
+      <string>MAUDE-CA.cer</string>
+      <key>PayloadContent</key>
+      <data>MIIDJzCCAg+gAwIBAgIUCRLxQ5aBR9jsKXM1m5RiPQLQ+AUwDQYJKoZIhvcNAQELBQAwIzERMA8GA1UEAwwITUFVREUgQ0ExDjAMBgNVBAoMBU1BVURFMB4XDTI2MDMxMzAwNTkyMFoXDTM2MDMxMDAwNTkyMFowIzERMA8GA1UEAwwITUFVREUgQ0ExDjAMBgNVBAoMBU1BVURFMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArtHMrQSWD/hHT/MA2E/B/CZWwXqD6TVfiMGqOTFjF5rpfp/ehq/jvlkuRlju11suxoiznw2BADnpz3NNVCgwsS7FaSbaD4qo0+QF8o7MPUQf0DkGZ5EaxvkvGWvFTpZIXDivXKx1vqy8/NGT6C/42oh7kYTdJG7PzDKqF+XjRlnYThmW+zEbUh1BxaiMPEtrlvprf8tQ532SVZv6+c8T3IcAYRZFh3yQ0un+xOQJrgYUmPzQU42ubwBKz2giTxmdl28Eeqbj8PJvM595780x9o6AQVS8/t4KQPw8+Fktv/Aiy9lfaFGOh0Jn1lIDF1aj+uM/VhhgQ37DGaVBks6lFQIDAQABo1MwUTAdBgNVHQ4EFgQUKR9rFajaAnVal6YIodF91waecycwHwYDVR0jBBgwFoAUKR9rFajaAnVal6YIodF91waecycwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAEsf2wTcInehgb7YXqBdgd3yYn6YoPq/hmsXk2+4h699Ua5zhghT06CIROu03o56iEdR/K7hngon12bci7cstmUHXkepBp4jnUWtaFlIW6wRzwyn9LoZMOikDgqQ35MbrG9QH41NwS5S4yPj7mvOu740X7JO2kAPujtaUci1vO503z0iEXNAGF9ZMMJLg4dB7mHdt9uouS0BEeM5tugyQeeEFTvafzdxy/r8zLmiYb4Xkm1paUtVnA1K1w+80MH1w1XvroVPESMoUH7S/IQi9e1vCCApoq0CQt4SDlqI3FEToqz0XyzPwXegLmmy/8p96JWgjJRgTGzaQzu7yLui+ug==</data>
+      <key>PayloadDescription</key>
+      <string>Trusts the private MAUDE gateway certificate authority for HTTPS access on Tailscale.</string>
+      <key>PayloadDisplayName</key>
+      <string>MAUDE Gateway CA</string>
+      <key>PayloadIdentifier</key>
+      <string>com.maude.gateway.ca</string>
+      <key>PayloadType</key>
+      <string>com.apple.security.root</string>
+      <key>PayloadUUID</key>
+      <string>4FAEB9FC-6738-4A78-8A05-1BB300051869</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+    </dict>
+  </array>
+  <key>PayloadDescription</key>
+  <string>Installs the MAUDE private root CA so Safari can trust https://100.107.132.16:30000.</string>
+  <key>PayloadDisplayName</key>
+  <string>MAUDE Gateway Trust</string>
+  <key>PayloadIdentifier</key>
+  <string>com.maude.gateway.trust</string>
+  <key>PayloadOrganization</key>
+  <string>MAUDE</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadUUID</key>
+  <string>21C4C794-BD7B-4EC4-B42A-425537B9DE58</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+</dict>
+</plist>

@@ -18,17 +18,23 @@ const MODELS = [
   { id: "devstral-medium-latest", label: "Devstral Medium", desc: "Code Mid" },
   { id: "nemotron", label: "Nemotron", desc: "Local" },
   { id: "nemotron-super", label: "Nemotron Super", desc: "OpenRouter 120B" },
+  { id: "nemotron-ultra", label: "Nemotron Ultra", desc: "OpenRouter 550B" },
   { id: "nemotron-a3b", label: "Nemotron A3B", desc: "OpenRouter 30B" },
   { id: "gemma-4-31b", label: "Gemma 4", desc: "Local 31B" },
   { id: "llava", label: "LLaVA", desc: "Vision" },
+  { id: "grok-4.3", label: "Grok", desc: "xAI (X Premium)" },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
   "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
+  "nvidia/nemotron-3-ultra-550b-a55b:free": "nemotron-ultra",
+  "nemotron-3-ultra": "nemotron-ultra",
+  "ultra": "nemotron-ultra",
   "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
   "nemotron-nano": "nemotron-a3b",
   "a3b": "nemotron-a3b",
   "codex-cli": "codex",
+  "grok": "grok-4.3",
 };
 
 export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, onToggleAutoRoute }) => {

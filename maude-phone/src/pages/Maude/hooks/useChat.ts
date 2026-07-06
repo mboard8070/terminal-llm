@@ -8,10 +8,14 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
 
 const MODEL_ALIASES: Record<string, string> = {
   "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
+  "nvidia/nemotron-3-ultra-550b-a55b:free": "nemotron-ultra",
+  "nemotron-3-ultra": "nemotron-ultra",
+  "ultra": "nemotron-ultra",
   "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
   "nemotron-nano": "nemotron-a3b",
   "a3b": "nemotron-a3b",
   "codex-cli": "codex",
+  "grok": "grok-4.3",
 };
 
 function normalizeModelId(model: string | null | undefined): string {

@@ -25,6 +25,12 @@ from pathlib import Path
 
 import requests
 
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
+from maude.config import runtime_paths
+
 try:
     from maude_core import log
 except ImportError:
@@ -38,7 +44,7 @@ except ImportError:
 
 _TIMEOUT = 30
 _SNAPSHOT_MAX_CHARS = 12_000
-SCREENSHOT_DIR = Path.home() / ".config" / "maude" / "screenshots"
+SCREENSHOT_DIR = runtime_paths().screenshots_dir
 
 
 def get_camofox_url() -> str:

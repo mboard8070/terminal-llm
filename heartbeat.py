@@ -1,3 +1,7 @@
+from maude_bootstrap import ensure_local_maude
+
+ensure_local_maude()
+
 """
 MAUDE Proactive Heartbeat System.
 
@@ -12,8 +16,8 @@ Architecture
 ------------
 - HeartbeatEngine    : async start()/stop(), configurable interval
 - PatternTracker     : observes user activity over time and surfaces trends
-- Daily activity log : ~/.config/maude/heartbeat/YYYY-MM-DD.md
-- Pattern store      : ~/.config/maude/heartbeat/patterns.json
+- Daily activity log : the configured heartbeat daily log
+- Pattern store      : the configured heartbeat pattern store
 
 Configuration (environment variables)
 --------------------------------------
@@ -42,6 +46,7 @@ from maude_core import (
     get_memory,
     read_chat_log_since,
 )
+from maude.config import runtime_paths
 from scheduler import get_scheduler
 
 log = logging.getLogger("maude.heartbeat")
@@ -53,7 +58,7 @@ log = logging.getLogger("maude.heartbeat")
 _DEFAULT_INTERVAL = 900  # 15 minutes
 _DEFAULT_ENABLED = True
 
-HEARTBEAT_DIR = Path.home() / ".config" / "maude" / "heartbeat"
+HEARTBEAT_DIR = runtime_paths().config_dir / "heartbeat"
 PATTERNS_FILE = HEARTBEAT_DIR / "patterns.json"
 
 
@@ -135,7 +140,7 @@ class PatternTracker:
     """
     Track what the user does frequently and surface trends.
 
-    Patterns are persisted as JSON at ~/.config/maude/heartbeat/patterns.json
+    Patterns are persisted as JSON at the configured heartbeat pattern store
     so they survive restarts.
     """
 
@@ -227,7 +232,7 @@ class PatternTracker:
 class HeartbeatLogger:
     """
     Append structured entries to a daily markdown log at
-    ~/.config/maude/heartbeat/YYYY-MM-DD.md
+    the configured heartbeat daily log
     """
 
     def __init__(self):
