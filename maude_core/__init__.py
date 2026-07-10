@@ -69,6 +69,7 @@ register_prefix("skill_", handler=_skill_prefix_handler)
 from . import (
     tools_agents,
     tools_ai,
+    tools_claude_code,
     tools_collab,
     tools_file,
     tools_github,

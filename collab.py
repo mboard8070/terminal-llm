@@ -421,6 +421,17 @@ class TaskDispatcher:
             _atomic_write(TASKS_DIR / f"{task_id}.json", task)
         return task
 
+    def set_fields(self, task_id: str, **fields) -> dict | None:
+        """Set arbitrary extra fields on a task (e.g. a per-task timeout)."""
+        task = self.get(task_id)
+        if not task:
+            return None
+        task.update(fields)
+        task["updated_at"] = time.time()
+        with self._lock:
+            _atomic_write(TASKS_DIR / f"{task_id}.json", task)
+        return task
+
     def list_all(self, status: str = None) -> list[dict]:
         self.expire_stale_running()
         tasks = []
