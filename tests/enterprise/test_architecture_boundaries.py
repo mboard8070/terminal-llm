@@ -486,7 +486,7 @@ def test_domain_tool_schemas_are_canonical_for_legacy_tool_defs():
     domain_names = {tool["function"]["name"] for tool in all_domain_tool_schemas()}
     legacy_names = {tool["function"]["name"] for tool in LEGACY_TOOL_SCHEMAS}
 
-    assert len(domain_names) == 190
+    assert len(domain_names) == 198
     assert legacy_names == domain_names
 
 

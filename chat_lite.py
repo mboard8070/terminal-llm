@@ -29,10 +29,9 @@ from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 
-from maude.config import runtime_paths
-
 import conversation_sync
 from collab import get_hub as get_collab_hub
+from maude.config import runtime_paths
 
 # ── Config ────────────────────────────────────────────────────────────────
 
@@ -416,7 +415,9 @@ def show_background_tasks():
     if tasks:
         lines.append("[bold cyan]Still running[/bold cyan]")
         for task in tasks:
-            lines.append(f"  [cyan]⠿[/cyan] {task.get('label', 'Task')} [dim]pid {task.get('pid')} · {task.get('elapsed')}[/dim]")
+            lines.append(
+                f"  [cyan]⠿[/cyan] {task.get('label', 'Task')} [dim]pid {task.get('pid')} · {task.get('elapsed')}[/dim]"
+            )
     if outputs:
         if lines:
             lines.append("")

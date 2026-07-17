@@ -55,17 +55,60 @@ class TestPresence:
         assert len(status["presence"]) >= 1
 
     def test_stale_entries_pruned(self, hub):
-        # Register a client with a stale timestamp
+        # Soft-stale: hidden from default online list, still dispatch-eligible
+        hub.presence._clients["soft-client"] = {
+            "client_id": "soft-client",
+            "client_type": "tui",
+            "hostname": "test",
+            "platform": "windows",
+            "last_seen": time.time() - 200,  # > soft (180s), < hard (900s)
+            "activity": "idle",
+        }
+        online = hub.presence.get_all()
+        assert not any(p["client_id"] == "soft-client" for p in online)
+        eligible = hub.presence.get_dispatch_eligible()
+        assert any(p["client_id"] == "soft-client" for p in eligible)
+
+        # Hard-stale: pruned completely
         hub.presence._clients["old-client"] = {
             "client_id": "old-client",
             "client_type": "tui",
             "hostname": "test",
-            "last_seen": time.time() - 100,  # > 90s threshold
+            "platform": "windows",
+            "last_seen": time.time() - 1000,  # > hard threshold
             "activity": "idle",
         }
-        # Prune happens on get_all()
-        result = hub.presence.get_all()
+        result = hub.presence.get_all(include_soft_stale=True)
         assert not any(p["client_id"] == "old-client" for p in result)
+
+    def test_dispatch_queues_when_client_temporarily_missing(self, hub):
+        # No presence entry — should queue, not hard-fail
+        task = hub.dispatch_task(
+            "echo hello",
+            capability="SHELL",
+            target_client_id="Mattwell-mboar",
+        )
+        assert task["status"] == "queued"
+        assert task["target_client_id"] == "Mattwell-mboar"
+        assert "Queued for claim" in (task.get("result") or "")
+
+    def test_dispatch_accepts_soft_stale_client(self, hub):
+        hub.presence._clients["Mattwell-mboar"] = {
+            "client_id": "Mattwell-mboar",
+            "client_type": "windows",
+            "hostname": "Mattwell",
+            "platform": "windows",
+            "last_seen": time.time() - 300,  # soft-stale
+            "activity": "idle",
+        }
+        task = hub.dispatch_task(
+            "echo hello",
+            capability="SHELL",
+            target_client_id="Mattwell-mboar",
+        )
+        assert task["status"] == "queued"
+        assert task["target_client_id"] == "Mattwell-mboar"
+        assert "soft-stale" in (task.get("result") or "")
 
 
 class TestActivity:

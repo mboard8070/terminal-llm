@@ -9,10 +9,13 @@ route-handler methods from RoutesMixin.
 import fcntl
 import html
 import http.client
+import io
 import json
 import os
+import re
 import ssl
 import struct
+import tarfile
 import termios
 import threading
 import time
@@ -80,6 +83,14 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
 
         if parsed.path in ("/plain-chat", "/plain", "/plainchat", "/chat-test", "/maude/plain-chat"):
             self._serve_plain_chat()
+            return
+
+        if parsed.path in ("/client/latest.tar.gz", "/client/update"):
+            self._serve_client_package()
+            return
+
+        if parsed.path == "/client/version":
+            self._json_response({"version": self._client_package_version()})
             return
 
         if parsed.path == "/api/ping":
@@ -337,6 +348,48 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
             self._route_model_request()
         else:
             self._proxy_to_llm()
+
+    _CLIENT_SRC_DIR = Path(__file__).resolve().parents[3] / "maude-client"
+
+    def _client_package_version(self) -> str:
+        init_file = self._CLIENT_SRC_DIR / "maude_client" / "__init__.py"
+        try:
+            match = re.search(r'__version__\s*=\s*"([^"]+)"', init_file.read_text())
+            return match.group(1) if match else "0.0.0"
+        except OSError:
+            return "0.0.0"
+
+    def _serve_client_package(self):
+        """Serve a pip-installable source tarball of maude-client built from the live tree.
+
+        Clients update with:
+            pip install --upgrade --trusted-host <host> <gateway>/client/latest.tar.gz
+        """
+        if not (self._CLIENT_SRC_DIR / "pyproject.toml").exists():
+            self._json_response({"error": "maude-client source not found on server"}, 404)
+            return
+        version = self._client_package_version()
+        skip = ("__pycache__", ".egg-info", ".pyc", ".pyo", "/dist/", "/build/", ".git")
+
+        def _filter(tarinfo):
+            return None if any(s in tarinfo.name for s in skip) else tarinfo
+
+        try:
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+                tar.add(self._CLIENT_SRC_DIR, arcname=f"maude_client-{version}", filter=_filter)
+            data = buf.getvalue()
+        except Exception as e:
+            self._json_response({"error": f"Failed to package client: {e}"}, 500)
+            return
+        logger.info("client package v%s served to %s (%d bytes)", version, self.client_address[0], len(data))
+        self.send_response(200)
+        self._add_cors()
+        self.send_header("Content-Type", "application/gzip")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="maude_client-{version}.tar.gz"')
+        self.end_headers()
+        self.wfile.write(data)
 
     def _serve_gateway_diag(self):
         page = f"""<!doctype html>

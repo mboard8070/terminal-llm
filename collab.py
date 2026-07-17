@@ -54,9 +54,18 @@ def _read_json(path: Path, default=None):
 
 
 class PresenceManager:
-    """Tracks client heartbeats. Prunes stale entries (>90s)."""
+    """Tracks client heartbeats with soft/hard stale windows.
 
-    STALE_THRESHOLD = 90  # seconds
+    Soft stale: hidden from default online list after SOFT_STALE_THRESHOLD.
+    Hard stale: removed and no longer dispatch-eligible after HARD_STALE_THRESHOLD.
+    Brief heartbeat gaps no longer drop agent jobs.
+    """
+
+    # Heartbeats are every ~30s. Allow several missed beats before hard drop.
+    SOFT_STALE_THRESHOLD = 180  # seconds — hide from "online now" after ~3 min
+    HARD_STALE_THRESHOLD = 900  # seconds — keep dispatch-eligible for ~15 min
+    # Backward-compatible alias used by older tests/callers.
+    STALE_THRESHOLD = HARD_STALE_THRESHOLD
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -83,6 +92,8 @@ class PresenceManager:
         platform: str = "",
     ):
         with self._lock:
+            now = time.time()
+            prev = self._clients.get(client_id, {})
             self._clients[client_id] = {
                 "client_id": client_id,
                 "client_type": client_type,
@@ -92,19 +103,68 @@ class PresenceManager:
                 "activity": activity,
                 "active_conversation": conversation_id,
                 "active_project": project_id,
-                "last_seen": time.time(),
+                "last_seen": now,
+                "first_seen": prev.get("first_seen", now),
+                "missed_beats": 0,
             }
             self._prune()
             self._save()
 
-    def get_all(self) -> list[dict]:
+    def get_all(self, include_soft_stale: bool = False) -> list[dict]:
+        """Return presence entries.
+
+        Default: soft-fresh clients only.
+        include_soft_stale=True: also include dispatch-eligible soft-stale clients.
+        """
         with self._lock:
             self._prune()
-            return list(self._clients.values())
+            now = time.time()
+            out = []
+            for entry in self._clients.values():
+                age = now - float(entry.get("last_seen", 0) or 0)
+                annotated = dict(entry)
+                annotated["age_seconds"] = round(age, 1)
+                if age <= self.SOFT_STALE_THRESHOLD:
+                    annotated["presence_state"] = "online"
+                    annotated["status"] = annotated.get("status") or "active"
+                    out.append(annotated)
+                elif include_soft_stale and age <= self.HARD_STALE_THRESHOLD:
+                    annotated["presence_state"] = "soft_stale"
+                    annotated["status"] = "soft_stale"
+                    out.append(annotated)
+            return out
+
+    def get_dispatch_eligible(self) -> list[dict]:
+        """Clients eligible for task dispatch (online + soft-stale grace)."""
+        return self.get_all(include_soft_stale=True)
+
+    def find_client(self, client_id: str = "", hostname: str = "", platform: str = "") -> dict | None:
+        """Find a dispatch-eligible client by id, hostname, or platform."""
+        clients = self.get_dispatch_eligible()
+        if client_id:
+            for p in clients:
+                if p.get("client_id") == client_id:
+                    return p
+        if hostname:
+            host_lower = hostname.lower()
+            for p in clients:
+                h = (p.get("hostname") or "").lower()
+                if h and (h == host_lower or host_lower in h or h in host_lower):
+                    return p
+        if platform:
+            plat_lower = platform.lower()
+            for p in clients:
+                if (p.get("platform") or "").lower() == plat_lower:
+                    return p
+        return None
 
     def _prune(self):
         now = time.time()
-        stale = [k for k, v in self._clients.items() if now - v.get("last_seen", 0) > self.STALE_THRESHOLD]
+        stale = [
+            k
+            for k, v in self._clients.items()
+            if now - float(v.get("last_seen", 0) or 0) > self.HARD_STALE_THRESHOLD
+        ]
         for k in stale:
             del self._clients[k]
 
@@ -112,8 +172,8 @@ class PresenceManager:
         _atomic_write(self._file, list(self._clients.values()))
 
     def get_bundle(self) -> list[dict]:
-        """Return presence data for gossip."""
-        return self.get_all()
+        """Return presence data for gossip (include soft-stale so peers keep eligibility)."""
+        return self.get_all(include_soft_stale=True)
 
     def merge_peer(self, entries: list[dict]):
         """Merge peer presence entries (peer is authoritative for its hostname)."""
@@ -122,6 +182,11 @@ class PresenceManager:
                 cid = entry.get("client_id")
                 hostname = entry.get("hostname", "")
                 if cid and hostname != MY_HOSTNAME:
+                    existing = self._clients.get(cid)
+                    if existing and float(existing.get("last_seen", 0) or 0) > float(
+                        entry.get("last_seen", 0) or 0
+                    ):
+                        continue
                     self._clients[cid] = entry
             self._prune()
             self._save()
@@ -623,15 +688,66 @@ class CollabHub:
         target_client_id: str = "",
         target_platform: str = "",
     ) -> dict:
-        # Resolve target: check if it matches a client_id, hostname, or platform
+        # Resolve target against dispatch-eligible presence (online + soft-stale).
+        # Brief heartbeat gaps queue tasks instead of hard-failing agent jobs.
         explicitly_targeted = bool(target or target_client_id or target_platform)
+        soft_stale_note = ""
+
+        def _online_str(presence_list: list[dict]) -> str:
+            online = [
+                f"{p.get('hostname')} [{p.get('client_id')}] "
+                f"({p.get('platform')}/{p.get('presence_state', 'online')})"
+                for p in presence_list
+                if p.get("platform") not in ("gateway",)
+            ]
+            return ", ".join(online) if online else "none"
+
+        def _queue_for_client(
+            *,
+            prompt: str,
+            target: str,
+            capability: str,
+            project_id: str,
+            target_client_id: str = "",
+            target_platform: str = "",
+            note: str,
+            emit_summary: str,
+        ) -> dict:
+            task = self.tasks.create(
+                prompt,
+                target,
+                capability,
+                project_id,
+                target_client_id=target_client_id,
+                target_platform=target_platform,
+            )
+            task["result"] = note
+            task["updated_at"] = time.time()
+            with self.tasks._lock:
+                _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
+            self.emit(
+                "task_dispatched",
+                emit_summary,
+                {
+                    "task_id": task["id"],
+                    "target": target_client_id or target_platform or target,
+                    "deferred": True,
+                },
+            )
+            return task
+
         if target and not target_client_id and not target_platform:
-            presence = self.presence.get_all()
+            presence = self.presence.get_dispatch_eligible()
             target_lower = target.lower()
             # 1. Exact client_id match
             for p in presence:
                 if p.get("client_id") == target:
                     target_client_id = target
+                    if p.get("presence_state") == "soft_stale":
+                        soft_stale_note = (
+                            f"queued while client soft-stale "
+                            f"(last_seen {p.get('age_seconds', '?')}s ago)"
+                        )
                     break
             # 2. Hostname match (exact or substring, case-insensitive)
             if not target_client_id:
@@ -639,23 +755,44 @@ class CollabHub:
                     h = p.get("hostname", "").lower()
                     if h and (h == target_lower or target_lower in h or h in target_lower):
                         target_client_id = p.get("client_id", "")
+                        if p.get("presence_state") == "soft_stale":
+                            soft_stale_note = (
+                                f"queued while client soft-stale "
+                                f"(last_seen {p.get('age_seconds', '?')}s ago)"
+                            )
                         break
             # 3. Platform match
             if not target_client_id:
                 for p in presence:
                     if p.get("platform", "").lower() == target_lower:
                         target_platform = target_lower
+                        if p.get("presence_state") == "soft_stale":
+                            soft_stale_note = (
+                                f"queued while platform client soft-stale "
+                                f"(last_seen {p.get('age_seconds', '?')}s ago)"
+                            )
                         break
 
-            # If target was specified but couldn't be resolved, fail fast
+            # Unresolved target: queue known-looking client ids instead of fail-fast.
             if not target_client_id and not target_platform:
-                # List who IS online for the LLM
-                online = [
-                    f"{p.get('hostname')} ({p.get('platform')})"
-                    for p in presence
-                    if p.get("platform") not in ("gateway",)
-                ]
-                online_str = ", ".join(online) if online else "none"
+                online_str = _online_str(presence)
+                looks_like_client = bool(target) and (
+                    "-" in target or target.lower() not in ("local", "gateway", "spark")
+                )
+                if looks_like_client:
+                    return _queue_for_client(
+                        prompt=prompt,
+                        target=target,
+                        capability=capability,
+                        project_id=project_id,
+                        target_client_id=target,
+                        note=(
+                            f"Client '{target}' not currently in presence "
+                            f"(online: {online_str}). Queued for claim when client returns."
+                        ),
+                        emit_summary=f"Queued task for offline/unknown client {target}",
+                    )
+
                 task = self.tasks.create(
                     prompt,
                     target,
@@ -670,35 +807,48 @@ class CollabHub:
                 task["result"] = fail_msg
                 return task
 
-        # Validate explicit target_client_id / target_platform against presence —
-        # otherwise a hallucinated client_id just sits queued forever.
+        # Explicit client/platform targets: soft-stale still queues; unknown queues too.
         if target_client_id or target_platform:
-            presence = self.presence.get_all()
-            non_gateway = [p for p in presence if p.get("platform") not in ("gateway",)]
-            online_str = (
-                ", ".join(f"{p.get('hostname')} [{p.get('client_id')}] ({p.get('platform')})" for p in non_gateway)
-                or "none"
-            )
-            if target_client_id and not any(p.get("client_id") == target_client_id for p in presence):
-                task = self.tasks.create(
-                    prompt, target, capability, project_id, target_client_id="", target_platform=""
-                )
-                fail_msg = f"client_id '{target_client_id}' not found or offline. Online clients: {online_str}"
-                self.tasks.update_status(task["id"], "failed", fail_msg)
-                task["status"] = "failed"
-                task["result"] = fail_msg
-                return task
+            presence = self.presence.get_dispatch_eligible()
+            online_str = _online_str(presence)
+            if target_client_id:
+                match = next((p for p in presence if p.get("client_id") == target_client_id), None)
+                if match is None:
+                    return _queue_for_client(
+                        prompt=prompt,
+                        target=target,
+                        capability=capability,
+                        project_id=project_id,
+                        target_client_id=target_client_id,
+                        target_platform=target_platform,
+                        note=(
+                            f"client_id '{target_client_id}' not currently in presence "
+                            f"(online: {online_str}). Queued for claim when client returns."
+                        ),
+                        emit_summary=f"Queued task for offline client {target_client_id}",
+                    )
+                if match.get("presence_state") == "soft_stale":
+                    soft_stale_note = (
+                        f"queued while client soft-stale "
+                        f"(last_seen {match.get('age_seconds', '?')}s ago)"
+                    )
             if target_platform and not any(
-                p.get("platform", "").lower() == target_platform.lower() for p in non_gateway
+                (p.get("platform") or "").lower() == target_platform.lower() for p in presence
+                if p.get("platform") not in ("gateway",)
             ):
-                task = self.tasks.create(
-                    prompt, target, capability, project_id, target_client_id="", target_platform=""
+                return _queue_for_client(
+                    prompt=prompt,
+                    target=target,
+                    capability=capability,
+                    project_id=project_id,
+                    target_client_id=target_client_id,
+                    target_platform=target_platform,
+                    note=(
+                        f"No '{target_platform}' client currently in presence "
+                        f"(online: {online_str}). Queued for claim when a matching client returns."
+                    ),
+                    emit_summary=f"Queued task for offline platform {target_platform}",
                 )
-                fail_msg = f"No '{target_platform}' client online. Online clients: {online_str}"
-                self.tasks.update_status(task["id"], "failed", fail_msg)
-                task["status"] = "failed"
-                task["result"] = fail_msg
-                return task
 
         is_client_targeted = bool(target_client_id or target_platform)
         task = self.tasks.create(
@@ -709,6 +859,11 @@ class CollabHub:
             target_client_id=target_client_id,
             target_platform=target_platform,
         )
+        if soft_stale_note:
+            task["result"] = soft_stale_note
+            task["updated_at"] = time.time()
+            with self.tasks._lock:
+                _atomic_write(TASKS_DIR / f"{task['id']}.json", task)
 
         dest = target_client_id or target_platform or target or "local"
         self.emit("task_dispatched", f"Dispatched task to {dest}", {"task_id": task["id"], "target": dest})

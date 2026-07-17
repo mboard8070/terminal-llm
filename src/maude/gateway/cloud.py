@@ -154,7 +154,7 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             "Use any listed tool with:",
             "curl -s -X POST http://localhost:30080/api/tools/execute "
             "-H 'Content-Type: application/json' "
-            "-d '{\"name\":\"TOOL_NAME\",\"arguments\":{...}}'",
+            '-d \'{"name":"TOOL_NAME","arguments":{...}}\'',
         ]
         for tool in active_tools:
             fn = tool.get("function", {})
@@ -665,7 +665,6 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             "tool_mode": tool_mode,
             "summary": f"{requested} -> {resolved_name}" if route_kind == "alias" else resolved_name,
         }
-
 
     @staticmethod
     def _model_call_metadata_payload(

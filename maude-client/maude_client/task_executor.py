@@ -8,10 +8,12 @@ import time
 import platform
 import threading
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional, Callable
 
 from maude_client.config import SERVER_HOST, SERVER_LLM_PORT
-from maude_client.heartbeat import get_client_id
+from maude_client.heartbeat import get_client_id, set_heartbeat_activity
 from maude_client.process_utils import run_process, shell_command
 
 # Configuration
@@ -31,52 +33,85 @@ class TaskExecutor:
         self.on_task_start = on_task_start
         self.on_task_complete = on_task_complete
         self._platform = platform.system().lower()
+        self._session = self._build_session()
+        self._poll_fail_count = 0
+
+    @staticmethod
+    def _build_session() -> requests.Session:
+        """HTTP session resilient to brief gateway restarts / peer-closed blips."""
+        session = requests.Session()
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.5,
+            status_forcelist=(502, 503, 504),
+            allowed_methods=frozenset(["GET", "POST"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=4)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        session.verify = False
+        return session
 
     def _poll_tasks(self) -> list:
         """Poll the server for queued tasks targeting this client."""
         try:
-            resp = requests.get(
+            resp = self._session.get(
                 POLL_ENDPOINT,
                 params={"client_id": self.client_id},
                 timeout=10,
-                verify=False,
             )
             if resp.status_code == 200:
+                self._poll_fail_count = 0
                 return resp.json()
-        except requests.exceptions.RequestException:
-            pass
+        except Exception as exc:
+            self._poll_fail_count += 1
+            if self._poll_fail_count == 1 or self._poll_fail_count % 5 == 0:
+                print(
+                    f"[task_executor] poll failed x{self._poll_fail_count}: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
         return []
 
     def _claim_task(self, task_id: str) -> bool:
         """Claim a task (set status to running). Returns False if already claimed."""
         try:
-            resp = requests.post(
+            resp = self._session.post(
                 f"{TASKS_ENDPOINT}/{task_id}/claim",
                 json={},
                 timeout=10,
-                verify=False,
             )
             return resp.status_code == 200
-        except requests.exceptions.RequestException:
+        except Exception as exc:
+            print(f"[task_executor] claim failed: {type(exc).__name__}: {exc}", flush=True)
             return False
 
     def _report_result(self, task_id: str, status: str, result: str):
         """Report task result back to the server."""
-        try:
-            requests.post(
-                f"{TASKS_ENDPOINT}/{task_id}/result",
-                json={"status": status, "result": result},
-                timeout=10,
-                verify=False,
-            )
-        except requests.exceptions.RequestException:
-            pass
+        # Retry result report — losing completion is worse than a delayed report.
+        last_exc = None
+        for attempt in range(3):
+            try:
+                self._session.post(
+                    f"{TASKS_ENDPOINT}/{task_id}/result",
+                    json={"status": status, "result": result},
+                    timeout=15,
+                )
+                return
+            except Exception as exc:
+                last_exc = exc
+                time.sleep(1.0 * (attempt + 1))
+        print(f"[task_executor] result report failed: {last_exc}", flush=True)
 
     def _execute_command(self, command: str) -> tuple:
         """Execute a shell command. Returns (status, output).
 
         Commands are launched in their own process group so a timeout cleans up
-        shell grandchildren too. This prevents Mac helper processes from being
+        shell grandchildren (important on Windows where taskkill /T is used).
+        This also prevents Mac helper processes from being
         orphaned after a dispatched task times out.
         """
         try:
@@ -90,32 +125,33 @@ class TaskExecutor:
             if result.returncode == 0:
                 return ("completed", output or "(no output)")
             return ("completed", f"(exit code {result.returncode})\n{output}" if output else f"(exit code {result.returncode})")
-
         except Exception as e:
-            return ("failed", str(e))
+            return ("failed", f"Execution error: {e}")
 
-    def _handle_task(self, task: dict):
-        """Claim, execute, and report a single task."""
+    def _execute_task(self, task: dict):
+        """Execute a single task and report the result."""
         task_id = task.get("id", "")
         prompt = task.get("prompt", "")
-        capability = task.get("capability", "SHELL")
+        capability = task.get("capability", "shell")
 
-        if self.on_task_start:
-            self.on_task_start(task)
-
-        # Claim the task
         if not self._claim_task(task_id):
             return  # Already claimed by someone else
 
-        if capability == "SHELL":
-            status, result = self._execute_command(prompt)
-        else:
-            status, result = "failed", f"Client can only execute SHELL tasks (got {capability})"
+        set_heartbeat_activity(f"working:{task_id[:16]}")
+        if self.on_task_start:
+            self.on_task_start(task)
 
-        self._report_result(task_id, status, result)
-
-        if self.on_task_complete:
-            self.on_task_complete(task, status, result)
+        try:
+            cap = (capability or "").strip().upper()
+            if cap in ("SHELL", "COMMAND", ""):
+                status, result = self._execute_command(prompt)
+            else:
+                status, result = ("failed", f"Unsupported capability on client: {capability}")
+            self._report_result(task_id, status, result)
+            if self.on_task_complete:
+                self.on_task_complete(task, status, result)
+        finally:
+            set_heartbeat_activity("running")
 
     def _poll_loop(self):
         """Background loop that polls for and executes tasks."""
@@ -124,10 +160,10 @@ class TaskExecutor:
             for task in tasks:
                 if not self.running:
                     break
-                self._handle_task(task)
-
-            # Sleep in small increments for quick shutdown
-            for _ in range(POLL_INTERVAL):
+                self._execute_task(task)
+            # Faster recovery after poll failures (gateway restart / peer closed).
+            sleep_for = POLL_INTERVAL if self._poll_fail_count == 0 else min(3, POLL_INTERVAL)
+            for _ in range(int(sleep_for)):
                 if not self.running:
                     break
                 time.sleep(1)

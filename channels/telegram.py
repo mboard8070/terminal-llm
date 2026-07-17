@@ -7,11 +7,11 @@ Supports text, photos, and voice messages.
 
 import asyncio
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Callable
 from datetime import datetime
-
 from rich.console import Console
 
 from channels import Channel, IncomingMessage, OutgoingMessage
@@ -22,7 +22,6 @@ console = Console()
 VOICE_SERVER_URL = os.environ.get("VOICE_SERVER_URL", "wss://localhost:8998/ws")
 VOICE_ENABLED = os.environ.get("VOICE_ENABLED", "true").lower() == "true"
 VOICE_RESPONSE_ENABLED = os.environ.get("VOICE_RESPONSE_ENABLED", "true").lower() == "true"
-
 
 def get_telegram_bot_token() -> str | None:
     """Return the MAUDE Telegram bot token, with legacy fallback."""
