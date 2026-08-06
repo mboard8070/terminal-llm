@@ -63,6 +63,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from typing import Optional, Generator, Callable
 
 from maude_client import __version__
+from maude_client.writing_rules import application_writing_block
 from maude_client.config import (
     SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
     CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
@@ -752,7 +753,9 @@ BROWSER WORKFLOWS (server-side):
 Note: Google Workspace tools (Gmail, Drive, Sheets, Calendar, etc.) and browser tools are handled server-side by the gateway's tool loop. Just ask naturally and the gateway will call the right tools.
 
 Current client: {CLIENT_NAME} ({_MY_PLATFORM})
-Be concise and helpful."""
+Be concise and helpful.
+
+{application_writing_block()}"""
 
 
 def _is_mistralish_model(model: str) -> bool:
