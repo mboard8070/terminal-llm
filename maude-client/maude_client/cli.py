@@ -34,14 +34,27 @@ if _IS_WINDOWS:
     except Exception:
         pass
 else:
+    # macOS ships libedit-backed readline. Keep it simple and non-blocking so
+    # keystrokes echo immediately; avoid completion hooks that can swallow input.
     try:
         import readline
+
         readline.set_completer(None)
+        try:
+            readline.set_completion_display_matches_hook(None)
+        except Exception:
+            pass
         _rl_doc = getattr(readline, "__doc__", None) or ""
         if "libedit" in _rl_doc:
-            readline.parse_and_bind("bind ^I rl_insert")  # macOS libedit
+            # libedit: insert tab literally, no completion menu.
+            readline.parse_and_bind("bind ^I rl_insert")
+            try:
+                readline.parse_and_bind("bind -e")  # emacs mode, predictable editing
+            except Exception:
+                pass
         else:
-            readline.parse_and_bind("tab: self-insert")   # GNU readline
+            readline.parse_and_bind("set disable-completion on")
+            readline.parse_and_bind("tab: self-insert")
     except Exception:
         pass
 import requests
@@ -152,10 +165,15 @@ def _windows_input(label: str) -> str:
 def prompt_input(label: str) -> str:
     if _IS_WINDOWS:
         return _windows_input(label)
+    # Paint the prompt ourselves and flush before blocking. input() still uses
+    # readline/libedit for history and editing, but an empty prompt avoids a
+    # second write that can race background thread output on macOS.
     if _COLOR_ENABLED:
-        value = input(f"\n{color(label + ':', _USER)} ")
-        return value.strip()
-    return input(f"\n{label}: ").strip()
+        sys.stdout.write(f"\n{color(label + ':', _USER)} ")
+    else:
+        sys.stdout.write(f"\n{label}: ")
+    sys.stdout.flush()
+    return input().strip()
 
 
 def _windows_console_mode(handle_id: int) -> str:
@@ -241,7 +259,12 @@ class Spinner:
 
 
 def typewriter_print(chunk: str):
-    """Print a chunk with typewriter effect for large pieces, instant for small."""
+    """Print a response chunk immediately.
+
+    Older builds slept ~6ms per character on large chunks. That blocked the
+    main thread, filled the macOS TTY input buffer unevenly, and made typing
+    feel like keys needed 3-4 presses before a letter appeared.
+    """
     if not chunk:
         return
     if chunk.startswith("[Tool:"):
@@ -250,13 +273,7 @@ def typewriter_print(chunk: str):
     if chunk.startswith("[Error"):
         print(color(chunk, _WARN), end="", flush=True)
         return
-    if len(chunk) <= 40:
-        print(f"{_RESPONSE}{chunk}{_RESET}" if _COLOR_ENABLED else chunk, end="", flush=True)
-        return
-    for ch in chunk:
-        print(f"{_RESPONSE}{ch}{_RESET}" if _COLOR_ENABLED else ch, end="", flush=True)
-        if ch not in ("\n", " "):
-            time.sleep(0.006)
+    print(f"{_RESPONSE}{chunk}{_RESET}" if _COLOR_ENABLED else chunk, end="", flush=True)
 
 
 # ─────────────────────────────────────────────────────────────────

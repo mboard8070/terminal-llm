@@ -14,6 +14,13 @@ from typing import Optional
 from maude_client import __version__
 from maude_client.config import SERVER_HOST, SERVER_LLM_PORT
 
+_DEBUG = os.environ.get("MAUDE_CLIENT_DEBUG", "").strip() in {"1", "true", "yes"}
+
+def _debug(msg: str) -> None:
+    if _DEBUG:
+        # stderr avoids fighting the stdin/stdout prompt line
+        print(msg, file=sys.stderr, flush=True)
+
 # Configuration
 HEARTBEAT_INTERVAL = 30  # seconds
 HEARTBEAT_ENDPOINT = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/api/collab/presence"
