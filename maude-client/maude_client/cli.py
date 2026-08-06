@@ -683,6 +683,8 @@ API_URL = f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/chat/completions"
 # Conversation history
 messages = []
 
+_active_task_message = ""
+
 # Current model (mutable at runtime via /model command)
 current_model = MODEL_NAME
 
@@ -925,65 +927,87 @@ def _format_trace(data: dict) -> str:
     return ""
 
 
-def stream_chat(user_message: str) -> Generator[str, None, None]:
-    """Send message and stream the response."""
-    messages.append({"role": "user", "content": user_message})
+def _parse_tool_args(raw) -> dict:
+    """Best-effort JSON parse for streamed tool arguments."""
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
 
-    # Fast dispatch — try direct tool call first
-    result = router.fast_dispatch(user_message)
-    if result:
-        tool_name, args, tool_result = result
-        model_result = _prepare_tool_result_for_model(tool_result)
-        # Quiet: one compact status line. Verbose: status + payload preview.
-        yield _format_tool_status(tool_name, args, tool_result)
-        messages.append({"role": "assistant", "content": f"[Used {tool_name}]\n{model_result}"})
+
+def _run_tool_calls(tool_calls: list) -> Generator[str, None, None]:
+    """Execute tool calls and append ordered tool results to messages."""
+    for tc in tool_calls:
+        func_name = (tc.get("function") or {}).get("name") or "tool"
+        args = _parse_tool_args((tc.get("function") or {}).get("arguments"))
+        try:
+            result = router.execute(func_name, args)
+        except Exception as exc:
+            result = f"Error executing {func_name}: {exc}"
+        model_result = _prepare_tool_result_for_model(result)
+        yield _format_tool_status(func_name, args, result)
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc.get("id") or "",
+            "content": model_result,
+        })
+
+
+def _stream_model_turn(payload: dict) -> Generator[str, None, None]:
+    """Stream one model turn.
+
+    Yields:
+      ("content", text)
+      ("trace", text)
+      ("done", full_content, tool_calls)
+      ("error", text)
+    """
+    try:
+        response = _post_chat_payload(payload)
+    except requests.exceptions.ConnectionError:
+        yield (
+            "error",
+            "\n[Error: Cannot connect to server. Is Tailscale connected and the server running?]\n",
+        )
+        return
+    except Exception as e:
+        yield ("error", f"\n[Error: {e}]\n")
         return
 
-    # Build request
-    payload = {
-        "model": current_model,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": router.get_tools_for_message(user_message),
-        "tool_choice": "auto",
-        "temperature": TEMPERATURE,
-        "max_tokens": 4096,
-        "stream": True
-    }
+    full_content = ""
+    tool_calls = []
+    current_event_type = None
 
     try:
-        response = _post_chat_payload(payload)
-
-        full_content = ""
-        tool_calls = []
-        current_tool_call = None
-        current_event_type = None
-
         for line in response.iter_lines():
             if not line:
                 continue
 
-            line = line.decode('utf-8')
+            line = line.decode("utf-8")
 
-            # Track SSE event type
-            if line.startswith('event: '):
+            if line.startswith("event: "):
                 current_event_type = line[7:].strip()
                 continue
 
-            if not line.startswith('data: '):
+            if not line.startswith("data: "):
                 continue
 
             data = line[6:]
-            if data == '[DONE]':
+            if data == "[DONE]":
                 break
 
-            # Handle trace events
             if current_event_type == "trace":
                 current_event_type = None
                 try:
                     trace_data = json.loads(data)
                     trace_line = _format_trace(trace_data)
                     if trace_line:
-                        yield trace_line
+                        yield ("trace", trace_line)
                 except json.JSONDecodeError:
                     pass
                 continue
@@ -992,243 +1016,201 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
             try:
                 chunk = json.loads(data)
-                choices = chunk.get('choices', [])
+                choices = chunk.get("choices", [])
                 if not choices:
                     continue
-                delta = choices[0].get('delta', {})
+                delta = choices[0].get("delta", {}) or {}
 
-                # Handle content
-                if 'content' in delta and delta['content']:
-                    full_content += delta['content']
-                    yield delta['content']
+                if delta.get("content"):
+                    full_content += delta["content"]
+                    yield ("content", delta["content"])
 
-                # Handle tool calls
-                if 'tool_calls' in delta:
-                    for tc in delta['tool_calls']:
-                        idx = tc.get('index', 0)
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        idx = tc.get("index", 0)
                         while len(tool_calls) <= idx:
                             tool_calls.append({
-                                'id': '',
-                                'type': 'function',
-                                'function': {'name': '', 'arguments': ''}
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
                             })
-
-                        if 'id' in tc:
-                            tool_calls[idx]['id'] = tc['id']
-                        if 'function' in tc:
-                            if 'name' in tc['function']:
-                                tool_calls[idx]['function']['name'] = tc['function']['name']
-                            if 'arguments' in tc['function']:
-                                tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
-
-            except (json.JSONDecodeError, IndexError, KeyError):
+                        if tc.get("id"):
+                            tool_calls[idx]["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        if fn.get("name"):
+                            tool_calls[idx]["function"]["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            tool_calls[idx]["function"]["arguments"] += fn["arguments"]
+            except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                 continue
+    finally:
+        try:
+            response.close()
+        except Exception:
+            pass
 
-        # Process tool calls if any
-        if tool_calls and tool_calls[0]['function']['name']:
-            yield "\n"
+    # Drop incomplete/empty tool call slots
+    tool_calls = [
+        tc for tc in tool_calls
+        if (tc.get("function") or {}).get("name")
+    ]
+    yield ("done", full_content, tool_calls)
 
-            # Save assistant message with tool calls
+
+def stream_chat(user_message: str) -> Generator[str, None, None]:
+    """Send message and stream the response with a multi-round tool loop.
+
+    Unlike the old client path, this keeps going across many tool rounds
+    (like the phone/web UI) instead of stopping after 1-2 tool calls.
+    """
+    global _active_task_message
+    messages.append({"role": "user", "content": user_message})
+    _active_task_message = user_message
+
+    # Fast dispatch only for simple single-shot intents. Multi-step tasks
+    # ("check X then do Y", "find and fix", etc.) go through the model loop.
+    if _looks_like_single_shot(user_message):
+        result = router.fast_dispatch(user_message)
+        if result:
+            tool_name, args, tool_result = result
+            model_result = _prepare_tool_result_for_model(tool_result)
+            yield _format_tool_status(tool_name, args, tool_result)
+            # Ask the model to turn the tool result into a normal answer
+            # instead of ending the turn with raw tool output.
             messages.append({
                 "role": "assistant",
-                "content": full_content or None,
-                "tool_calls": tool_calls
+                "content": None,
+                "tool_calls": [{
+                    "id": "fast_dispatch_1",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(args or {}),
+                    },
+                }],
             })
-
-            # Execute each tool
-            for tc in tool_calls:
-                func_name = tc['function']['name']
-                try:
-                    args = json.loads(tc['function']['arguments'])
-                except:
-                    args = {}
-
-                result = router.execute(func_name, args)
-                model_result = _prepare_tool_result_for_model(result)
-                yield _format_tool_status(func_name, args, result)
-
-                # Add tool result to messages (bounded payload for the model)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc['id'],
-                    "content": model_result
-                })
-
-            # Get follow-up response
-            yield "\n"
-            for chunk in stream_chat_continuation():
-                yield chunk
-
-        else:
-            # No tool calls, save assistant message
-            if full_content:
-                messages.append({"role": "assistant", "content": full_content})
-
-    except requests.exceptions.ConnectionError:
-        yield "\n[Error: Cannot connect to server. Is Tailscale connected and the server running?]\n"
-    except Exception as e:
-        yield f"\n[Error: {e}]\n"
-
-
-def stream_chat_continuation() -> Generator[str, None, None]:
-    """Continue chat after tool execution."""
-    payload = {
-        "model": current_model,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "tools": router.get_tools_for_message(""),
-        "tool_choice": "auto",
-        "temperature": TEMPERATURE,
-        "max_tokens": 4096,
-        "stream": True
-    }
-
-    try:
-        response = _post_chat_payload(payload)
-
-        full_content = ""
-        tool_calls = []
-        current_event_type = None
-
-        for line in response.iter_lines():
-            if not line:
-                continue
-
-            line = line.decode('utf-8')
-
-            # Track SSE event type
-            if line.startswith('event: '):
-                current_event_type = line[7:].strip()
-                continue
-
-            if not line.startswith('data: '):
-                continue
-
-            data = line[6:]
-            if data == '[DONE]':
-                break
-
-            # Handle trace events
-            if current_event_type == "trace":
-                current_event_type = None
-                try:
-                    trace_data = json.loads(data)
-                    trace_line = _format_trace(trace_data)
-                    if trace_line:
-                        yield trace_line
-                except json.JSONDecodeError:
-                    pass
-                continue
-
-            current_event_type = None
-
-            try:
-                chunk = json.loads(data)
-                choices = chunk.get('choices', [])
-                if not choices:
-                    continue
-                delta = choices[0].get('delta', {})
-
-                if 'content' in delta and delta['content']:
-                    full_content += delta['content']
-                    yield delta['content']
-
-                if 'tool_calls' in delta:
-                    for tc in delta['tool_calls']:
-                        idx = tc.get('index', 0)
-                        while len(tool_calls) <= idx:
-                            tool_calls.append({
-                                'id': '',
-                                'type': 'function',
-                                'function': {'name': '', 'arguments': ''}
-                            })
-                        if 'id' in tc:
-                            tool_calls[idx]['id'] = tc['id']
-                        if 'function' in tc:
-                            if 'name' in tc['function']:
-                                tool_calls[idx]['function']['name'] = tc['function']['name']
-                            if 'arguments' in tc['function']:
-                                tool_calls[idx]['function']['arguments'] += tc['function']['arguments']
-
-            except (json.JSONDecodeError, IndexError, KeyError):
-                continue
-
-        # Handle recursive tool calls (limit depth)
-        if tool_calls and tool_calls[0]['function']['name']:
             messages.append({
-                "role": "assistant",
-                "content": full_content or None,
-                "tool_calls": tool_calls
+                "role": "tool",
+                "tool_call_id": "fast_dispatch_1",
+                "content": model_result,
             })
+            # Fall through into the normal continuation loop below.
+        # if fast_dispatch misses, fall through to model
 
-            for tc in tool_calls:
-                func_name = tc['function']['name']
-                try:
-                    args = json.loads(tc['function']['arguments'])
-                except:
-                    args = {}
-
-                result = router.execute(func_name, args)
-                model_result = _prepare_tool_result_for_model(result)
-                yield _format_tool_status(func_name, args, result)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc['id'],
-                    "content": model_result
-                })
-
-            # One more continuation (prevent infinite loops)
-            yield "\n"
-            for chunk in final_response():
-                yield chunk
-        else:
-            if full_content:
-                messages.append({"role": "assistant", "content": full_content})
-
-    except Exception as e:
-        yield f"\n[Error: {e}]\n"
-
-
-def final_response() -> Generator[str, None, None]:
-    """Get final response without tool calls."""
-    payload = {
-        "model": current_model,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "temperature": TEMPERATURE,
-        "max_tokens": 2048,
-        "stream": True
-    }
+    # Keep the original user text available for tool-group selection on later rounds.
+    tools = router.get_tools_for_message(user_message)
+    max_rounds = int(os.environ.get("MAUDE_CLIENT_MAX_TOOL_ROUNDS", "12"))
 
     try:
-        response = requests.post(API_URL, json=payload, stream=True, timeout=120, verify=False)
+        for round_idx in range(max_rounds):
+            payload = {
+                "model": current_model,
+                "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+                "temperature": TEMPERATURE,
+                "max_tokens": 4096,
+                "stream": True,
+            }
+            # Always offer tools until the final forced text round.
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
+
+            full_content = ""
+            tool_calls = []
+            errored = False
+
+            for item in _stream_model_turn(payload):
+                kind = item[0]
+                if kind == "content":
+                    yield item[1]
+                elif kind == "trace":
+                    yield item[1]
+                elif kind == "error":
+                    yield item[1]
+                    errored = True
+                    break
+                elif kind == "done":
+                    full_content = item[1] or ""
+                    tool_calls = item[2] or []
+
+            if errored:
+                return
+
+            if tool_calls:
+                messages.append({
+                    "role": "assistant",
+                    "content": full_content or None,
+                    "tool_calls": tool_calls,
+                })
+                yield "\n"
+                for status in _run_tool_calls(tool_calls):
+                    yield status
+                yield "\n"
+                continue
+
+            # Final text answer
+            if full_content:
+                messages.append({"role": "assistant", "content": full_content})
+            return
+
+        # Hit round limit — force one text-only wrap-up so the user isn't left hanging.
+        yield (
+            f"\n{_DIM}[status] reached tool-round limit ({max_rounds}); "
+            f"summarizing progress{_RESET}\n"
+        )
+        payload = {
+            "model": current_model,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages + [{
+                "role": "user",
+                "content": (
+                    "Stop calling tools. Briefly summarize what you already did, "
+                    "what you learned, and the next concrete step."
+                ),
+            }],
+            "temperature": TEMPERATURE,
+            "max_tokens": 1024,
+            "stream": True,
+        }
         full_content = ""
-
-        for line in response.iter_lines():
-            if not line:
-                continue
-            line = line.decode('utf-8')
-            if not line.startswith('data: '):
-                continue
-            data = line[6:]
-            if data == '[DONE]':
-                break
-            try:
-                chunk = json.loads(data)
-                choices = chunk.get('choices', [])
-                if not choices:
-                    continue
-                delta = choices[0].get('delta', {})
-                if 'content' in delta and delta['content']:
-                    full_content += delta['content']
-                    yield delta['content']
-            except:
-                continue
-
+        for item in _stream_model_turn(payload):
+            if item[0] == "content":
+                full_content += item[1]
+                yield item[1]
+            elif item[0] == "trace":
+                yield item[1]
+            elif item[0] == "error":
+                yield item[1]
+                return
+            elif item[0] == "done":
+                full_content = item[1] or full_content
         if full_content:
             messages.append({"role": "assistant", "content": full_content})
+    finally:
+        _active_task_message = ""
 
-    except Exception as e:
-        yield f"\n[Error: {e}]\n"
+
+def _looks_like_single_shot(message: str) -> bool:
+    """Allow fast_dispatch only for simple one-action requests."""
+    msg = (message or "").strip().lower()
+    if not msg:
+        return False
+    # Multi-step cues should always use the full agent loop.
+    multi_cues = [
+        " and ", " then ", " after ", " before ", " also ",
+        "fix", "debug", "implement", "create", "build", "update",
+        "refactor", "deploy", "commit", "push", "investigate",
+        "why ", "how ", "make sure", "until ", "all ",
+    ]
+    if any(c in msg for c in multi_cues):
+        return False
+    # Keep fast path for short direct ops: list/read/search/run one thing.
+    if len(msg) > 160:
+        return False
+    simple_prefixes = (
+        "list ", "ls ", "read ", "cat ", "show ", "open ",
+        "search ", "find ", "grep ", "run ", "pwd", "status",
+    )
+    return msg.startswith(simple_prefixes) or msg in {"ls", "pwd", "status"}
 
 
 def print_banner():
