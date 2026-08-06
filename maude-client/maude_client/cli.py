@@ -267,13 +267,118 @@ def typewriter_print(chunk: str):
     """
     if not chunk:
         return
-    if chunk.startswith("[Tool:"):
+    if chunk.startswith("[status]"):
+        print(color(chunk, _DIM), end="", flush=True)
+        return
+    if chunk.startswith("[Tool:") or chunk.startswith("[tool:"):
         print(color(chunk, _TOOL), end="", flush=True)
         return
     if chunk.startswith("[Error"):
         print(color(chunk, _WARN), end="", flush=True)
         return
     print(f"{_RESPONSE}{chunk}{_RESET}" if _COLOR_ENABLED else chunk, end="", flush=True)
+
+
+# Quiet-by-default UI: behave more like the phone/web chat surface.
+# Full tool payloads still go to the model; only compact status hits the TTY.
+_VERBOSE_UI = os.environ.get("MAUDE_CLIENT_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}
+_MODEL_TOOL_RESULT_CHARS = 4000
+_VERBOSE_DISPLAY_CHARS = 1200
+
+
+def _short_arg_summary(args, limit: int = 72) -> str:
+    """One-line arg summary for status lines."""
+    if not args:
+        return ""
+    preferred = ("path", "pattern", "query", "command", "filename", "name", "url", "repo")
+    parts = []
+    for key in preferred:
+        if key in args and args[key] not in (None, ""):
+            val = str(args[key]).replace("\n", " ").strip()
+            if len(val) > 48:
+                val = val[:45] + "..."
+            parts.append(val)
+            break
+    if not parts:
+        try:
+            raw = json.dumps(args, ensure_ascii=False)
+        except Exception:
+            raw = str(args)
+        raw = raw.replace("\n", " ").strip()
+        parts.append(raw[:48] + ("..." if len(raw) > 48 else ""))
+    summary = " ".join(parts)
+    if len(summary) > limit:
+        summary = summary[: limit - 3] + "..."
+    return summary
+
+
+def _summarize_tool_result(func_name: str, result: str) -> str:
+    """Compact human-facing summary; never dump bulk file/search output."""
+    text = (result or "").strip()
+    if not text:
+        return "done"
+    lower = text.lower()
+    if lower.startswith("error"):
+        first = text.splitlines()[0]
+        return first if len(first) <= 160 else first[:157] + "..."
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    line_count = len(lines)
+
+    if func_name in {"search_files", "search_directory", "search_file"}:
+        if "no matches" in lower:
+            return "no matches"
+        extra = 0
+        if "more matches" in lower:
+            try:
+                extra = int(text.rsplit("and", 1)[-1].split("more", 1)[0].strip())
+            except Exception:
+                extra = 0
+        total = line_count
+        if extra:
+            total = max(line_count - 1, 0) + extra
+        return f"{total} matches"
+
+    if func_name in {"list_directory", "list_server_files", "list_transfers"}:
+        return f"{line_count} items" if line_count else "empty"
+
+    if func_name == "read_file":
+        return f"{line_count} lines" if line_count else "empty file"
+
+    if func_name == "run_command":
+        return f"{line_count} output lines" if line_count else "ok"
+
+    if func_name in {"write_file", "edit_file", "upload_to_server", "download_from_server"}:
+        return lines[0][:120] if lines else "done"
+
+    if line_count <= 2 and len(text) <= 160:
+        return text.replace("\n", " ")
+    return f"ok · {line_count} lines"
+
+
+def _prepare_tool_result_for_model(result: str) -> str:
+    """Keep enough context for the model without unbounded payloads."""
+    text = result if isinstance(result, str) else str(result)
+    if len(text) > _MODEL_TOOL_RESULT_CHARS:
+        return text[:_MODEL_TOOL_RESULT_CHARS] + "\n... (truncated)"
+    return text
+
+
+def _format_tool_status(func_name: str, args=None, result: str = None) -> str:
+    """Chat-like tool status line for the terminal."""
+    arg_bit = _short_arg_summary(args or {})
+    if result is None:
+        if arg_bit:
+            return f"\n[status] {func_name} {arg_bit}\n"
+        return f"\n[status] {func_name}\n"
+    summary = _summarize_tool_result(func_name, result)
+    if _VERBOSE_UI:
+        preview = (result or "").strip()
+        if len(preview) > _VERBOSE_DISPLAY_CHARS:
+            preview = preview[:_VERBOSE_DISPLAY_CHARS] + "\n... (truncated)"
+        header = f"\n[Tool: {func_name}] {summary}\n"
+        return f"{header}{preview}\n"
+    return f"\n[status] {func_name} · {summary}\n"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -789,20 +894,34 @@ def check_server_connection() -> bool:
 
 
 def _format_trace(data: dict) -> str:
-    """Format a trace event for terminal display (dim/muted)."""
-    _dim = "" if _IS_WINDOWS else "\033[2m"
-    _reset = "" if _IS_WINDOWS else "\033[0m"
+    """Format a trace event for terminal display (dim/muted, quiet by default)."""
     t = data.get("type", "")
+    # Default UI matches chat: hide noisy token/result dumps.
+    if not _VERBOSE_UI:
+        if t == "tool_call":
+            name = data.get("name", "") or "tool"
+            return f"{_DIM}  · {name}{_RESET}\n"
+        if t in {"tool_result", "llm_call"}:
+            return ""
+        return ""
+
     if t == "tool_call":
-        return f"{_dim}  [{data.get('name', '')}] {data.get('args', '')}{_reset}\n"
-    elif t == "tool_result":
+        args = data.get("args", "")
+        args_s = str(args)
+        if len(args_s) > 100:
+            args_s = args_s[:97] + "..."
+        return f"{_DIM}  [{data.get('name', '')}] {args_s}{_RESET}\n"
+    if t == "tool_result":
         elapsed = data.get("elapsed", 0)
-        return f"{_dim}    -> {data.get('preview', '')} ({elapsed}s){_reset}\n"
-    elif t == "llm_call":
+        preview = str(data.get("preview", "") or "")
+        if len(preview) > 100:
+            preview = preview[:97] + "..."
+        return f"{_DIM}    -> {preview} ({elapsed}s){_RESET}\n"
+    if t == "llm_call":
         pt = data.get("prompt_tokens", 0)
         ct = data.get("completion_tokens", 0)
         elapsed = data.get("elapsed", 0)
-        return f"{_dim}  [{pt}+{ct} tokens, {elapsed}s]{_reset}\n"
+        return f"{_DIM}  [{pt}+{ct} tokens, {elapsed}s]{_RESET}\n"
     return ""
 
 
@@ -814,8 +933,10 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     result = router.fast_dispatch(user_message)
     if result:
         tool_name, args, tool_result = result
-        yield f"\n[{tool_name}]\n{tool_result}\n"
-        messages.append({"role": "assistant", "content": f"[Used {tool_name}]\n{tool_result}"})
+        model_result = _prepare_tool_result_for_model(tool_result)
+        # Quiet: one compact status line. Verbose: status + payload preview.
+        yield _format_tool_status(tool_name, args, tool_result)
+        messages.append({"role": "assistant", "content": f"[Used {tool_name}]\n{model_result}"})
         return
 
     # Build request
@@ -922,21 +1043,15 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
                 except:
                     args = {}
 
-                yield f"\n[Tool: {func_name}]\n"
-
                 result = router.execute(func_name, args)
+                model_result = _prepare_tool_result_for_model(result)
+                yield _format_tool_status(func_name, args, result)
 
-                # Truncate long results
-                if len(result) > 3000:
-                    result = result[:3000] + "\n... (truncated)"
-
-                yield f"{result}\n"
-
-                # Add tool result to messages
+                # Add tool result to messages (bounded payload for the model)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc['id'],
-                    "content": result
+                    "content": model_result
                 })
 
             # Get follow-up response
@@ -1052,18 +1167,14 @@ def stream_chat_continuation() -> Generator[str, None, None]:
                 except:
                     args = {}
 
-                yield f"\n[Tool: {func_name}]\n"
                 result = router.execute(func_name, args)
-
-                if len(result) > 3000:
-                    result = result[:3000] + "\n... (truncated)"
-
-                yield f"{result}\n"
+                model_result = _prepare_tool_result_for_model(result)
+                yield _format_tool_status(func_name, args, result)
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc['id'],
-                    "content": result
+                    "content": model_result
                 })
 
             # One more continuation (prevent infinite loops)
@@ -1304,6 +1415,8 @@ Commands:
   /sync         - Sync shared folder now
 
 Features:
+  - Quiet chat UI: tools show compact status, not full file dumps
+  - Set MAUDE_CLIENT_VERBOSE=1 for old detailed tool output
   - Shared folder: ~/.maude/shared/ auto-syncs with server every 30s
   - Dynamic tool filtering: Only relevant tools sent per message
   - Fast dispatch: Common queries (list files, etc.) skip the LLM

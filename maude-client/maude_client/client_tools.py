@@ -115,6 +115,8 @@ def read_file(path: str, start_line: int = None, end_line: int = None) -> str:
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
+        total_lines = len(lines)
+
         # Apply line range
         if start_line is not None:
             start_idx = max(0, start_line - 1)
@@ -124,13 +126,31 @@ def read_file(path: str, start_line: int = None, end_line: int = None) -> str:
         else:
             line_offset = 0
 
+        # Cap unbounded full-file reads so the client doesn't stall dumping huge files.
+        max_lines = 200
+        truncated = False
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            truncated = True
+
         # Format with line numbers
         numbered = []
         for i, line in enumerate(lines):
             line_num = i + line_offset + 1
             numbered.append(f"{line_num:4d} | {line.rstrip()}")
 
-        return "\n".join(numbered)
+        output = "\n".join(numbered)
+        if truncated:
+            shown_end = line_offset + max_lines
+            output += (
+                f"\n... truncated after {max_lines} lines "
+                f"(file has {total_lines} lines; pass start_line/end_line for a slice)"
+            )
+            if start_line is None:
+                output += f"\nHint: read_file(path, start_line=1, end_line={max_lines})"
+            else:
+                output += f"\nShown lines {line_offset + 1}-{shown_end}"
+        return output
     except Exception as e:
         return f"Error reading file: {e}"
 
@@ -181,8 +201,10 @@ def list_directory(path: str = ".") -> str:
         return f"Error: Directory not found: {path}"
 
     try:
+        names = sorted(os.listdir(path))
+        max_entries = 100
         entries = []
-        for entry in sorted(os.listdir(path)):
+        for entry in names[:max_entries]:
             full_path = os.path.join(path, entry)
             if os.path.isdir(full_path):
                 entries.append(f"[DIR]  {entry}/")
@@ -190,7 +212,11 @@ def list_directory(path: str = ".") -> str:
                 size = os.path.getsize(full_path)
                 entries.append(f"[FILE] {entry} ({size} bytes)")
 
-        return f"Contents of {path}:\n" + "\n".join(entries)
+        header = f"Contents of {path} ({len(names)} items)"
+        body = "\n".join(entries)
+        if len(names) > max_entries:
+            body += f"\n... and {len(names) - max_entries} more"
+        return f"{header}:\n{body}"
     except Exception as e:
         return f"Error listing directory: {e}"
 
@@ -199,24 +225,34 @@ def search_files(pattern: str, path: str = ".", file_pattern: str = None) -> str
     """Search for text in files."""
     path = os.path.expanduser(path)
 
-    cmd = ["grep", "-rn", pattern, path]
+    # Skip heavy/irrelevant trees so local searches don't hang the client UI.
+    exclude_dirs = [
+        ".git", "node_modules", "__pycache__", ".venv", "venv",
+        "dist", "build", ".tox", ".mypy_cache", ".ruff_cache",
+        "Library", "Movies", "Music", "Pictures",
+    ]
+    cmd = ["grep", "-rn", "--binary-files=without-match"]
+    for d in exclude_dirs:
+        cmd.extend(["--exclude-dir", d])
     if file_pattern:
-        cmd = ["grep", "-rn", "--include", file_pattern, pattern, path]
+        cmd.extend(["--include", file_pattern])
+    cmd.extend([pattern, path])
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         output = result.stdout.strip()
         if not output:
             return f"No matches found for '{pattern}'"
 
-        # Limit output
+        # Keep model context useful but bounded.
         lines = output.split('\n')
-        if len(lines) > 50:
-            output = '\n'.join(lines[:50]) + f"\n... and {len(lines)-50} more matches"
+        max_matches = 30
+        if len(lines) > max_matches:
+            output = '\n'.join(lines[:max_matches]) + f"\n... and {len(lines)-max_matches} more matches"
 
         return output
     except subprocess.TimeoutExpired:
-        return "Error: Search timed out"
+        return "Error: Search timed out after 15s (narrow path/pattern and retry)"
     except Exception as e:
         return f"Error searching: {e}"
 
@@ -234,7 +270,15 @@ def run_command(command: str) -> str:
         elif result.returncode != 0:
             output += f"\n[exit code: {result.returncode}]"
 
-        return output.strip() or "(no output)"
+        text = output.strip() or "(no output)"
+        # Bound huge command dumps so the chat loop stays responsive.
+        lines = text.splitlines()
+        max_lines = 80
+        if len(lines) > max_lines:
+            text = "\n".join(lines[:max_lines]) + f"\n... and {len(lines) - max_lines} more lines"
+        if len(text) > 8000:
+            text = text[:8000] + "\n... (truncated)"
+        return text
     except Exception as e:
         return f"Error running command: {e}"
 
