@@ -9,14 +9,14 @@ Run:
   python -m maude_client
 """
 
-import os
-import sys
 import json
-import time
-import asyncio
-import tempfile
+import os
 import subprocess
+import sys
+import tempfile
 import threading
+import time
+
 _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
@@ -59,19 +59,16 @@ else:
         pass
 import requests
 import urllib3
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-from typing import Optional, Generator, Callable
+from collections.abc import Callable, Generator
 
 from maude_client import __version__
-from maude_client.writing_rules import application_writing_block
-from maude_client.config import (
-    SERVER_HOST, SERVER_LLM_PORT, MODEL_NAME,
-    CONTEXT_SIZE, TEMPERATURE, CLIENT_NAME
-)
-from maude_client.tool_router import ToolRouter
-from maude_client.heartbeat import start_heartbeat, stop_heartbeat, get_hostname, get_platform
+from maude_client.config import CLIENT_NAME, MODEL_NAME, SERVER_HOST, SERVER_LLM_PORT, TEMPERATURE
+from maude_client.heartbeat import get_hostname, get_platform, start_heartbeat, stop_heartbeat
 from maude_client.task_executor import start_task_executor, stop_task_executor
-
+from maude_client.tool_router import ToolRouter
+from maude_client.writing_rules import application_writing_block
 
 # ─────────────────────────────────────────────────────────────────
 # Spinner & Typewriter
@@ -233,7 +230,7 @@ class Spinner:
     def __init__(self, label: str = "thinking"):
         self._label = label
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._frames = _ASCII_SPIN if _IS_WINDOWS else _BRAILLE
 
     def start(self):
@@ -386,6 +383,7 @@ def _format_tool_status(func_name: str, args=None, result: str = None) -> str:
 # Voice Mode Support
 # ─────────────────────────────────────────────────────────────────
 
+
 class VoiceMode:
     """Voice mode for Mac client with server-side transcription."""
 
@@ -404,16 +402,14 @@ class VoiceMode:
         # Check sounddevice
         try:
             import sounddevice
+
             deps["sounddevice"] = True
         except ImportError:
             deps["sounddevice"] = False
 
         # Check server transcription
         try:
-            resp = requests.get(
-                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
-                timeout=2, verify=False
-            )
+            resp = requests.get(f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health", timeout=2, verify=False)
             deps["server_transcription"] = resp.status_code == 200
         except:
             deps["server_transcription"] = False
@@ -421,28 +417,25 @@ class VoiceMode:
         # Check local whisper (fallback)
         try:
             from faster_whisper import WhisperModel
+
             deps["local_whisper"] = "faster-whisper"
         except ImportError:
             try:
                 import whisper
+
                 deps["local_whisper"] = "whisper"
             except ImportError:
                 deps["local_whisper"] = False
 
         # Check TTS (macOS 'say' command)
-        deps["tts"] = subprocess.run(
-            ["which", "say"], capture_output=True
-        ).returncode == 0
+        deps["tts"] = subprocess.run(["which", "say"], capture_output=True).returncode == 0
 
         return deps
 
     def check_server_available(self) -> bool:
         """Check if transcription server is available."""
         try:
-            resp = requests.get(
-                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health",
-                timeout=2, verify=False
-            )
+            resp = requests.get(f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/health", timeout=2, verify=False)
             return resp.status_code == 200
         except:
             return False
@@ -454,6 +447,7 @@ class VoiceMode:
 
         try:
             from faster_whisper import WhisperModel
+
             print("Loading local Whisper (faster-whisper)...", end=" ", flush=True)
             self.whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
             self._whisper_type = "faster"
@@ -461,6 +455,7 @@ class VoiceMode:
         except ImportError:
             try:
                 import whisper
+
                 print("Loading local Whisper...", end=" ", flush=True)
                 self.whisper_model = whisper.load_model("tiny")
                 self._whisper_type = "original"
@@ -470,8 +465,8 @@ class VoiceMode:
 
     def record_audio(self, silence_threshold=0.02, silence_duration=1.5) -> bytes:
         """Record audio until silence detected."""
-        import sounddevice as sd
         import numpy as np
+        import sounddevice as sd
 
         sample_rate = 16000
         chunk_duration = 0.5
@@ -509,20 +504,19 @@ class VoiceMode:
 
         try:
             import scipy.io.wavfile as wavfile
+
             wavfile.write(temp_path, sample_rate, recording)
             with open(temp_path, "rb") as f:
                 return f.read()
         finally:
             os.unlink(temp_path)
 
-    def transcribe_server(self, audio_bytes: bytes) -> Optional[str]:
+    def transcribe_server(self, audio_bytes: bytes) -> str | None:
         """Transcribe audio using server GPU."""
         try:
             files = {"audio": ("audio.wav", audio_bytes, "audio/wav")}
             resp = requests.post(
-                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/transcribe",
-                files=files,
-                timeout=30, verify=False
+                f"https://{SERVER_HOST}:{self.TRANSCRIPTION_PORT}/transcribe", files=files, timeout=30, verify=False
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -571,7 +565,7 @@ class VoiceMode:
         except FileNotFoundError:
             print(f"[TTS unavailable] {text}")
 
-    def listen_and_transcribe(self) -> Optional[str]:
+    def listen_and_transcribe(self) -> str | None:
         """Record audio and return transcribed text."""
         audio = self.record_audio()
         if not audio:
@@ -674,6 +668,7 @@ Voice Commands:
         return True
 
     return False
+
 
 # Tool router (initialized in main())
 router: ToolRouter = None
@@ -889,10 +884,7 @@ def _post_chat_payload(payload: dict, *, retry_without_tools: bool = True) -> re
 def check_server_connection() -> bool:
     """Check if the LLM server is reachable."""
     try:
-        response = requests.get(
-            f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models",
-            timeout=5, verify=False
-        )
+        response = requests.get(f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models", timeout=5, verify=False)
         return response.status_code == 200
     except:
         return False
@@ -954,11 +946,13 @@ def _run_tool_calls(tool_calls: list) -> Generator[str, None, None]:
             result = f"Error executing {func_name}: {exc}"
         model_result = _prepare_tool_result_for_model(result)
         yield _format_tool_status(func_name, args, result)
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tc.get("id") or "",
-            "content": model_result,
-        })
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tc.get("id") or "",
+                "content": model_result,
+            }
+        )
 
 
 def _stream_model_turn(payload: dict) -> Generator[str, None, None]:
@@ -1032,11 +1026,13 @@ def _stream_model_turn(payload: dict) -> Generator[str, None, None]:
                     for tc in delta["tool_calls"]:
                         idx = tc.get("index", 0)
                         while len(tool_calls) <= idx:
-                            tool_calls.append({
-                                "id": "",
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            })
+                            tool_calls.append(
+                                {
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            )
                         if tc.get("id"):
                             tool_calls[idx]["id"] = tc["id"]
                         fn = tc.get("function") or {}
@@ -1053,10 +1049,7 @@ def _stream_model_turn(payload: dict) -> Generator[str, None, None]:
             pass
 
     # Drop incomplete/empty tool call slots
-    tool_calls = [
-        tc for tc in tool_calls
-        if (tc.get("function") or {}).get("name")
-    ]
+    tool_calls = [tc for tc in tool_calls if (tc.get("function") or {}).get("name")]
     yield ("done", full_content, tool_calls)
 
 
@@ -1080,23 +1073,29 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
             yield _format_tool_status(tool_name, args, tool_result)
             # Ask the model to turn the tool result into a normal answer
             # instead of ending the turn with raw tool output.
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{
-                    "id": "fast_dispatch_1",
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(args or {}),
-                    },
-                }],
-            })
-            messages.append({
-                "role": "tool",
-                "tool_call_id": "fast_dispatch_1",
-                "content": model_result,
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "fast_dispatch_1",
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(args or {}),
+                            },
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": "fast_dispatch_1",
+                    "content": model_result,
+                }
+            )
             # Fall through into the normal continuation loop below.
         # if fast_dispatch misses, fall through to model
 
@@ -1124,9 +1123,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
 
             for item in _stream_model_turn(payload):
                 kind = item[0]
-                if kind == "content":
-                    yield item[1]
-                elif kind == "trace":
+                if kind == "content" or kind == "trace":
                     yield item[1]
                 elif kind == "error":
                     yield item[1]
@@ -1140,11 +1137,13 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
                 return
 
             if tool_calls:
-                messages.append({
-                    "role": "assistant",
-                    "content": full_content or None,
-                    "tool_calls": tool_calls,
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": full_content or None,
+                        "tool_calls": tool_calls,
+                    }
+                )
                 yield "\n"
                 for status in _run_tool_calls(tool_calls):
                     yield status
@@ -1157,19 +1156,20 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
             return
 
         # Hit round limit — force one text-only wrap-up so the user isn't left hanging.
-        yield (
-            f"\n{_DIM}[status] reached tool-round limit ({max_rounds}); "
-            f"summarizing progress{_RESET}\n"
-        )
+        yield (f"\n{_DIM}[status] reached tool-round limit ({max_rounds}); summarizing progress{_RESET}\n")
         payload = {
             "model": current_model,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages + [{
-                "role": "user",
-                "content": (
-                    "Stop calling tools. Briefly summarize what you already did, "
-                    "what you learned, and the next concrete step."
-                ),
-            }],
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT}]
+            + messages
+            + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Stop calling tools. Briefly summarize what you already did, "
+                        "what you learned, and the next concrete step."
+                    ),
+                }
+            ],
             "temperature": TEMPERATURE,
             "max_tokens": 1024,
             "stream": True,
@@ -1199,10 +1199,27 @@ def _looks_like_single_shot(message: str) -> bool:
         return False
     # Multi-step cues should always use the full agent loop.
     multi_cues = [
-        " and ", " then ", " after ", " before ", " also ",
-        "fix", "debug", "implement", "create", "build", "update",
-        "refactor", "deploy", "commit", "push", "investigate",
-        "why ", "how ", "make sure", "until ", "all ",
+        " and ",
+        " then ",
+        " after ",
+        " before ",
+        " also ",
+        "fix",
+        "debug",
+        "implement",
+        "create",
+        "build",
+        "update",
+        "refactor",
+        "deploy",
+        "commit",
+        "push",
+        "investigate",
+        "why ",
+        "how ",
+        "make sure",
+        "until ",
+        "all ",
     ]
     if any(c in msg for c in multi_cues):
         return False
@@ -1210,8 +1227,18 @@ def _looks_like_single_shot(message: str) -> bool:
     if len(msg) > 160:
         return False
     simple_prefixes = (
-        "list ", "ls ", "read ", "cat ", "show ", "open ",
-        "search ", "find ", "grep ", "run ", "pwd", "status",
+        "list ",
+        "ls ",
+        "read ",
+        "cat ",
+        "show ",
+        "open ",
+        "search ",
+        "find ",
+        "grep ",
+        "run ",
+        "pwd",
+        "status",
     )
     return msg.startswith(simple_prefixes) or msg in {"ls", "pwd", "status"}
 
@@ -1234,6 +1261,8 @@ def print_banner():
 
 def main():
     """Main chat loop."""
+    global current_model
+
     if "--diag-input" in sys.argv or os.environ.get("MAUDE_DIAG_INPUT") == "1":
         debug_windows_input()
         return
@@ -1297,11 +1326,11 @@ def main():
                 if not user_input:
                     continue
 
-                if user_input.lower() == 'quit':
+                if user_input.lower() == "quit":
                     print(color("Goodbye!", _DIM))
                     break
 
-                if user_input.lower() == 'clear':
+                if user_input.lower() == "clear":
                     messages.clear()
                     print(color("Conversation cleared.", _DIM))
                     continue
@@ -1316,20 +1345,28 @@ def main():
                 if user_input == "/sync":
                     print("Pulling shared folder from server...", end=" ", flush=True)
                     from maude_client.client_tools import sync_shared
+
                     print(sync_shared())
+                    continue
+
+                # Handle /current model command
+                if user_input.startswith("/current"):
+                    current_parts = user_input.split()
+                    if len(current_parts) > 1 and current_parts[1].lower() != "model":
+                        print("Usage: /current model")
+                    else:
+                        print(f"\nCurrent model: {current_model}")
                     continue
 
                 # Handle /model command
                 if user_input.startswith("/model"):
-                    global current_model
                     parts = user_input.split(maxsplit=1)
                     if len(parts) == 1:
                         # Show current model and list available
                         print(f"\nCurrent model: {current_model}")
                         try:
                             resp = requests.get(
-                                f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models",
-                                timeout=5, verify=False
+                                f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models", timeout=5, verify=False
                             )
                             if resp.status_code == 200:
                                 models = [m["id"] for m in resp.json().get("data", [])]
@@ -1354,7 +1391,9 @@ def main():
                 if user_input == "/update":
                     print("Updating MAUDE client...")
                     print(f"Using Python: {sys.executable}")
-                    package_url = "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
+                    package_url = (
+                        "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
+                    )
                     result = subprocess.run(
                         [
                             sys.executable,
@@ -1397,6 +1436,7 @@ Commands:
   /voice talk   - Continuous voice mode
   /model        - Show current model and list available
   /model <name> - Switch to a different model
+  /current model - Show model in use
   /sync         - Sync shared folder now
 
 Features:

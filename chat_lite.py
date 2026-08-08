@@ -338,6 +338,14 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
             console.print(f"[dim]Usage: /model switch <name>\nAvailable: {', '.join(MODELS.keys())}[/dim]\n")
         return True
 
+    if command == "/current":
+        if len(parts) > 1 and parts[1].lower() != "model":
+            console.print("[dim]Usage: /current model[/dim]\n")
+        else:
+            name = current_model[0]
+            console.print(f"[dim]Current model: {name} ({MODELS.get(name, name)})[/dim]\n")
+        return True
+
     if command == "/copy":
         if not _last_response:
             console.print("[dim]Nothing to copy.[/dim]\n")
@@ -374,6 +382,7 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
                 "[bold]/quit[/bold]          Exit\n"
                 "[bold]/clear[/bold]         Clear conversation\n"
                 "[bold]/model switch[/bold] <name>  Switch model\n"
+                "[bold]/current model[/bold] Show model in use\n"
                 "[bold]/copy[/bold]          Copy last response\n"
                 "[bold]/tasks[/bold]         Show background MAUDE work\n"
                 "[bold]/help[/bold]          This help",
@@ -485,7 +494,7 @@ def main():
             "[dim]Files · Shell · Web · Gmail · Drive · Calendar · YouTube · Substack\n"
             "Browser · Social · Vision · Voice · Cross-machine[/dim]\n"
             "\n"
-            "[dim grey50]/model switch <name>  /clear  /copy  /help[/dim grey50]",
+            "[dim grey50]/model switch <name>  /current model  /clear  /copy  /help[/dim grey50]",
             border_style="magenta",
         )
     )
