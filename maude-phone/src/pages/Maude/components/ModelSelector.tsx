@@ -21,6 +21,7 @@ const MODELS = [
   { id: "nemotron-a3b", label: "Nemotron A3B", desc: "OpenRouter 30B" },
   { id: "gemma-4-31b", label: "Gemma 4", desc: "Local 31B" },
   { id: "llava", label: "LLaVA", desc: "Vision" },
+  { id: "grok", label: "Grok", desc: "X Premium CLI" },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -29,6 +30,8 @@ const MODEL_ALIASES: Record<string, string> = {
   "nemotron-nano": "nemotron-a3b",
   "a3b": "nemotron-a3b",
   "codex-cli": "codex",
+  "grok-4.5": "grok",
+  "grok4": "grok",
 };
 
 export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, onToggleAutoRoute }) => {

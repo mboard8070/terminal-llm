@@ -469,8 +469,14 @@ small { color:#8b949e; }
                 req = {}
 
         model_name = req.get("model", "nemotron-super")
+        model_absent = "model" not in req
         resolved_name, route = get_model_route(model_name)
-        logger.debug("route requested=%s resolved=%s", model_name, resolved_name)
+        logger.info(
+            "route requested=%s resolved=%s%s",
+            model_name,
+            resolved_name,
+            " (client sent no model field -> default)" if model_absent else "",
+        )
 
         # Cache phone location and use as fallback for non-phone clients
         if "location" in req:
