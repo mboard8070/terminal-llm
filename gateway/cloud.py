@@ -306,6 +306,163 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             except OSError:
                 pass
 
+    @staticmethod
+    def _messages_to_grok_prompt(messages: list[dict]) -> str:
+        """Flatten chat messages into a single prompt for `grok -p`."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+                )
+            if content:
+                parts.append(f"{role.upper()}:\n{content}")
+        return "\n\n".join(parts).strip()
+
+    def _grok_cli_response(self, req, resolved_name):
+        """Handle a request by invoking the locally authenticated Grok CLI.
+
+        Uses the grok.com / X Premium OAuth session rather than XAI_API_KEY, so
+        no xAI API billing is involved. `grok -p` is single-turn: it prints the
+        response to stdout and exits.
+        """
+        prompt = self._messages_to_grok_prompt(req.get("messages", []))
+        if not prompt:
+            self._json_response({"error": "No prompt provided for Grok CLI"}, 400)
+            return
+
+        stream = bool(req.get("stream"))
+        workdir = os.environ.get("MAUDE_GROK_WORKDIR", "/home/mboard76")
+        timeout = int(os.environ.get("MAUDE_GROK_TIMEOUT", "600"))
+        grok_bin = os.environ.get("MAUDE_GROK_BIN", shutil.which("grok") or "/home/mboard76/.local/bin/grok")
+
+        cmd = [grok_bin, "-p", prompt]
+        model = os.environ.get("MAUDE_GROK_MODEL", "")
+        if model:
+            cmd.extend(["--model", model])
+
+        started = time.time()
+        proc = None
+        try:
+            if stream:
+                self._start_sse_headers()
+                self._send_trace_sse(
+                    "tool_call",
+                    {"name": "grok_cli", "args": json.dumps({"model": model or resolved_name})},
+                )
+
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=workdir,
+            )
+            stdout, stderr = proc.communicate(timeout=timeout)
+
+            if proc.returncode != 0:
+                err = (stderr or stdout or "Grok CLI failed").strip()
+                if stream:
+                    self._send_trace_sse(
+                        "tool_result",
+                        {
+                            "name": "grok_cli",
+                            "preview": f"Error: {err[:160]}",
+                            "elapsed": round(time.time() - started, 1),
+                        },
+                    )
+                    self._close_sse_with_error(err)
+                else:
+                    self._json_response({"error": err}, 502)
+                return
+
+            content = (stdout or "").strip()
+            elapsed = time.time() - started
+            logger.info("Grok CLI: %.1fs, %d chars", elapsed, len(content))
+
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "grok_cli",
+                        "preview": f"Done in {elapsed:.1f}s",
+                        "elapsed": round(elapsed, 1),
+                    },
+                )
+                chunk = {
+                    "id": f"chatcmpl-maude-grok-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                }
+                line = f"data: {json.dumps(chunk)}\n\n".encode()
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+                finish = {
+                    "id": chunk["id"],
+                    "object": "chat.completion.chunk",
+                    "created": chunk["created"],
+                    "model": resolved_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                finish_line = f"data: {json.dumps(finish)}\n\n".encode()
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(finish_line), finish_line))
+                done_line = b"data: [DONE]\n\n"
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(done_line), done_line))
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+                return
+
+            self._json_response(
+                {
+                    "id": f"chatcmpl-maude-grok-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": resolved_name,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": content},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"Grok CLI timed out after {timeout}s"
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "grok_cli",
+                        "preview": f"Error: {msg}",
+                        "elapsed": round(time.time() - started, 1),
+                    },
+                )
+                self._close_sse_with_error(msg)
+            else:
+                self._json_response({"error": msg}, 504)
+        except Exception as e:
+            if stream:
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": "grok_cli",
+                        "preview": f"Error: {str(e)[:160]}",
+                        "elapsed": round(time.time() - started, 1),
+                    },
+                )
+                self._close_sse_with_error(str(e))
+            else:
+                self._json_response({"error": f"Grok CLI error: {e}"}, 502)
+
     def _run_codex_json_process(self, proc, prompt: str, stream: bool, started: float, timeout: int):
         """Feed Codex and translate its JSONL stdout into Maude trace events."""
         if proc.stdin:

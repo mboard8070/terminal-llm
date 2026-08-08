@@ -117,6 +117,14 @@ MODEL_ROUTES = {
         "api_key_env": None,
         "max_context": int(os.environ.get("MAUDE_CODEX_MAX_CONTEXT", "128000")),
     },
+    # Grok CLI route. Uses the locally authenticated Grok CLI (X Premium /
+    # grok.com OAuth session) instead of an XAI_API_KEY, so no API billing.
+    "grok-4.5": {
+        "provider": "grok-cli",
+        "base_url": "",
+        "api_key_env": None,
+        "max_context": int(os.environ.get("MAUDE_GROK_MAX_CONTEXT", "256000")),
+    },
     # Nemotron 3 Super — cloud via OpenRouter (free)
     "nvidia/nemotron-3-super-120b-a12b:free": {
         "provider": "openrouter",
@@ -195,6 +203,8 @@ MODEL_ALIASES = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
+    "grok": "grok-4.5",
+    "grok4": "grok-4.5",
 }
 
 
