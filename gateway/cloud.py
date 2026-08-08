@@ -110,7 +110,7 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             "Use any listed tool with:",
             "curl -s -X POST http://localhost:30080/api/tools/execute "
             "-H 'Content-Type: application/json' "
-            "-d '{\"name\":\"TOOL_NAME\",\"arguments\":{...}}'",
+            '-d \'{"name":"TOOL_NAME","arguments":{...}}\'',
         ]
         for tool in active_tools:
             fn = tool.get("function", {})
@@ -901,6 +901,8 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 # Fresh connection per iteration — avoids stale sockets after long tool calls
                 if use_ssl:
                     ctx = ssl.create_default_context()
+                    # Disable older versions of SSL/TLS that are known to have issues
+                    ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
                     conn = http.client.HTTPSConnection(host, port, timeout=300, context=ctx)
                 else:
                     conn = http.client.HTTPConnection(host, port, timeout=300)

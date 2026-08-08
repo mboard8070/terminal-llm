@@ -525,6 +525,8 @@ small { color:#8b949e; }
         try:
             if use_ssl:
                 ctx = ssl.create_default_context()
+                # Disable older versions of SSL/TLS that are known to have issues
+                ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
                 conn = http.client.HTTPSConnection(host, port, timeout=120, context=ctx)
             else:
                 conn = http.client.HTTPConnection(host, port, timeout=120)
