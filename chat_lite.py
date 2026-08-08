@@ -53,6 +53,8 @@ MODELS = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
+    "grok": "grok-4.5",
+    "grok4": "grok-4.5",
 }
 
 DEFAULT_MODEL = "nemotron-super"
@@ -406,7 +408,9 @@ def show_background_tasks():
     if tasks:
         lines.append("[bold cyan]Still running[/bold cyan]")
         for task in tasks:
-            lines.append(f"  [cyan]⠿[/cyan] {task.get('label', 'Task')} [dim]pid {task.get('pid')} · {task.get('elapsed')}[/dim]")
+            lines.append(
+                f"  [cyan]⠿[/cyan] {task.get('label', 'Task')} [dim]pid {task.get('pid')} · {task.get('elapsed')}[/dim]"
+            )
     if outputs:
         if lines:
             lines.append("")
