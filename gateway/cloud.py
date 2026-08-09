@@ -307,18 +307,135 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 pass
 
     @staticmethod
+    def _message_text(msg: dict) -> str:
+        """Normalize a chat message content field to a plain string."""
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = "\n".join(
+                block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+            )
+        return str(content or "").strip()
+
+    @staticmethod
+    def _summarize_dropped_messages(dropped: list[dict], max_entries: int = 12) -> str:
+        """Build a short stand-in for conversation turns omitted before `grok -p`."""
+        if not dropped:
+            return ""
+        lines = [f"[Earlier conversation summarized — {len(dropped)} messages omitted]"]
+        for msg in dropped[:max_entries]:
+            role = str(msg.get("role", "user")).upper()
+            text = CloudMixin._message_text(msg).replace("\n", " ").strip()
+            if not text:
+                continue
+            if len(text) > 140:
+                text = text[:137] + "..."
+            lines.append(f"- {role}: {text}")
+        if len(dropped) > max_entries:
+            lines.append(f"- ... and {len(dropped) - max_entries} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _prepare_grok_history(messages: list[dict]) -> tuple[list[dict], dict]:
+        """Truncate / summarize chat history so `grok -p` context does not balloon.
+
+        Controls (env):
+          MAUDE_GROK_MAX_PROMPT_CHARS  overall prompt budget (default 48000)
+          MAUDE_GROK_MAX_MSG_CHARS     per-message body cap (default 4000)
+          MAUDE_GROK_KEEP_RECENT       recent messages kept in full (default 12)
+
+        Returns (prepared_messages, meta) where meta includes removed/original counts.
+        """
+        max_prompt = int(os.environ.get("MAUDE_GROK_MAX_PROMPT_CHARS", "48000"))
+        max_msg = int(os.environ.get("MAUDE_GROK_MAX_MSG_CHARS", "4000"))
+        keep_recent = int(os.environ.get("MAUDE_GROK_KEEP_RECENT", "12"))
+        max_prompt = max(2000, max_prompt)
+        max_msg = max(200, max_msg)
+        keep_recent = max(2, keep_recent)
+
+        original = list(messages or [])
+        normalized: list[dict] = []
+        for msg in original:
+            role = msg.get("role", "user")
+            text = CloudMixin._message_text(msg)
+            if not text and role != "system":
+                continue
+            if len(text) > max_msg:
+                text = text[: max_msg - 20] + "\n... [truncated]"
+            normalized.append({"role": role, "content": text})
+
+        system_msgs = [m for m in normalized if m.get("role") == "system"]
+        non_system = [m for m in normalized if m.get("role") != "system"]
+
+        removed = 0
+        dropped: list[dict] = []
+        if len(non_system) > keep_recent:
+            dropped = non_system[: -keep_recent]
+            non_system = non_system[-keep_recent:]
+            removed = len(dropped)
+
+        prepared = list(system_msgs)
+        if dropped:
+            prepared.append(
+                {
+                    "role": "system",
+                    "content": CloudMixin._summarize_dropped_messages(dropped),
+                }
+            )
+        prepared.extend(non_system)
+
+        def _prompt_len(msgs: list[dict]) -> int:
+            return sum(len(CloudMixin._message_text(m)) + len(str(m.get("role", ""))) + 4 for m in msgs)
+
+        # Shrink further from the oldest non-summary non-system message if over budget.
+        while _prompt_len(prepared) > max_prompt and len(prepared) > 2:
+            # Prefer dropping oldest non-system that is not the summary block.
+            drop_idx = None
+            for i, msg in enumerate(prepared):
+                if msg.get("role") == "system" and i < len(system_msgs):
+                    continue
+                content = CloudMixin._message_text(msg)
+                if content.startswith("[Earlier conversation summarized"):
+                    continue
+                # Don't drop the latest user/assistant turn if we can help it.
+                if i >= len(prepared) - 1:
+                    continue
+                drop_idx = i
+                break
+            if drop_idx is None:
+                # Last resort: truncate the longest remaining body.
+                longest_i = max(
+                    range(len(prepared)),
+                    key=lambda i: len(CloudMixin._message_text(prepared[i])),
+                )
+                body = CloudMixin._message_text(prepared[longest_i])
+                if len(body) <= 200:
+                    break
+                prepared[longest_i] = {
+                    **prepared[longest_i],
+                    "content": body[: max(200, len(body) // 2)] + "\n... [truncated]",
+                }
+                continue
+            removed += 1
+            prepared.pop(drop_idx)
+
+        meta = {
+            "removed": removed,
+            "original": len(original),
+            "kept": len(prepared),
+            "max_prompt_chars": max_prompt,
+            "prompt_chars": _prompt_len(prepared),
+        }
+        return prepared, meta
+
+    @staticmethod
     def _messages_to_grok_prompt(messages: list[dict]) -> str:
-        """Flatten chat messages into a single prompt for `grok -p`."""
+        """Flatten (optionally pre-trimmed) chat messages into a single `grok -p` prompt."""
         parts = []
         for msg in messages:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                content = "\n".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-                )
+            role = str(msg.get("role", "user")).upper()
+            content = CloudMixin._message_text(msg)
             if content:
-                parts.append(f"{role.upper()}:\n{content}")
+                parts.append(f"{role}:\n{content}")
         return "\n\n".join(parts).strip()
 
     def _grok_cli_response(self, req, resolved_name):
@@ -327,30 +444,74 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         Uses the grok.com / X Premium OAuth session rather than XAI_API_KEY, so
         no xAI API billing is involved. `grok -p` is single-turn: it prints the
         response to stdout and exits.
+
+        When streaming, optionally uses `--output-format streaming-json` so tool
+        start/end events surface as SSE traces in the TUI (same idea as Codex).
         """
-        prompt = self._messages_to_grok_prompt(req.get("messages", []))
+        prepared, trim_meta = self._prepare_grok_history(req.get("messages", []))
+        prompt = self._messages_to_grok_prompt(prepared)
         if not prompt:
             self._json_response({"error": "No prompt provided for Grok CLI"}, 400)
             return
 
         stream = bool(req.get("stream"))
+        # Progress streaming default-on when the client asked for SSE.
+        progress_env = os.environ.get("MAUDE_GROK_STREAM_PROGRESS", "").strip().lower()
+        if progress_env in ("0", "false", "no", "off"):
+            progress = False
+        elif progress_env in ("1", "true", "yes", "on"):
+            progress = True
+        else:
+            progress = stream
+
         workdir = os.environ.get("MAUDE_GROK_WORKDIR", "/home/mboard76")
         timeout = int(os.environ.get("MAUDE_GROK_TIMEOUT", "600"))
         grok_bin = os.environ.get("MAUDE_GROK_BIN", shutil.which("grok") or "/home/mboard76/.local/bin/grok")
-
-        cmd = [grok_bin, "-p", prompt]
         model = os.environ.get("MAUDE_GROK_MODEL", "")
+
+        # Prefer --prompt-file for large prompts (avoids ARG_MAX issues).
+        prompt_path = None
+        cmd = [grok_bin, "--always-approve"]
         if model:
             cmd.extend(["--model", model])
+        if progress:
+            cmd.extend(["--output-format", "streaming-json"])
+        if len(prompt) > 4000:
+            with tempfile.NamedTemporaryFile(
+                prefix="maude-grok-", suffix=".txt", delete=False, mode="w", encoding="utf-8"
+            ) as tmp:
+                tmp.write(prompt)
+                prompt_path = tmp.name
+            cmd.extend(["--prompt-file", prompt_path])
+        else:
+            cmd.extend(["-p", prompt])
 
         started = time.time()
         proc = None
         try:
             if stream:
                 self._start_sse_headers()
+                if trim_meta.get("removed"):
+                    self._send_trace_sse(
+                        "context_trim",
+                        {
+                            "removed": trim_meta["removed"],
+                            "max_tokens": trim_meta.get("max_prompt_chars", 0) // 4,
+                            "kept": trim_meta.get("kept"),
+                            "prompt_chars": trim_meta.get("prompt_chars"),
+                        },
+                    )
                 self._send_trace_sse(
                     "tool_call",
-                    {"name": "grok_cli", "args": json.dumps({"model": model or resolved_name})},
+                    self._tool_call_trace_payload(
+                        "grok_cli",
+                        {
+                            "model": model or resolved_name,
+                            "progress": progress,
+                            "prompt_chars": trim_meta.get("prompt_chars", len(prompt)),
+                        },
+                        json.dumps({"model": model or resolved_name}),
+                    ),
                 )
 
             proc = subprocess.Popen(
@@ -361,10 +522,16 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 text=True,
                 cwd=workdir,
             )
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout, stderr = self._run_grok_process(proc, stream, started, timeout, progress=progress)
 
             if proc.returncode != 0:
                 err = (stderr or stdout or "Grok CLI failed").strip()
+                # Prefer a compact stderr; streaming-json stdout is noisy on failure.
+                if progress and stderr:
+                    err = stderr.strip()
+                elif progress and stdout:
+                    err = self._grok_error_from_stdout(stdout) or err
+                err = err[:2000]
                 if stream:
                     self._send_trace_sse(
                         "tool_result",
@@ -379,9 +546,18 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                     self._json_response({"error": err}, 502)
                 return
 
-            content = (stdout or "").strip()
+            if progress:
+                content = self._last_grok_text(stdout)
+            else:
+                content = (stdout or "").strip()
             elapsed = time.time() - started
-            logger.info("Grok CLI: %.1fs, %d chars", elapsed, len(content))
+            logger.info(
+                "Grok CLI: %.1fs, %d chars (progress=%s, trimmed=%s)",
+                elapsed,
+                len(content),
+                progress,
+                trim_meta.get("removed", 0),
+            )
 
             if stream:
                 self._send_trace_sse(
@@ -434,7 +610,8 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         except subprocess.TimeoutExpired:
             msg = f"Grok CLI timed out after {timeout}s"
             try:
-                proc.kill()
+                if proc:
+                    proc.kill()
             except Exception:
                 pass
             if stream:
@@ -462,6 +639,288 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 self._close_sse_with_error(str(e))
             else:
                 self._json_response({"error": f"Grok CLI error: {e}"}, 502)
+        finally:
+            if prompt_path:
+                try:
+                    os.unlink(prompt_path)
+                except OSError:
+                    pass
+
+    def _run_grok_process(self, proc, stream: bool, started: float, timeout: int, progress: bool = False):
+        """Wait for Grok CLI completion.
+
+        When progress=True, parse streaming-json stdout and emit tool_call /
+        tool_result SSE traces so the TUI shows agent activity. Otherwise drain
+        stdout/stderr on background threads and send keepalives while streaming.
+        """
+        if progress:
+            return self._run_grok_json_process(proc, stream, started, timeout)
+
+        stdout_buf: list[str] = []
+        stderr_buf: list[str] = []
+        deadline = started + timeout
+        last_keepalive = started
+
+        def _drain(pipe, buf: list[str]):
+            if not pipe:
+                return
+            try:
+                data = pipe.read()
+                if data:
+                    buf.append(data)
+            except Exception:
+                pass
+
+        stdout_thread = threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True)
+        stderr_thread = threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        while True:
+            now = time.time()
+            if now > deadline:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                stdout_thread.join(timeout=0.5)
+                stderr_thread.join(timeout=0.5)
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+
+            if stream and now - last_keepalive >= 15:
+                self._send_trace_sse(
+                    "keepalive",
+                    {"name": "grok_cli", "elapsed": round(now - started, 1)},
+                )
+                last_keepalive = now
+
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+
+        remaining = max(0.1, deadline - time.time())
+        stdout_thread.join(timeout=remaining)
+        stderr_thread.join(timeout=0.5)
+        return "".join(stdout_buf), "".join(stderr_buf)
+
+    def _run_grok_json_process(self, proc, stream: bool, started: float, timeout: int):
+        """Line-read Grok streaming-json stdout and translate into Maude traces."""
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        active_tools: dict = {}
+        deadline = started + timeout
+        last_keepalive = started
+
+        def _read_stderr():
+            if not proc.stderr:
+                return
+            try:
+                for line in proc.stderr:
+                    stderr_lines.append(line)
+            except Exception:
+                pass
+
+        stderr_thread = threading.Thread(target=_read_stderr, daemon=True)
+        stderr_thread.start()
+
+        if proc.stdout:
+            selector = selectors.DefaultSelector()
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            try:
+                while True:
+                    now = time.time()
+                    if now > deadline:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
+                    if stream and now - last_keepalive >= 15:
+                        self._send_trace_sse(
+                            "keepalive",
+                            {"name": "grok_cli", "elapsed": round(now - started, 1)},
+                        )
+                        last_keepalive = now
+
+                    events = selector.select(timeout=0.5)
+                    if not events:
+                        if proc.poll() is not None:
+                            # Drain any remaining buffered lines.
+                            while True:
+                                line = proc.stdout.readline()
+                                if not line:
+                                    break
+                                stdout_lines.append(line)
+                                if stream:
+                                    self._emit_grok_json_trace(line, active_tools, started)
+                            break
+                        continue
+
+                    line = proc.stdout.readline()
+                    if line:
+                        stdout_lines.append(line)
+                        if stream:
+                            self._emit_grok_json_trace(line, active_tools, started)
+                        continue
+                    if proc.poll() is not None:
+                        break
+            finally:
+                try:
+                    selector.unregister(proc.stdout)
+                except Exception:
+                    pass
+
+        remaining = max(0.1, deadline - time.time())
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
+        stderr_thread.join(timeout=0.5)
+        return "".join(stdout_lines), "".join(stderr_lines)
+
+    def _emit_grok_json_trace(self, line: str, active_tools: dict, started: float):
+        """Map one Grok streaming-json event to a Maude SSE tool/llm trace."""
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict):
+            return
+
+        event_type = event.get("type", "")
+
+        if event_type == "tool_call":
+            tool_id = event.get("toolCallId") or f"grok-tool-{len(active_tools)}"
+            name = event.get("toolName") or event.get("title") or "tool"
+            # Namespace so nested Grok tools don't collide with gateway tool names.
+            display = name if str(name).startswith("grok_") else f"grok_{name}"
+            active_tools[tool_id] = {"name": display, "started": time.time()}
+            args = event.get("rawInput") if isinstance(event.get("rawInput"), dict) else {}
+            if not args and event.get("title"):
+                args = {"title": event.get("title")}
+            self._send_trace_sse(
+                "tool_call",
+                self._tool_call_trace_payload(display, args, json.dumps(args) if args else "{}"),
+            )
+            return
+
+        if event_type == "tool_call_update":
+            status = event.get("status")
+            if status not in ("completed", "failed", "error", "cancelled"):
+                return
+            tool_id = event.get("toolCallId")
+            info = active_tools.pop(tool_id, None) if tool_id else None
+            name = (info or {}).get("name") or "grok_tool"
+            tool_started = (info or {}).get("started") or started
+            preview = self._grok_tool_preview(event)
+            if status != "completed" and not preview.startswith("Error"):
+                preview = f"Error: {preview}" if preview else f"Error: {status}"
+            self._send_trace_sse(
+                "tool_result",
+                {
+                    "name": name,
+                    "preview": preview,
+                    "elapsed": round(time.time() - tool_started, 1),
+                },
+            )
+            return
+
+        if event_type == "usage":
+            usage = event.get("usage") or {}
+            self._send_trace_sse(
+                "llm_call",
+                {
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
+                    "elapsed": round(time.time() - started, 1),
+                },
+            )
+            return
+
+        if event_type in ("error",):
+            msg = event.get("message") or event.get("error") or json.dumps(event)[:160]
+            self._send_trace_sse("error", {"message": str(msg)[:200]})
+
+    @staticmethod
+    def _grok_tool_preview(event: dict) -> str:
+        """Compact preview string for a completed/failed Grok tool_call_update."""
+        raw = event.get("rawOutput")
+        if isinstance(raw, dict):
+            ofp = raw.get("output_for_prompt")
+            if ofp:
+                return str(ofp).replace("\n", " ").strip()[:160]
+            if raw.get("exit_code") is not None:
+                out = raw.get("output_for_prompt") or ""
+                base = f"exit: {raw.get('exit_code')}"
+                if out:
+                    return f"{base} {str(out).replace(chr(10), ' ').strip()}"[:160]
+                return base
+            if raw.get("error"):
+                return f"Error: {str(raw.get('error'))[:140]}"
+            if raw.get("type"):
+                return str(raw.get("type"))[:160]
+        content = event.get("content")
+        if isinstance(content, list):
+            texts = []
+            for block in content:
+                if isinstance(block, dict):
+                    inner = block.get("content")
+                    if isinstance(inner, dict) and inner.get("text"):
+                        texts.append(str(inner["text"]))
+                    elif block.get("text"):
+                        texts.append(str(block["text"]))
+            if texts:
+                return " ".join(texts).replace("\n", " ").strip()[:160]
+        if event.get("status"):
+            return str(event.get("status"))
+        return "done"
+
+    @staticmethod
+    def _last_grok_text(stdout: str) -> str:
+        """Reconstruct the final assistant text from streaming-json text events."""
+        parts: list[str] = []
+        for line in (stdout or "").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "text":
+                parts.append(str(event.get("data") or ""))
+        text = "".join(parts).strip()
+        if text:
+            return text
+        # Fallback: some formats put the final answer on a result event.
+        for line in reversed((stdout or "").splitlines()):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("type") == "result" and event.get("result"):
+                return str(event.get("result")).strip()
+        return ""
+
+    @staticmethod
+    def _grok_error_from_stdout(stdout: str) -> str:
+        """Pull a useful error message out of streaming-json stdout on failure."""
+        for line in reversed((stdout or "").splitlines()):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") in ("error", "end") and event.get("stopReason") not in (None, "end_turn"):
+                return str(event.get("message") or event.get("stopReason") or event)[:500]
+            if event.get("type") == "error":
+                return str(event.get("message") or event.get("error") or event)[:500]
+        return ""
 
     def _run_codex_json_process(self, proc, prompt: str, stream: bool, started: float, timeout: int):
         """Feed Codex and translate its JSONL stdout into Maude trace events."""
@@ -706,8 +1165,10 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 stage_word = "stage" if count == 1 else "stages"
                 return f"Plan mode: executing {count} {stage_word}"
             return "Plan mode: executing tool plan"
-        if name == "run_command":
+        if name in {"run_command", "run_terminal_command", "grok_run_terminal_command", "grok_run_command"}:
             cmd = command.lower()
+            if not cmd and args.get("description"):
+                return str(args.get("description"))[:80]
             if "comfyui" in cmd or "8188" in cmd:
                 return "Checking or starting ComfyUI"
             if "ffmpeg" in cmd:
@@ -741,6 +1202,14 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             return "Moving the finished file"
         if name.startswith("codex_"):
             return "Delegating work to Codex"
+        if name == "grok_cli":
+            return "Running Grok agent"
+        if name.startswith("grok_"):
+            base = name[len("grok_") :]
+            # Recurse once on the unprefixed tool name for a friendlier label.
+            if base and base != name:
+                return CloudMixin._tool_task_label(base, args)
+            return f"Grok: {base.replace('_', ' ')}"
         return name.replace("_", " ").capitalize()
 
     def _tool_call_trace_payload(self, name: str, args: dict | None, args_preview: str) -> dict:

@@ -860,10 +860,23 @@ def _prepare_payload_for_provider(payload: dict) -> dict:
     return prepared
 
 
+def _chat_timeout_for_model(model: str | None = None) -> int:
+    """HTTP timeout for /v1/chat/completions.
+
+    Grok CLI runs can take several minutes (server default MAUDE_GROK_TIMEOUT=600),
+    so the client budget must be higher than the generic 300s used for other models.
+    """
+    name = (model or current_model or "").lower()
+    if "grok" in name:
+        return int(os.environ.get("MAUDE_CLIENT_GROK_TIMEOUT", "900"))
+    return int(os.environ.get("MAUDE_CLIENT_CHAT_TIMEOUT", "300"))
+
+
 def _post_chat_payload(payload: dict, *, retry_without_tools: bool = True) -> requests.Response:
     """POST a chat payload, falling back only if sanitized Mistral tools still fail."""
     payload = _prepare_payload_for_provider(payload)
-    response = requests.post(API_URL, json=payload, stream=True, timeout=300, verify=False)
+    timeout = _chat_timeout_for_model(payload.get("model", current_model))
+    response = requests.post(API_URL, json=payload, stream=True, timeout=timeout, verify=False)
     if (
         response.status_code == 422
         and retry_without_tools
@@ -874,7 +887,7 @@ def _post_chat_payload(payload: dict, *, retry_without_tools: bool = True) -> re
         fallback_payload = dict(payload)
         fallback_payload.pop("tools", None)
         fallback_payload.pop("tool_choice", None)
-        response = requests.post(API_URL, json=fallback_payload, stream=True, timeout=300, verify=False)
+        response = requests.post(API_URL, json=fallback_payload, stream=True, timeout=timeout, verify=False)
 
     if response.status_code >= 400:
         raise RuntimeError(_format_http_error(response))
@@ -896,8 +909,18 @@ def _format_trace(data: dict) -> str:
     # Default UI matches chat: hide noisy token/result dumps.
     if not _VERBOSE_UI:
         if t == "tool_call":
-            name = data.get("name", "") or "tool"
-            return f"{_DIM}  · {name}{_RESET}\n"
+            # Prefer friendly task labels (e.g. "Running Grok agent") over raw names.
+            label = (data.get("task") or data.get("name") or "tool").strip()
+            return f"{_DIM}  · {label}{_RESET}\n"
+        if t == "keepalive":
+            name = data.get("name") or "working"
+            elapsed = data.get("elapsed", 0)
+            return f"{_DIM}  ⠿ {name} ({elapsed}s){_RESET}\n"
+        if t == "context_trim":
+            removed = data.get("removed", 0)
+            if not removed:
+                return ""
+            return f"{_DIM}  · context trimmed ({removed} msgs){_RESET}\n"
         if t in {"tool_result", "llm_call"}:
             return ""
         return ""
@@ -907,13 +930,21 @@ def _format_trace(data: dict) -> str:
         args_s = str(args)
         if len(args_s) > 100:
             args_s = args_s[:97] + "..."
-        return f"{_DIM}  [{data.get('name', '')}] {args_s}{_RESET}\n"
+        label = data.get("task") or data.get("name", "")
+        return f"{_DIM}  [{label}] {args_s}{_RESET}\n"
     if t == "tool_result":
         elapsed = data.get("elapsed", 0)
         preview = str(data.get("preview", "") or "")
         if len(preview) > 100:
             preview = preview[:97] + "..."
         return f"{_DIM}    -> {preview} ({elapsed}s){_RESET}\n"
+    if t == "keepalive":
+        name = data.get("name") or "working"
+        elapsed = data.get("elapsed", 0)
+        return f"{_DIM}  ⠿ still working: {name} ({elapsed}s){_RESET}\n"
+    if t == "context_trim":
+        removed = data.get("removed", 0)
+        return f"{_DIM}  [context] trimmed {removed} messages{_RESET}\n"
     if t == "llm_call":
         pt = data.get("prompt_tokens", 0)
         ct = data.get("completion_tokens", 0)
@@ -986,6 +1017,18 @@ def _stream_model_turn(payload: dict) -> Generator[str, None, None]:
                 continue
 
             line = line.decode("utf-8")
+
+            # Default gateway transport: SSE comments (`: trace {...}`).
+            # Without this, Grok keepalives / tool progress never reach the TUI.
+            if line.startswith(": trace "):
+                try:
+                    trace_data = json.loads(line[len(": trace ") :])
+                    trace_line = _format_trace(trace_data)
+                    if trace_line:
+                        yield ("trace", trace_line)
+                except json.JSONDecodeError:
+                    pass
+                continue
 
             if line.startswith("event: "):
                 current_event_type = line[7:].strip()

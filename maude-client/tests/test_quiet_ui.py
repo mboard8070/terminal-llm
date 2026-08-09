@@ -36,6 +36,27 @@ def test_format_trace_quiet_hides_tool_result(monkeypatch):
     assert "pattern" not in call
 
 
+def test_format_trace_quiet_prefers_task_label(monkeypatch):
+    monkeypatch.setattr(cli, "_VERBOSE_UI", False)
+    call = cli._format_trace(
+        {
+            "type": "tool_call",
+            "name": "grok_cli",
+            "task": "Running Grok agent",
+            "args": "{}",
+        }
+    )
+    assert "Running Grok agent" in call
+    assert "grok_cli" not in call
+
+
+def test_format_trace_quiet_shows_keepalive(monkeypatch):
+    monkeypatch.setattr(cli, "_VERBOSE_UI", False)
+    line = cli._format_trace({"type": "keepalive", "name": "grok_cli", "elapsed": 32.5})
+    assert "grok_cli" in line
+    assert "32.5" in line
+
+
 def test_search_files_bounds_matches(tmp_path):
     root = tmp_path / "proj"
     root.mkdir()

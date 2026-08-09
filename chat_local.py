@@ -415,6 +415,12 @@ def chat(client, messages: list):
                                             f"[cyan]  ╰─[/cyan] [{status_color}]{preview}[/{status_color}] [dim]({elapsed:.1f}s)[/dim]"
                                         )
                                         running_tasks.pop(tname, None)
+                                    elif ttype == "context_trim":
+                                        removed = trace.get("removed", 0)
+                                        if removed:
+                                            console.print(
+                                                f"[dim cyan]  · context trimmed ({removed} messages)[/dim cyan]"
+                                            )
                                     elif ttype == "keepalive":
                                         tname = trace.get("name", "")
                                         elapsed = trace.get("elapsed", 0)
