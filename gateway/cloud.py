@@ -1272,6 +1272,48 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 return result[:3500] + f"\n... (truncated, {n} chars total)"
             return result
 
+    def _try_fast_dispatch(self, user_msg: str, *, sse_started: bool = False):
+        """Skip first LLM tool-selection for high-confidence single-tool intents.
+
+        Used by phone/web gateway path (OpenAI + Claude tool loops). Returns
+        (tool_name, args, compact_result) or None. Emits tool_call / tool_result
+        traces so the phone UI shows the fast path the same as a normal tool step.
+        """
+        text = (user_msg or "").strip()
+        if not text or len(text) > 240:
+            return None
+        # Don't hijack when client already pre-scoped tools for a multi-tool task
+        try:
+            from maude_core.fast_dispatch import fast_dispatch
+
+            hit = fast_dispatch(text)
+        except Exception as exc:
+            logger.debug("fast_dispatch unavailable: %s", exc)
+            return None
+        if not hit:
+            return None
+        tool_name, args, tool_result = hit
+        compact = self._compact_tool_result(tool_name, tool_result or "")
+        if sse_started:
+            try:
+                self._send_trace_sse(
+                    "tool_call",
+                    self._tool_call_trace_payload(tool_name, args or {}, json.dumps(args or {})),
+                )
+                self._send_trace_sse(
+                    "tool_result",
+                    {
+                        "name": tool_name,
+                        "preview": (tool_result or "")[:200],
+                        "elapsed": 0,
+                        "fast_dispatch": True,
+                    },
+                )
+            except Exception:
+                pass
+        logger.info("gateway fast_dispatch hit: %s", tool_name)
+        return tool_name, args or {}, compact
+
     @staticmethod
     def _estimate_tokens(messages):
         """Rough token estimate: chars / 4. Handles both string and list content (Claude blocks)."""
@@ -1425,11 +1467,23 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         tool_retries = 0
         api_key = os.environ.get(route["api_key_env"], "") if route.get("api_key_env") else ""
 
-        # Get the user's latest message for tool selection
+        # Get the user's latest message for tool selection / fast_dispatch
         user_msg = ""
         for msg in reversed(req.get("messages", [])):
             if msg.get("role") == "user":
-                user_msg = msg.get("content", "")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    user_msg = content
+                elif isinstance(content, list):
+                    parts = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(str(block.get("text", "")))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    user_msg = "\n".join(parts)
+                else:
+                    user_msg = str(content or "")
                 break
 
         # Use pre-scoped tools if provided, otherwise select by message + session sticky domains
@@ -1486,6 +1540,37 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 "model_route",
                 self._model_route_trace_payload(req.get("_route_trace"), route, resolved_name),
             )
+
+        # Fast path: list/read/shell/memory/image/URL — skip first tool-selection LLM hop
+        # (phone + web clients hit this path; Mac client has its own local fast_dispatch)
+        if not tools_pre_scoped:
+            fd = self._try_fast_dispatch(user_msg if isinstance(user_msg, str) else "", sse_started=sse_started)
+            if fd:
+                tool_name, args, compact = fd
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "fast_dispatch_1",
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(args),
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": "fast_dispatch_1",
+                        "name": tool_name,
+                        "content": compact,
+                    }
+                )
 
         for iteration in range(max_iterations):
             # On last iteration, drop tools to force a summary response
@@ -1993,11 +2078,23 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         claude_retries = 0
         api_key = os.environ.get(route["api_key_env"], "")
 
-        # Get the user's latest message for tool selection
+        # Get the user's latest message for tool selection / fast_dispatch
         user_msg = ""
         for msg in reversed(req.get("messages", [])):
             if msg.get("role") == "user":
-                user_msg = msg.get("content", "")
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    user_msg = content
+                elif isinstance(content, list):
+                    parts = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            parts.append(str(block.get("text", "")))
+                        elif isinstance(block, str):
+                            parts.append(block)
+                    user_msg = "\n".join(parts)
+                else:
+                    user_msg = str(content or "")
                 break
 
         # Use pre-scoped tools if provided, otherwise select by message + session sticky domains
@@ -2093,6 +2190,37 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 "model_route",
                 self._model_route_trace_payload(req.get("_route_trace"), route, resolved_name),
             )
+
+        # Fast path for phone/web Claude routes (same patterns as OpenAI loop)
+        if not tools_pre_scoped:
+            fd = self._try_fast_dispatch(user_msg if isinstance(user_msg, str) else "", sse_started=sse_started)
+            if fd:
+                tool_name, args, compact = fd
+                claude_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "fast_dispatch_1",
+                                "name": tool_name,
+                                "input": args,
+                            }
+                        ],
+                    }
+                )
+                claude_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "fast_dispatch_1",
+                                "content": compact,
+                            }
+                        ],
+                    }
+                )
 
         for iteration in range(max_iterations):
             # On last iteration, drop tools to force a summary response

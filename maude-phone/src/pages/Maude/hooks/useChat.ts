@@ -2,6 +2,11 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 import { uuid } from "./uuid";
 import { getGatewayUrl } from "../../../lib/gateway";
+import {
+  prepareHistoryForGateway,
+  phoneSessionId,
+  compactHistoryContent,
+} from "../../../lib/contextHygiene";
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -142,17 +147,12 @@ function shouldUseCodestral(text: string): boolean {
   return CODE_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-function compactHistoryContent(content: string): string {
-  const maxChars = 4000;
-  if (content.length <= maxChars) return content;
-  return `${content.slice(0, 1800)}\n\n... [older content trimmed for mobile reliability] ...\n\n${content.slice(-1800)}`;
-}
-
 function buildChatBody(
   model: string,
   history: Array<{ role: string; content: string }>,
   apiContent: string,
   loc: { lat: number; lng: number; accuracy: number } | null,
+  sessionId?: string,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model,
@@ -164,11 +164,17 @@ function buildChatBody(
     stream: true, max_tokens: 4096, temperature: 0.7,
   };
   if (loc) body.location = { lat: loc.lat, lng: loc.lng, accuracy: loc.accuracy };
+  // Sticky tool-domain activation (browser/google/media) on the gateway
+  if (sessionId) body.session_id = sessionId;
   return body;
 }
 
-function minimalChatBody(model: string, apiContent: string): Record<string, unknown> {
-  return buildChatBody(model, [], apiContent, null);
+function minimalChatBody(
+  model: string,
+  apiContent: string,
+  sessionId?: string,
+): Record<string, unknown> {
+  return buildChatBody(model, [], apiContent, null, sessionId);
 }
 
 
@@ -247,9 +253,12 @@ function applyTracePayload(
     for (let i = toolSteps.length - 1; i >= 0; i--) {
       if (toolSteps[i].name === t.name && toolSteps[i].status === "running") {
         const preview = (t.preview || "").slice(0, 60);
-        toolSteps[i].result = preview;
+        toolSteps[i].result = t.fast_dispatch ? `⚡ ${preview}` : preview;
         toolSteps[i].elapsed = t.elapsed || 0;
         toolSteps[i].status = preview.startsWith("Error") ? "error" : "done";
+        if (t.fast_dispatch && !toolSteps[i].task?.includes("fast path")) {
+          toolSteps[i].task = `${toolSteps[i].task || t.name} (fast path)`;
+        }
         break;
       }
     }
@@ -364,8 +373,13 @@ export function useChat(conversationId: string | null = null) {
       let actualModel = "";
 
       try {
-        const history = messages.filter((m) => m.role !== "system").slice(-8)
-          .map((m) => ({ role: m.role, content: compactHistoryContent(m.content) }));
+        // Context hygiene: sliding window + rolling summary + per-msg caps
+        // (gateway also trims; phone keeps transport lean for iOS reliability)
+        const rawHistory = messages
+          .filter((m) => m.role !== "system")
+          .map((m) => ({ role: m.role, content: m.content || "" }));
+        const { history } = prepareHistoryForGateway(rawHistory);
+        const sessionId = phoneSessionId(conversationId);
 
         // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
@@ -378,12 +392,13 @@ export function useChat(conversationId: string | null = null) {
             apiContent = `[${imagePaths.length} images attached — analyze each with view_image tool:\n${listing}]\n\n${displayContent}`;
           }
         }
+        apiContent = compactHistoryContent(apiContent);
 
         // Fetch device location (non-blocking, cached)
         const loc = await getLocation();
 
-        const chatBody = buildChatBody(model, history, apiContent, loc);
-        const fallbackChatBody = minimalChatBody(model, apiContent);
+        const chatBody = buildChatBody(model, history, apiContent, loc, sessionId);
+        const fallbackChatBody = minimalChatBody(model, apiContent, sessionId);
 
         // ── iOS: EventSource transport ──────────────────────────────
         // WKWebView kills streaming fetch() when app goes to background.
@@ -688,7 +703,7 @@ export function useChat(conversationId: string | null = null) {
         abortRef.current = null;
       }
     },
-    [messages, isStreaming, currentModel, autoRoute, updateModel],
+    [messages, isStreaming, currentModel, autoRoute, updateModel, conversationId],
   );
 
   const stopStreaming = useCallback(() => { abortRef.current?.abort(); }, []);

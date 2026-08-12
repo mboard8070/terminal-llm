@@ -9,7 +9,7 @@ Grounded in current stack: `fast_dispatch`, auto-router, tool groups, ~136 tools
 
 Long chats get slow and dumb. Clean context first; everything else compounds on this.
 
-Implemented in `maude_core/context_hygiene.py`, wired into `chat_local.py`, `gateway/cloud.py`, `maude-client`, memory injection, and MemPalace.
+Implemented in `maude_core/context_hygiene.py`, wired into `chat_local.py`, `gateway/cloud.py`, `maude-client` (incl. portable `maude_client/context_hygiene.py` for Mac/PC), `maude-phone` (`lib/contextHygiene.ts`), memory injection, and MemPalace.
 
 - [x] **Sliding window + rolling summary** of older turns (keep recent turns verbatim; compress the rest)
 - [x] **Top-k memory retrieval only** — never dump the whole palace; retrieve relevant chunks only
@@ -42,6 +42,8 @@ keyword match, sticky session activation, or `activate_tool_domain`.
 
 Implemented in `maude_core/tool_groups.py`, wired into `chat_local.py`,
 `gateway/cloud.py`, `run_telegram.py`, `tool_catalog.py`, and `maude-client`.
+Phone sends `session_id` per conversation so sticky domain activation works
+on the gateway tool-tier path.
 
 - [x] **Tier tools**
   - Always-on (~22): file / shell / web search / memory / scratch / plan + domain controls
@@ -69,7 +71,9 @@ Implemented in `maude_core/tool_groups.py`, wired into `chat_local.py`,
 `fast_dispatch` and `auto_router` already avoid full tool-selection loops for obvious intents. Expanded.
 
 Implemented in `maude_core/fast_dispatch.py` (+ client `tool_router.py` mirrors for local ops).
-Wired into `chat_local.py`, `run_telegram.py`, and `maude-client` (unchanged call sites).
+Wired into `chat_local.py`, `run_telegram.py`, `maude-client`, and **gateway
+OpenAI + Claude tool loops** so phone/web get the same list/read/shell/memory/image/URL
+skip without a first tool-selection LLM hop.
 
 | Pattern | Skip to |
 |---|---|

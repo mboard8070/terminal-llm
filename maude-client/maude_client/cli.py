@@ -358,8 +358,8 @@ def _prepare_tool_result_for_model(result: str, tool_name: str = "tool") -> str:
     """Keep enough context for the model without unbounded payloads."""
     text = result if isinstance(result, str) else str(result)
     try:
-        # Prefer shared hygiene when available (server package or vendored path)
-        from maude_core.context_hygiene import compact_tool_result
+        # maude_client.context_hygiene uses maude_core when present, else local port
+        from maude_client.context_hygiene import compact_tool_result
 
         return compact_tool_result(tool_name, text)
     except Exception:
@@ -377,11 +377,11 @@ def _hygiene_client_messages(*, full: bool = True) -> None:
     global messages
     try:
         if full:
-            from maude_core.context_hygiene import apply_hygiene_in_place
+            from maude_client.context_hygiene import apply_hygiene_in_place
 
             apply_hygiene_in_place(messages)
         else:
-            from maude_core.context_hygiene import drop_old_tool_payloads
+            from maude_client.context_hygiene import drop_old_tool_payloads
 
             drop_old_tool_payloads(messages, in_place=True)
     except Exception:
@@ -1419,7 +1419,7 @@ def main():
                 if user_input.lower() == "clear":
                     messages.clear()
                     try:
-                        from maude_core.context_hygiene import clear_mission_scratch
+                        from maude_client.context_hygiene import clear_mission_scratch
 
                         clear_mission_scratch()
                     except Exception:
