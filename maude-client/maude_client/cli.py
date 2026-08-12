@@ -280,7 +280,7 @@ def typewriter_print(chunk: str):
 # Quiet-by-default UI: behave more like the phone/web chat surface.
 # Full tool payloads still go to the model; only compact status hits the TTY.
 _VERBOSE_UI = os.environ.get("MAUDE_CLIENT_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}
-_MODEL_TOOL_RESULT_CHARS = 4000
+_MODEL_TOOL_RESULT_CHARS = int(os.environ.get("MAUDE_CTX_MAX_TOOL_CHARS", "4000"))
 _VERBOSE_DISPLAY_CHARS = 1200
 
 
@@ -354,12 +354,49 @@ def _summarize_tool_result(func_name: str, result: str) -> str:
     return f"ok · {line_count} lines"
 
 
-def _prepare_tool_result_for_model(result: str) -> str:
+def _prepare_tool_result_for_model(result: str, tool_name: str = "tool") -> str:
     """Keep enough context for the model without unbounded payloads."""
     text = result if isinstance(result, str) else str(result)
-    if len(text) > _MODEL_TOOL_RESULT_CHARS:
-        return text[:_MODEL_TOOL_RESULT_CHARS] + "\n... (truncated)"
-    return text
+    try:
+        # Prefer shared hygiene when available (server package or vendored path)
+        from maude_core.context_hygiene import compact_tool_result
+
+        return compact_tool_result(tool_name, text)
+    except Exception:
+        if len(text) > _MODEL_TOOL_RESULT_CHARS:
+            return text[:_MODEL_TOOL_RESULT_CHARS] + "\n... (truncated)"
+        return text
+
+
+def _hygiene_client_messages(*, full: bool = True) -> None:
+    """Bound client-side conversation history.
+
+    full=True  — sliding window + drop old tools (start of user turn)
+    full=False — only stub old tool payloads (between tool rounds)
+    """
+    global messages
+    try:
+        if full:
+            from maude_core.context_hygiene import apply_hygiene_in_place
+
+            apply_hygiene_in_place(messages)
+        else:
+            from maude_core.context_hygiene import drop_old_tool_payloads
+
+            drop_old_tool_payloads(messages, in_place=True)
+    except Exception:
+        # Lightweight fallback: stub tool results older than last 2
+        tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        if len(tool_idxs) > 2:
+            for i in tool_idxs[:-2]:
+                content = messages[i].get("content") or ""
+                if isinstance(content, str) and len(content) > 200 and not content.startswith("[prior"):
+                    messages[i]["content"] = f"[prior tool result summarized] {content[:160]}..."
+        if full:
+            keep = int(os.environ.get("MAUDE_CTX_KEEP_RECENT_TURNS", "12"))
+            keep = max(4, keep * 2)
+            if len(messages) > keep + 4:
+                messages[:] = messages[-keep:]
 
 
 def _format_tool_status(func_name: str, args=None, result: str = None) -> str:
@@ -975,12 +1012,13 @@ def _run_tool_calls(tool_calls: list) -> Generator[str, None, None]:
             result = router.execute(func_name, args)
         except Exception as exc:
             result = f"Error executing {func_name}: {exc}"
-        model_result = _prepare_tool_result_for_model(result)
+        model_result = _prepare_tool_result_for_model(result, tool_name=func_name)
         yield _format_tool_status(func_name, args, result)
         messages.append(
             {
                 "role": "tool",
                 "tool_call_id": tc.get("id") or "",
+                "name": func_name,
                 "content": model_result,
             }
         )
@@ -1105,6 +1143,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
     global _active_task_message
     messages.append({"role": "user", "content": user_message})
     _active_task_message = user_message
+    _hygiene_client_messages(full=True)
 
     # Fast dispatch only for simple single-shot intents. Multi-step tasks
     # ("check X then do Y", "find and fix", etc.) go through the model loop.
@@ -1112,7 +1151,7 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
         result = router.fast_dispatch(user_message)
         if result:
             tool_name, args, tool_result = result
-            model_result = _prepare_tool_result_for_model(tool_result)
+            model_result = _prepare_tool_result_for_model(tool_result, tool_name=tool_name)
             yield _format_tool_status(tool_name, args, tool_result)
             # Ask the model to turn the tool result into a normal answer
             # instead of ending the turn with raw tool output.
@@ -1143,11 +1182,15 @@ def stream_chat(user_message: str) -> Generator[str, None, None]:
         # if fast_dispatch misses, fall through to model
 
     # Keep the original user text available for tool-group selection on later rounds.
-    tools = router.get_tools_for_message(user_message)
+    # Re-select each round so sticky domain activation expands schemas mid-loop.
     max_rounds = int(os.environ.get("MAUDE_CLIENT_MAX_TOOL_ROUNDS", "12"))
 
     try:
         for round_idx in range(max_rounds):
+            # Between tool rounds: stub old tool bodies only (keep the user ask)
+            if round_idx > 0:
+                _hygiene_client_messages(full=False)
+            tools = router.get_tools_for_message(user_message, messages=messages)
             payload = {
                 "model": current_model,
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
@@ -1375,6 +1418,12 @@ def main():
 
                 if user_input.lower() == "clear":
                     messages.clear()
+                    try:
+                        from maude_core.context_hygiene import clear_mission_scratch
+
+                        clear_mission_scratch()
+                    except Exception:
+                        pass
                     print(color("Conversation cleared.", _DIM))
                     continue
 

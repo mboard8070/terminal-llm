@@ -44,17 +44,32 @@ class TestToolsEndpoint:
         assert len(catalog["core_tools"]) > 0
 
     def test_filtered_catalog(self):
+        from maude_core.tool_groups import clear_session_domains
         from tool_catalog import get_filtered_tools
 
-        # With email keyword
-        tools = get_filtered_tools("check my email")
-        names = {t["function"]["name"] for t in tools}
-        assert "gmail_list" in names
+        clear_session_domains("gw-cat")
+        clear_session_domains("gw-other")
+        try:
+            # With email keyword (one-shot: no session_id → no sticky leak)
+            tools = get_filtered_tools("check my email")
+            names = {t["function"]["name"] for t in tools}
+            assert "gmail_list" in names
 
-        # Without keywords — core only
-        tools_plain = get_filtered_tools("hello")
-        names_plain = {t["function"]["name"] for t in tools_plain}
-        assert "gmail_list" not in names_plain
+            # Without keywords — core only
+            tools_plain = get_filtered_tools("hello")
+            names_plain = {t["function"]["name"] for t in tools_plain}
+            assert "gmail_list" not in names_plain
+
+            # With session_id, activation sticks within that session only
+            tools_s = get_filtered_tools("check my email", session_id="gw-cat")
+            assert "gmail_list" in {t["function"]["name"] for t in tools_s}
+            tools_sticky = get_filtered_tools("hello", session_id="gw-cat")
+            assert "gmail_list" in {t["function"]["name"] for t in tools_sticky}
+            tools_other = get_filtered_tools("hello", session_id="gw-other")
+            assert "gmail_list" not in {t["function"]["name"] for t in tools_other}
+        finally:
+            clear_session_domains("gw-cat")
+            clear_session_domains("gw-other")
 
     def test_catalog_has_execution_targets(self):
         from tool_catalog import get_catalog

@@ -56,35 +56,41 @@ class TestCatalogFiltering:
     """Test keyword filtering."""
 
     def test_core_tools_always_included(self):
-        tools = get_filtered_tools("tell me a joke")
+        tools = get_filtered_tools("tell me a joke", session_id="catalog-core")
         names = {t["function"]["name"] for t in tools}
         assert "read_file" in names
         assert "web_search" in names
 
     def test_email_includes_gmail(self):
-        tools = get_filtered_tools("check my email inbox")
+        tools = get_filtered_tools("check my email inbox", session_id="catalog-email")
         names = {t["function"]["name"] for t in tools}
         assert "gmail_list" in names
 
     def test_no_keywords_returns_core_only(self):
-        tools = get_filtered_tools("hello world")
-        names = {t["function"]["name"] for t in tools}
+        # Fresh session so sticky activation from other tests cannot leak
+        tools = get_filtered_tools("hello world", session_id="catalog-hello-only")
+        names = {
+            t["function"]["name"]
+            for t in tools
+            if not (t["function"].get("name") or "").startswith("domain_")
+        }
         # Should NOT include gmail, drive, calendar, etc.
         assert "gmail_list" not in names
         assert "drive_list" not in names
+        assert "browser_open" not in names
 
     def test_calendar_keyword(self):
-        tools = get_filtered_tools("what's on my calendar today")
+        tools = get_filtered_tools("what's on my calendar today", session_id="catalog-cal")
         names = {t["function"]["name"] for t in tools}
         assert "calendar_list_events" in names
 
     def test_image_keyword(self):
-        tools = get_filtered_tools("generate an image of a cat")
+        tools = get_filtered_tools("generate an image of a cat", session_id="catalog-img")
         names = {t["function"]["name"] for t in tools}
         assert "generate_image" in names
 
     def test_hyperframes_keyword(self):
-        tools = get_filtered_tools("create a HyperFrames product video")
+        tools = get_filtered_tools("create a HyperFrames product video", session_id="catalog-hf")
         names = {t["function"]["name"] for t in tools}
         assert "skill_hyperframes" in names
         assert "hyperframes_init" in names

@@ -289,28 +289,36 @@ def _escalate_to_frontier(user_question: str) -> str:
 
 def _compact_tool_result(name: str, result: str) -> str:
     """Truncate tool results to prevent context bloat across loop iterations."""
-    if not result:
+    try:
+        from maude_core.context_hygiene import compact_tool_result
+
+        return compact_tool_result(name, result)
+    except Exception:
+        if not result:
+            return result
+        n = len(result)
+        if n > 4000:
+            return result[:3500] + f"\n... (truncated, {n} chars total)"
         return result
-    n = len(result)
-    if name in ("write_file", "edit_file", "change_directory", "get_working_directory"):
-        return result
-    if name == "read_file" and n > 3000:
-        lines = result.split("\n")
-        if len(lines) > 100:
-            head = "\n".join(lines[:80])
-            tail = "\n".join(lines[-20:])
-            return f"{head}\n\n... ({len(lines) - 100} lines omitted) ...\n\n{tail}"
-        return result[:3000] + f"\n... (truncated, {n} chars total)"
-    if name == "run_command" and n > 3000:
-        return result[:2000] + f"\n\n... ({n - 2800} chars omitted) ...\n\n" + result[-800:]
-    if name == "list_directory" and n > 2000:
-        lines = result.split("\n")
-        if len(lines) > 65:
-            return "\n".join(lines[:65]) + f"\n... ({len(lines) - 65} more entries)"
-        return result[:2000] + "\n... (truncated)"
-    if n > 4000:
-        return result[:3500] + f"\n... (truncated, {n} chars total)"
-    return result
+
+
+def _hygiene_messages(messages: list) -> None:
+    """Bound live conversation: drop old tool payloads + sliding window summary."""
+    try:
+        from maude_core.context_hygiene import apply_hygiene_in_place, estimate_tokens
+
+        before = estimate_tokens(messages)
+        meta = apply_hygiene_in_place(messages)
+        after = meta.get("final_tokens", estimate_tokens(messages))
+        dropped = meta.get("tool_payloads_dropped", 0) + meta.get("messages_summarized_away", 0)
+        if dropped or after < before * 0.9:
+            console.print(
+                f"[dim cyan]  · context hygiene: {before}→{after} tok "
+                f"(tools dropped={meta.get('tool_payloads_dropped', 0)}, "
+                f"turns summarized={meta.get('messages_summarized_away', 0)})[/dim cyan]"
+            )
+    except Exception as e:
+        console.print(f"[dim yellow]  · context hygiene skipped: {e}[/dim yellow]")
 
 
 def chat(client, messages: list):
@@ -322,6 +330,9 @@ def chat(client, messages: list):
     recent_tool_calls = []
     consecutive_duplicates = 0
     reset_rate_limits()  # Reset per-turn limits in maude_core
+
+    # Context hygiene before the tool loop (and after heavy tool rounds)
+    _hygiene_messages(messages)
 
     # Cloud models: gateway handles tools, stream with trace support
     if MODEL in _CLOUD_MODELS:
@@ -485,14 +496,21 @@ def chat(client, messages: list):
             console.print(f"[red]Error: {e}[/red]")
             return None
 
-    # Get relevant tools based on user's latest message
+    # Get relevant tools based on user's latest message (recomputed each loop
+    # so session domain activation / tool-history stickiness expands schemas).
     user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
-    active_tools = get_tools_for_message(user_msg)
+    from maude_core.config import SESSION_ID
+
+    def _select_tools():
+        return get_tools_for_message(user_msg, session_id=SESSION_ID, messages=messages)
+
+    active_tools = _select_tools()
 
     _tool_step = [0]  # mutable counter for tool step display
 
     while True:
         tool_iteration += 1
+        active_tools = _select_tools()
         if tool_iteration > max_tool_iterations:
             console.print("[dim yellow](max tool iterations reached — escalating to frontier model...)[/dim yellow]")
             user_question = next(
@@ -717,6 +735,14 @@ def chat(client, messages: list):
                     messages.append(
                         {"role": "tool", "tool_call_id": tc_id, "content": _compact_tool_result(func_name, result)}
                     )
+
+                # After each tool round: stub older tool payloads so context stays lean
+                try:
+                    from maude_core.context_hygiene import drop_old_tool_payloads
+
+                    drop_old_tool_payloads(messages, in_place=True)
+                except Exception:
+                    pass
 
                 # Continue loop to get next response
                 continue
@@ -1331,27 +1357,37 @@ class MaudeApp(App):
         model_line += ". If the user asks which model you are, answer directly from this — do NOT read files or call tools to find out."
         extra_sections.append(model_line)
 
-        # Memory context
+        # Memory context (top-k only)
         try:
             from maude_core.memory_utils import get_memory
 
             mem = get_memory()
             if mem:
-                context = mem.get_context_for_prompt(user_input, max_memories=5)
+                context = mem.get_context_for_prompt(user_input)
                 if context:
                     extra_sections.append(context)
         except Exception:
             pass  # Memory unavailable — proceed without context
 
-        # MemPalace context — layered long-term memory (L3 semantic search)
+        # MemPalace context — layered long-term memory (L3 semantic search, top-k)
         try:
             from maude_core.mempalace_utils import get_palace_context_for_prompt
 
-            palace_ctx = get_palace_context_for_prompt(user_input, n_results=5)
+            palace_ctx = get_palace_context_for_prompt(user_input)
             if palace_ctx:
                 extra_sections.append(palace_ctx)
         except Exception:
             pass  # Palace unavailable — proceed without context
+
+        # Per-mission scratch (findings/notes without full chat history)
+        try:
+            from maude_core.context_hygiene import get_mission_scratch
+
+            scratch_block = get_mission_scratch().prompt_block()
+            if scratch_block:
+                extra_sections.append(scratch_block)
+        except Exception:
+            pass
 
         # Best-practice guides — inject relevant guide based on user input keywords
         guide = self._match_guide(user_input)
@@ -1436,6 +1472,9 @@ class MaudeApp(App):
     def process_message(self, user_input: str):
         """Process message with LLM in background thread."""
         self.messages.append({"role": "user", "content": user_input})
+
+        # Bound history before this turn (sliding window + drop old tool payloads)
+        _hygiene_messages(self.messages)
 
         # Inject relevant memories into system prompt
         self._inject_memory_context(user_input)

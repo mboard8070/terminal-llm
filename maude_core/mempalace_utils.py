@@ -86,8 +86,22 @@ def _is_empty_result(text: str) -> bool:
     return any(marker in text for marker in _EMPTY_MARKERS)
 
 
-def get_palace_context_for_prompt(user_input: str, n_results: int = 5) -> str | None:
-    """Return a palace context block for system-prompt injection, or None if nothing relevant."""
+def get_palace_context_for_prompt(user_input: str, n_results: int = None) -> str | None:
+    """Return a top-k palace context block for system-prompt injection, or None if nothing relevant.
+
+    Never dumps the whole palace — only the top-k search hits, hard-capped in size.
+    """
+    try:
+        from .context_hygiene import memory_top_k
+        from .context_hygiene import max_tool_chars as _max_chars
+    except ImportError:
+        memory_top_k = lambda: 5  # noqa: E731
+        _max_chars = lambda: 4000  # noqa: E731
+
+    if n_results is None:
+        n_results = memory_top_k()
+    n_results = max(1, min(int(n_results), 8))
+
     stack = get_palace_stack()
     if stack is None:
         return None
@@ -98,4 +112,9 @@ def get_palace_context_for_prompt(user_input: str, n_results: int = 5) -> str | 
         return None
     if _is_empty_result(hits):
         return None
-    return f"## Relevant memories from MemPalace\n{hits}"
+    # Cap injection size so a single palace hit can't blow the prompt
+    hits_text = hits if isinstance(hits, str) else str(hits)
+    cap = min(2500, _max_chars())
+    if len(hits_text) > cap:
+        hits_text = hits_text[: cap - 40] + f"\n... (palace context truncated, {len(hits_text)} chars)"
+    return f"## Relevant memories from MemPalace (top-{n_results})\n{hits_text}"

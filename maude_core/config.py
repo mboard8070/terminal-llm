@@ -43,3 +43,13 @@ VISION_MODEL_ROUTES = {
 VISION_FALLBACK_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
 VISION_FALLBACK_URL = "https://openrouter.ai/api/v1"
 VISION_FALLBACK_KEY_ENV = "OPEN_ROUTER_API_KEY"
+
+# ── Context hygiene (see maude_core.context_hygiene) ─────────────────
+# Recent user/assistant turns kept verbatim; older turns become a rolling summary
+CTX_KEEP_RECENT_TURNS = int(os.environ.get("MAUDE_CTX_KEEP_RECENT_TURNS", "12"))
+# Tool-result rounds kept in full; older tool payloads are stubbed
+CTX_KEEP_TOOL_ROUNDS = int(os.environ.get("MAUDE_CTX_KEEP_TOOL_ROUNDS", "2"))
+# Hard cap on a single tool result injected into model context
+CTX_MAX_TOOL_CHARS = int(os.environ.get("MAUDE_CTX_MAX_TOOL_CHARS", "4000"))
+# Top-k memories injected into the system prompt
+CTX_MEMORY_TOP_K = int(os.environ.get("MAUDE_CTX_MEMORY_TOP_K", "5"))

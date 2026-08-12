@@ -98,7 +98,9 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 break
 
         try:
-            active_tools = get_tools_for_message(user_msg) if get_tools_for_message else []
+            active_tools = (
+                get_tools_for_message(user_msg, messages=messages) if get_tools_for_message else []
+            )
         except Exception:
             active_tools = []
 
@@ -1258,109 +1260,99 @@ If the tool returns an OAuth or credential error, report that exact tool result.
 
         The full result is already sent to the client via SSE trace — this only
         affects what the LLM sees when planning its next step."""
-        if not result:
+        try:
+            from maude_core.context_hygiene import compact_tool_result
+
+            return compact_tool_result(name, result)
+        except Exception:
+            if not result:
+                return result
+            n = len(result)
+            if n > 4000:
+                return result[:3500] + f"\n... (truncated, {n} chars total)"
             return result
-        n = len(result)
-        # write_file / edit_file results are already short
-        if name in ("write_file", "edit_file", "change_directory", "get_working_directory"):
-            return result
-        # read_file: keep first 80 + last 20 lines, drop middle
-        if name == "read_file" and n > 3000:
-            lines = result.split("\n")
-            if len(lines) > 100:
-                head = "\n".join(lines[:80])
-                tail = "\n".join(lines[-20:])
-                return f"{head}\n\n... ({len(lines) - 100} lines omitted) ...\n\n{tail}"
-            return result[:3000] + f"\n... (truncated, {n} chars total)"
-        # run_command: keep first 2000 + last 800
-        if name == "run_command" and n > 3000:
-            return result[:2000] + f"\n\n... ({n - 2800} chars omitted) ...\n\n" + result[-800:]
-        # list_directory: keep first 60 entries
-        if name == "list_directory" and n > 2000:
-            lines = result.split("\n")
-            if len(lines) > 65:
-                return "\n".join(lines[:65]) + f"\n... ({len(lines) - 65} more entries)"
-            return result[:2000] + "\n... (truncated)"
-        # Everything else: hard cap at 4000
-        if n > 4000:
-            return result[:3500] + f"\n... (truncated, {n} chars total)"
-        return result
 
     @staticmethod
     def _estimate_tokens(messages):
         """Rough token estimate: chars / 4. Handles both string and list content (Claude blocks)."""
-        total = 0
-        for msg in messages:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                total += len(content)
-            elif isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict):
-                        total += len(json.dumps(block))
-                    elif isinstance(block, str):
-                        total += len(block)
-            # Also count tool_calls if present
-            tc = msg.get("tool_calls")
-            if tc:
-                total += len(json.dumps(tc))
-        return total // 4
+        try:
+            from maude_core.context_hygiene import estimate_tokens
+
+            return estimate_tokens(messages)
+        except Exception:
+            total = 0
+            for msg in messages:
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    total += len(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict):
+                            total += len(json.dumps(block))
+                        elif isinstance(block, str):
+                            total += len(block)
+                tc = msg.get("tool_calls")
+                if tc:
+                    total += len(json.dumps(tc))
+            return total // 4
 
     @staticmethod
     def _trim_messages(messages, max_tokens, format="openai"):
-        """Remove oldest middle messages to fit within max_tokens (80% threshold).
+        """Context hygiene: drop old tool payloads, sliding summary, token trim.
 
-        Preserves first 2 messages (system/user) and the most recent messages.
-        In openai format: removes assistant+tool pairs together.
-        In claude format: removes assistant+user-tool-result pairs together.
-        Returns number of messages removed.
+        Mutates `messages` in place. Returns number of messages removed/summarized away.
         """
-        threshold = int(max_tokens * 0.8)
+        try:
+            from maude_core.context_hygiene import (
+                drop_old_tool_payloads,
+                sliding_window_with_summary,
+                trim_to_token_budget,
+            )
 
-        # Check if we even need to trim
-        est = CloudMixin._estimate_tokens(messages)
-        if est <= threshold:
-            return 0
-
-        removed = 0
-        # Keep trimming from position 2 (after system/first-user) until under threshold
-        while CloudMixin._estimate_tokens(messages) > threshold and len(messages) > 4:
-            idx = 2  # Start removing from after the first 2 messages
-
-            if idx >= len(messages) - 2:
-                break  # Don't remove the most recent messages
-
-            if format == "openai":
-                # Remove assistant message + any following tool messages
-                if messages[idx].get("role") == "assistant":
-                    messages.pop(idx)
-                    removed += 1
-                    # Remove consecutive tool messages that followed it
-                    while idx < len(messages) - 2 and messages[idx].get("role") == "tool":
+            _, tool_dropped = drop_old_tool_payloads(messages, format=format, in_place=True)
+            prepared, win_meta = sliding_window_with_summary(messages, in_place=False)
+            # Replace list contents with windowed version
+            if win_meta.get("removed", 0) > 0 or len(prepared) != len(messages):
+                messages[:] = prepared
+            token_removed = trim_to_token_budget(messages, max_tokens, format=format)
+            return int(win_meta.get("removed", 0)) + int(token_removed) + int(tool_dropped > 0)
+        except Exception:
+            # Fallback: legacy middle-trim
+            threshold = int(max_tokens * 0.8)
+            est = CloudMixin._estimate_tokens(messages)
+            if est <= threshold:
+                return 0
+            removed = 0
+            while CloudMixin._estimate_tokens(messages) > threshold and len(messages) > 4:
+                idx = 2
+                if idx >= len(messages) - 2:
+                    break
+                if format == "openai":
+                    if messages[idx].get("role") == "assistant":
+                        messages.pop(idx)
+                        removed += 1
+                        while idx < len(messages) - 2 and messages[idx].get("role") == "tool":
+                            messages.pop(idx)
+                            removed += 1
+                    else:
                         messages.pop(idx)
                         removed += 1
                 else:
-                    messages.pop(idx)
-                    removed += 1
-            elif format == "claude":
-                # Remove assistant message + following user message (tool results)
-                if messages[idx].get("role") == "assistant":
-                    messages.pop(idx)
-                    removed += 1
-                    # Remove following user message with tool results
-                    if idx < len(messages) - 2 and messages[idx].get("role") == "user":
-                        content = messages[idx].get("content", "")
-                        is_tool_result = isinstance(content, list) and any(
-                            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-                        )
-                        if is_tool_result:
-                            messages.pop(idx)
-                            removed += 1
-                else:
-                    messages.pop(idx)
-                    removed += 1
-
-        return removed
+                    if messages[idx].get("role") == "assistant":
+                        messages.pop(idx)
+                        removed += 1
+                        if idx < len(messages) - 2 and messages[idx].get("role") == "user":
+                            content = messages[idx].get("content", "")
+                            is_tool_result = isinstance(content, list) and any(
+                                isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+                            )
+                            if is_tool_result:
+                                messages.pop(idx)
+                                removed += 1
+                    else:
+                        messages.pop(idx)
+                        removed += 1
+            return removed
 
     def _send_content_chunks(self, content: str, model_name: str, chunk_id: str, created: int):
         """Send content as word-boundary SSE chunks for typewriter effect.
@@ -1440,8 +1432,16 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 user_msg = msg.get("content", "")
                 break
 
-        # Use pre-scoped tools if provided, otherwise select by message content
-        active_tools = req.get("tools") or get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message + session sticky domains
+        session_id = req.get("session_id") or os.environ.get("MAUDE_SESSION_ID", "default")
+        tools_pre_scoped = bool(req.get("tools"))
+
+        def _select_active_tools(msgs):
+            if tools_pre_scoped:
+                return req.get("tools")
+            return get_tools_for_message(user_msg, session_id=session_id, messages=msgs)
+
+        active_tools = _select_active_tools(req.get("messages", []))
 
         # Enhance system prompt so Mistral knows it has tool access
         tool_addendum = TOOL_ADDENDUM
@@ -1497,6 +1497,9 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                         "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)",
                     }
                 )
+
+            # Re-select tools each iteration so activate_tool_domain / history stickiness applies
+            active_tools = _select_active_tools(messages)
 
             # Context trimming — keep messages within model's context window
             max_ctx = route.get("max_context", 128000)
@@ -1997,24 +2000,33 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                 user_msg = msg.get("content", "")
                 break
 
-        # Use pre-scoped tools if provided, otherwise select by message content
-        active_tools_openai = req.get("tools") or get_tools_for_message(user_msg)
+        # Use pre-scoped tools if provided, otherwise select by message + session sticky domains
+        session_id = req.get("session_id") or os.environ.get("MAUDE_SESSION_ID", "default")
+        tools_pre_scoped = bool(req.get("tools"))
 
-        # Convert OpenAI tool format to Claude format
-        claude_tools = []
-        for tool in active_tools_openai:
-            func = tool.get("function", {})
-            claude_tools.append(
-                {
-                    "name": func.get("name", ""),
-                    "description": func.get("description", ""),
-                    "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
-                }
+        def _openai_to_claude_tools(openai_tools):
+            converted = []
+            for tool in openai_tools or []:
+                func = tool.get("function", {})
+                converted.append(
+                    {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+                    }
+                )
+            if converted:
+                converted[-1]["cache_control"] = {"type": "ephemeral"}
+            return converted
+
+        def _select_claude_tools(msgs):
+            if tools_pre_scoped:
+                return _openai_to_claude_tools(req.get("tools"))
+            return _openai_to_claude_tools(
+                get_tools_for_message(user_msg, session_id=session_id, messages=msgs)
             )
 
-        # Mark last tool with cache_control so tools + system get cached
-        if claude_tools:
-            claude_tools[-1]["cache_control"] = {"type": "ephemeral"}
+        claude_tools = _select_claude_tools(req.get("messages", []))
 
         # Extract system prompt from messages and convert to Claude format
         system_text = ""
@@ -2092,6 +2104,9 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                         "content": "(System: You've used many tool calls. Wrap up now — summarize what you've done and what remains.)",
                     }
                 )
+
+            # Re-select tools each iteration so domain activation expands schemas mid-loop
+            claude_tools = _select_claude_tools(claude_messages)
 
             # Context trimming — keep messages within model's context window
             max_ctx = route.get("max_context", 200000)

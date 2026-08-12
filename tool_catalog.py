@@ -9,9 +9,12 @@ duplicate definitions.
 from health import check_tool_ready
 from maude_core import (
     _CORE_TOOL_NAMES,
+    _RARE_TIER_GROUPS,
+    _SESSION_TIER_GROUPS,
     _TOOL_GROUPS,
     TOOLS,
     get_tools_for_message,
+    list_domain_catalog,
 )
 
 # ── Execution targets: where each tool should run ─────────────────
@@ -51,8 +54,11 @@ def get_catalog() -> dict:
     Returns:
         dict with keys:
           - tools: list of OpenAI function-call tool definitions
-          - groups: keyword routing groups {name: {keywords, tools}}
+          - groups: keyword routing groups {name: {keywords, tools, tier?}}
           - core_tools: list of always-included tool names
+          - session_groups: groups sticky once activated for a session
+          - rare_groups: low-frequency groups (keyword / explicit activate)
+          - domains: canonical domain catalog for lazy schema activation
           - execution_targets: {tool_name: "local"|"server"}
     """
     return {
@@ -61,21 +67,34 @@ def get_catalog() -> dict:
             name: {
                 "keywords": list(group["keywords"]),
                 "tools": list(group["tools"]),
+                "tier": group.get("tier", "session"),
+                "description": group.get("description", name),
+                **({"activates": group["activates"]} if group.get("activates") else {}),
             }
             for name, group in _TOOL_GROUPS.items()
         },
         "core_tools": list(_CORE_TOOL_NAMES),
+        "session_groups": sorted(_SESSION_TIER_GROUPS),
+        "rare_groups": sorted(_RARE_TIER_GROUPS),
+        "domains": list_domain_catalog(),
         "execution_targets": dict(_EXECUTION_TARGETS),
     }
 
 
-def get_filtered_tools(message: str) -> list:
+def get_filtered_tools(message: str, session_id: str | None = None, messages: list | None = None) -> list:
     """Keyword-filtered tools for a specific message.
 
     Wraps maude_core.get_tools_for_message() so clients can use
     the same filtering logic via the API.
+
+    Sticky session activation only applies when session_id is provided
+    (chat loops). Bare one-shot catalog filters stay pure keyword match
+    so sequential API probes don't leak domains across calls.
     """
-    return get_tools_for_message(message)
+    sticky = session_id is not None
+    return get_tools_for_message(
+        message, session_id=session_id, messages=messages, sticky=sticky
+    )
 
 
 def execute_server_tool(name: str, arguments: dict) -> dict:

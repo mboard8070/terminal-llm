@@ -47,6 +47,17 @@ def execute_tool(name: str, arguments: dict) -> str:
             log(f"[cached result] {name}")
             return cached + "\n\n[cached result]"
 
+    # Lazy domain stubs (domain_browser, domain_media, …)
+    if name.startswith("domain_"):
+        try:
+            from .tool_groups import handle_domain_stub_call
+
+            stub_result = handle_domain_stub_call(name, arguments)
+            if stub_result is not None:
+                return stub_result
+        except Exception as e:
+            return f"Error activating domain via {name}: {e}"
+
     # Registry-based dispatch
     handler = get_handler(name)
     if handler is None:

@@ -47,11 +47,15 @@ def get_conversation_history(limit: int = 10) -> list[dict[str, Any]]:
 
 
 def build_messages_with_history(system_prompt: str, user_message: str, history_limit: int = 10) -> list[dict[str, str]]:
-    """Build messages list with system prompt, recent history, and current message."""
-    messages = [{"role": "system", "content": system_prompt}]
+    """Build messages list with system prompt, recent history, and current message.
 
-    # Add recent history
-    history = get_conversation_history(history_limit)
+    Applies context hygiene (sliding window + body caps) so long cross-channel
+    histories do not blow the prompt.
+    """
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+
+    # Add recent history (fetch a bit extra; hygiene will compress)
+    history = get_conversation_history(max(history_limit, 20))
     for msg in history:
         # Only include user and assistant messages (skip system, tool)
         if msg["role"] in ("user", "assistant") and msg["content"]:
@@ -60,4 +64,19 @@ def build_messages_with_history(system_prompt: str, user_message: str, history_l
     # Add current message
     messages.append({"role": "user", "content": user_message})
 
-    return messages
+    try:
+        from .context_hygiene import keep_recent_turns, prepare_messages_for_model
+
+        keep = min(history_limit * 2, keep_recent_turns())
+        prepared, _meta = prepare_messages_for_model(
+            messages,
+            keep_recent=keep,
+            keep_tool_rounds_n=0,
+            in_place=False,
+        )
+        return prepared
+    except Exception:
+        # Fall back to a simple tail window
+        sys_msgs = [m for m in messages if m.get("role") == "system"]
+        rest = [m for m in messages if m.get("role") != "system"]
+        return sys_msgs + rest[-history_limit:]

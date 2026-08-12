@@ -351,37 +351,57 @@ class MaudeMemory:
     # Context Building for Prompts
     # ─────────────────────────────────────────────────────────────────
 
-    def get_context_for_prompt(self, query: str, max_memories: int = 5, include_preferences: bool = True) -> str:
+    def get_context_for_prompt(self, query: str, max_memories: int = None, include_preferences: bool = True) -> str:
         """
-        Get relevant memories to inject into prompt context.
+        Get relevant memories to inject into prompt context (top-k only).
 
         Args:
             query: The user's current query
-            max_memories: Maximum memories to include
+            max_memories: Maximum memories to include (default: MAUDE_CTX_MEMORY_TOP_K)
             include_preferences: Whether to include user preferences
 
         Returns:
             Formatted context string for injection into system prompt
         """
+        try:
+            from maude_core.context_hygiene import (
+                clip_memory_value,
+                format_memory_snippets,
+                memory_top_k,
+            )
+        except ImportError:
+            clip_memory_value = lambda v, limit=400: (v if len(v) <= limit else v[: limit - 3] + "...")  # noqa: E731
+            format_memory_snippets = None
+            memory_top_k = lambda: 5  # noqa: E731
+
+        if max_memories is None:
+            max_memories = memory_top_k() if callable(memory_top_k) else 5
+        max_memories = max(1, int(max_memories))
+
         sections = []
 
-        # Search for relevant memories
+        # Search for relevant memories — top-k only, values clipped
         memories = self.search(query, limit=max_memories)
         if memories:
-            mem_lines = [f"- **{m.key}**: {m.value}" for m in memories]
-            sections.append("## Relevant Context\n" + "\n".join(mem_lines))
+            if format_memory_snippets:
+                block = format_memory_snippets(memories, top_k=max_memories, title="Relevant Context")
+                if block:
+                    sections.append(block)
+            else:
+                mem_lines = [f"- **{m.key}**: {clip_memory_value(m.value)}" for m in memories[:max_memories]]
+                sections.append("## Relevant Context\n" + "\n".join(mem_lines))
 
-        # Get user preferences
+        # Preferences: small fixed set, clipped (not a full dump)
         if include_preferences:
-            prefs = self.list_memories(category="preference", limit=5)
+            prefs = self.list_memories(category="preference", limit=min(3, max_memories))
             if prefs:
-                pref_lines = [f"- {p.key}: {p.value}" for p in prefs]
+                pref_lines = [f"- {p.key}: {clip_memory_value(p.value)}" for p in prefs]
                 sections.append("## User Preferences\n" + "\n".join(pref_lines))
 
-        # Get facts about people mentioned
-        people = self.list_memories(category="person", limit=3)
+        # People: only those relevant to the query (search), not a blanket dump
+        people = self.search(query, limit=min(2, max_memories), category="person")
         if people:
-            people_lines = [f"- {p.key}: {p.value}" for p in people]
+            people_lines = [f"- {p.key}: {clip_memory_value(p.value)}" for p in people]
             sections.append("## People\n" + "\n".join(people_lines))
 
         return "\n\n".join(sections) if sections else ""

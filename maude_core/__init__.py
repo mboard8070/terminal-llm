@@ -20,13 +20,26 @@ from .chat_sync import CHAT_LOG_PATH, append_chat_log, read_chat_log_since
 from .config import LOCAL_URL, MODEL, NUM_CTX, SESSION_ID, VISION_MODEL, VISION_URL
 
 # ── Fast Dispatch ──────────────────────────────────────────────
-from .fast_dispatch import fast_dispatch
+from .fast_dispatch import (  # noqa: F401
+    fast_dispatch,
+    get_fast_dispatch_stats,
+    match_fast_dispatch,
+    reset_fast_dispatch_stats,
+)
 
 # ── Logging ────────────────────────────────────────────────────
 from .log import log, set_log_callback
 
 # ── Memory ─────────────────────────────────────────────────────
 from .memory_utils import build_messages_with_history, get_conversation_history, get_memory, save_message
+
+# ── Context hygiene ────────────────────────────────────────────
+from .context_hygiene import (  # noqa: F401
+    apply_hygiene_in_place,
+    compact_tool_result,
+    get_mission_scratch,
+    prepare_messages_for_model,
+)
 
 # ── Paths ──────────────────────────────────────────────────────
 from .paths import get_working_directory, resolve_path, set_working_directory, working_dir
@@ -40,9 +53,16 @@ from .tool_defs import TOOLS
 # ── Tool Groups & Filtering ───────────────────────────────────
 from .tool_groups import (
     _CORE_TOOL_NAMES,
+    _RARE_TIER_GROUPS,
+    _SESSION_TIER_GROUPS,
     _TOOL_BY_NAME,
     _TOOL_GROUPS,
+    activate_domain,
+    clear_session_domains,
+    get_session_domains,
     get_tools_for_message,
+    list_domain_catalog,
+    payload_stats,
 )
 
 register_prefix("browser_", "browser", "execute_browser_tool")

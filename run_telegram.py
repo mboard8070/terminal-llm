@@ -176,10 +176,11 @@ async def maude_callback(msg: IncomingMessage) -> str:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": msg.text}]
 
         reset_rate_limits()  # Reset per-turn limits
-        active_tools = get_tools_for_message(msg.text)
+        from maude_core.config import SESSION_ID
 
-        # Allow up to 5 tool iterations
+        # Allow up to 5 tool iterations; re-select tools so domain activation sticks
         for _ in range(5):
+            active_tools = get_tools_for_message(msg.text, session_id=SESSION_ID, messages=messages)
             response = client.chat.completions.create(
                 model=MODEL, messages=messages, tools=active_tools, tool_choice="auto", temperature=0.7, max_tokens=1024
             )

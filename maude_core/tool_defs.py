@@ -1738,6 +1738,68 @@ Actions: add (create task), list (show all), remove (delete), enable, disable, r
             },
         },
     },
+    # Mission scratch — ephemeral working memory (does not bloat chat history)
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_set",
+            "description": "Store a key/value note on the current mission scratch pad. Prefer this over repeating large findings in chat — scratch is injected as a compact summary each turn.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Short note key (e.g. 'root_cause', 'target_file')"},
+                    "value": {"type": "string", "description": "Note value (kept short)"},
+                    "title": {"type": "string", "description": "Optional mission title"},
+                    "objective": {"type": "string", "description": "Optional mission objective"},
+                    "mission_id": {"type": "string", "description": "Optional mission id (default: session)"},
+                },
+                "required": ["key", "value"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_add_finding",
+            "description": "Append a short finding to the mission scratch pad (e.g. 'tests failed in test_foo', 'API returns 403').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "Finding text"},
+                    "mission_id": {"type": "string", "description": "Optional mission id"},
+                },
+                "required": ["text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_show",
+            "description": "Show the current mission scratch pad contents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mission_id": {"type": "string", "description": "Optional mission id"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "scratch_clear",
+            "description": "Clear the mission scratch pad when the current task is done.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mission_id": {"type": "string", "description": "Optional mission id"},
+                },
+                "required": [],
+            },
+        },
+    },
     # MemPalace — layered long-term memory (L0 identity / L1 essential / L2 on-demand / L3 deep search)
     {
         "type": "function",

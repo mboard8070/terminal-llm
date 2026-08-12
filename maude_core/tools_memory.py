@@ -39,13 +39,22 @@ def _dispatch_recall_memory(args):
     if not query:
         return "Error: 'query' is required."
 
-    results = mem.search(query, limit=5, category=category)
+    try:
+        from .context_hygiene import clip_memory_value, memory_top_k
+
+        limit = int(args.get("limit", memory_top_k()))
+        limit = max(1, min(limit, 10))
+    except Exception:
+        clip_memory_value = lambda v: v if len(v) <= 400 else v[:397] + "..."  # noqa: E731
+        limit = 5
+
+    results = mem.search(query, limit=limit, category=category)
     if not results:
         return f"No memories found matching '{query}'."
 
-    lines = [f"Found {len(results)} relevant memories:"]
+    lines = [f"Found {len(results)} relevant memories (top-{limit}):"]
     for m in results:
-        lines.append(f"- [{m.category}] **{m.key}**: {m.value}")
+        lines.append(f"- [{m.category}] **{m.key}**: {clip_memory_value(m.value)}")
     return "\n".join(lines)
 
 
@@ -192,3 +201,62 @@ def _dispatch_palace_kg_query(args):
         else:
             lines.append(f"- {row}")
     return "\n".join(lines)
+
+
+# ── Mission scratch (ephemeral working memory for a task) ─────────────
+
+
+@register_tool("scratch_set")
+def _dispatch_scratch_set(args):
+    """Store a note on the current mission scratch pad (does not bloat chat history)."""
+    from .context_hygiene import get_mission_scratch, save_mission_scratch
+
+    key = (args.get("key") or "").strip()
+    value = (args.get("value") or "").strip()
+    if not key or not value:
+        return "Error: both 'key' and 'value' are required."
+    mission_id = (args.get("mission_id") or "").strip() or None
+    scratch = get_mission_scratch(mission_id)
+    scratch.set_note(key, value)
+    if args.get("title"):
+        scratch.title = str(args["title"])[:120]
+    if args.get("objective"):
+        scratch.objective = str(args["objective"])[:400]
+    save_mission_scratch(scratch)
+    return f"Scratch note set: {key}"
+
+
+@register_tool("scratch_add_finding")
+def _dispatch_scratch_add_finding(args):
+    """Append a finding to the mission scratch pad."""
+    from .context_hygiene import get_mission_scratch, save_mission_scratch
+
+    text = (args.get("text") or args.get("finding") or "").strip()
+    if not text:
+        return "Error: 'text' is required."
+    mission_id = (args.get("mission_id") or "").strip() or None
+    scratch = get_mission_scratch(mission_id)
+    scratch.add_finding(text)
+    save_mission_scratch(scratch)
+    return f"Finding recorded ({len(scratch.findings)} total)."
+
+
+@register_tool("scratch_show")
+def _dispatch_scratch_show(args):
+    """Show the current mission scratch pad."""
+    from .context_hygiene import get_mission_scratch
+
+    mission_id = (args.get("mission_id") or "").strip() or None
+    scratch = get_mission_scratch(mission_id)
+    block = scratch.prompt_block(max_findings=20)
+    return block or f"Scratch pad '{scratch.mission_id}' is empty."
+
+
+@register_tool("scratch_clear")
+def _dispatch_scratch_clear(args):
+    """Clear the mission scratch pad."""
+    from .context_hygiene import clear_mission_scratch
+
+    mission_id = (args.get("mission_id") or "").strip() or None
+    clear_mission_scratch(mission_id)
+    return "Scratch pad cleared."
