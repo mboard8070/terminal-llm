@@ -6,13 +6,14 @@ carry across devices. The gateway stores JSON files in data/conversations/.
 """
 
 import json
+import os
 import threading
 import time
 import uuid
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-GATEWAY_API = "http://localhost:30080"
+GATEWAY_API = os.environ.get("MAUDE_GATEWAY", "http://127.0.0.1:30080")
 
 
 def _api_get(path: str):

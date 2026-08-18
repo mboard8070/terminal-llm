@@ -466,10 +466,33 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         else:
             progress = stream
 
-        workdir = os.environ.get("MAUDE_GROK_WORKDIR", "/home/mboard76")
+        workdir = os.environ.get("MAUDE_GROK_WORKDIR", "")
+        if not workdir or not os.path.isdir(workdir):
+            linux_home = "/home/mboard76"
+            workdir = linux_home if os.path.isdir(linux_home) else os.path.expanduser("~")
         timeout = int(os.environ.get("MAUDE_GROK_TIMEOUT", "600"))
-        grok_bin = os.environ.get("MAUDE_GROK_BIN", shutil.which("grok") or "/home/mboard76/.local/bin/grok")
-        model = os.environ.get("MAUDE_GROK_MODEL", "")
+        grok_bin = os.environ.get("MAUDE_GROK_BIN", "")
+        if not grok_bin or not os.path.isfile(grok_bin):
+            grok_bin = (
+                shutil.which("grok")
+                or shutil.which("grok.exe")
+                or os.path.join(os.path.expanduser("~"), ".grok", "bin", "grok.exe")
+                or "/home/mboard76/.local/bin/grok"
+            )
+        if not os.path.isfile(grok_bin):
+            if stream:
+                self._start_sse_headers()
+                self._send_trace_sse(
+                    "error",
+                    {"message": f"Grok CLI not found (looked for grok.exe). Set MAUDE_GROK_BIN."},
+                )
+                self._send_sse_done(resolved_name, f"chatcmpl-{int(time.time())}", int(time.time()))
+                return
+            self._json_response({"error": "Grok CLI not found. Set MAUDE_GROK_BIN to grok.exe"}, 500)
+            return
+        model = os.environ.get("MAUDE_GROK_MODEL", "") or (
+            resolved_name if str(resolved_name).startswith("grok-") else "grok-4.6"
+        )
 
         # Prefer --prompt-file for large prompts (avoids ARG_MAX issues).
         prompt_path = None
@@ -726,8 +749,22 @@ If the tool returns an OAuth or credential error, report that exact tool result.
         stderr_thread.start()
 
         if proc.stdout:
-            selector = selectors.DefaultSelector()
-            selector.register(proc.stdout, selectors.EVENT_READ)
+            # Do not use selectors on Windows — pipes are not sockets (WinError 10038).
+            stdout_q: list[str] = []
+            stdout_done = threading.Event()
+
+            def _read_stdout():
+                try:
+                    for line in proc.stdout:
+                        stdout_q.append(line)
+                except Exception:
+                    pass
+                finally:
+                    stdout_done.set()
+
+            stdout_thread = threading.Thread(target=_read_stdout, daemon=True)
+            stdout_thread.start()
+            emitted = 0
             try:
                 while True:
                     now = time.time()
@@ -744,33 +781,18 @@ If the tool returns an OAuth or credential error, report that exact tool result.
                         )
                         last_keepalive = now
 
-                    events = selector.select(timeout=0.5)
-                    if not events:
-                        if proc.poll() is not None:
-                            # Drain any remaining buffered lines.
-                            while True:
-                                line = proc.stdout.readline()
-                                if not line:
-                                    break
-                                stdout_lines.append(line)
-                                if stream:
-                                    self._emit_grok_json_trace(line, active_tools, started)
-                            break
-                        continue
-
-                    line = proc.stdout.readline()
-                    if line:
+                    while emitted < len(stdout_q):
+                        line = stdout_q[emitted]
+                        emitted += 1
                         stdout_lines.append(line)
                         if stream:
                             self._emit_grok_json_trace(line, active_tools, started)
-                        continue
-                    if proc.poll() is not None:
+
+                    if stdout_done.is_set() and emitted >= len(stdout_q):
                         break
+                    time.sleep(0.05)
             finally:
-                try:
-                    selector.unregister(proc.stdout)
-                except Exception:
-                    pass
+                stdout_thread.join(timeout=0.5)
 
         remaining = max(0.1, deadline - time.time())
         try:

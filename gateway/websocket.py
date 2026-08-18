@@ -5,19 +5,26 @@ All standalone functions — no class methods here.
 """
 
 import base64
-import fcntl
 import hashlib
 import json
 import os
-import pty
-import select
 import signal
 import struct
 import sys
-import termios
 import threading
 import time
 import uuid
+
+try:
+    import fcntl
+    import pty
+    import select
+    import termios
+except ImportError:  # Windows — interactive PTY/SSH terminal is unavailable
+    fcntl = None
+    pty = None
+    select = None
+    termios = None
 from urllib.parse import urlparse
 
 from .state import VOICE_PORT, http_terminal_sessions, logger

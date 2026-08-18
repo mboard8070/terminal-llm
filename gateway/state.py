@@ -119,6 +119,12 @@ MODEL_ROUTES = {
     },
     # Grok CLI route. Uses the locally authenticated Grok CLI (X Premium /
     # grok.com OAuth session) instead of an XAI_API_KEY, so no API billing.
+    "grok-4.6": {
+        "provider": "grok-cli",
+        "base_url": "",
+        "api_key_env": None,
+        "max_context": int(os.environ.get("MAUDE_GROK_MAX_CONTEXT", "256000")),
+    },
     "grok-4.5": {
         "provider": "grok-cli",
         "base_url": "",
@@ -203,8 +209,9 @@ MODEL_ALIASES = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
-    "grok": "grok-4.5",
-    "grok4": "grok-4.5",
+    "grok": "grok-4.6",
+    "grok4": "grok-4.6",
+    "grok-4.5": "grok-4.6",
 }
 
 

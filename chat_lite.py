@@ -9,6 +9,7 @@ Normal terminal scrollback — select text and copy like any other CLI.
 """
 
 import json
+import os
 import sys
 import threading
 import time
@@ -33,7 +34,7 @@ from collab import get_hub as get_collab_hub
 env_path = Path(__file__).parent / "variables.env"
 load_dotenv(env_path)
 
-GATEWAY_URL = "http://localhost:30080/v1"
+GATEWAY_URL = os.environ.get("MAUDE_GATEWAY_URL", "http://127.0.0.1:30080/v1")
 HISTORY_FILE = Path.home() / ".config" / "maude" / "chat_lite_history"
 
 MODELS = {
@@ -53,8 +54,8 @@ MODELS = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
-    "grok": "grok-4.5",
-    "grok4": "grok-4.5",
+    "grok": "grok-4.6",
+    "grok4": "grok-4.6",
 }
 
 DEFAULT_MODEL = "nemotron-super"
@@ -300,7 +301,7 @@ def stream_response(messages: list, model_id: str) -> str:
 
     except httpx.ConnectError:
         stop_spinner.set()
-        console.print("\n[red]Cannot connect to gateway at localhost:30080. Is it running?[/red]\n")
+        console.print(f"\n[red]Cannot connect to gateway at {GATEWAY_URL}. Is it running?[/red]\n")
         return ""
     except Exception as e:
         stop_spinner.set()
@@ -400,11 +401,13 @@ def show_background_tasks():
     """Show outstanding gateway-visible work after reconnect or on demand."""
     try:
         with httpx.Client(timeout=5.0) as http:
-            resp = http.get("http://localhost:30080/api/tasks")
+            base = GATEWAY_URL.rsplit("/v1", 1)[0]
+            resp = http.get(f"{base}/api/tasks")
+            if resp.status_code == 404:
+                return
             resp.raise_for_status()
             data = resp.json()
-    except Exception as e:
-        console.print(f"[dim]Could not check background tasks: {e}[/dim]\n")
+    except Exception:
         return
 
     tasks = data.get("tasks", [])

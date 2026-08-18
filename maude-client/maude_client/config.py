@@ -2,13 +2,16 @@
 MAUDE Client Configuration
 
 Edit these settings for your environment.
+Override with MAUDE_SERVER_HOST / MAUDE_SERVER_PORT if needed.
 """
 
+import os
+
 # Server connection (via Tailscale)
-SERVER_HOST = "spark-e26c"
-SERVER_LLM_PORT = 30000  # Spark's Nemotron via gateway
-SERVER_FILE_PORT = 30000  # Same port as LLM — gateway handles both
-SERVER_SSH_HOST = "mboard76@spark-e26c"
+SERVER_HOST = os.environ.get("MAUDE_SERVER_HOST", "desktop-aveak19")
+SERVER_LLM_PORT = int(os.environ.get("MAUDE_SERVER_PORT", "30000"))
+SERVER_FILE_PORT = int(os.environ.get("MAUDE_FILE_PORT", str(SERVER_LLM_PORT)))
+SERVER_SSH_HOST = os.environ.get("MAUDE_SSH_HOST", "Matt@desktop-aveak19")
 
 # File transfer settings
 SERVER_WORK_DIR = "~/nvidia-workbench/terminal-llm"

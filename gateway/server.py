@@ -6,17 +6,23 @@ all HTTP requests. It inherits tool-loop methods from CloudMixin and
 route-handler methods from RoutesMixin.
 """
 
-import fcntl
 import html
 import http.client
 import json
 import os
 import ssl
 import struct
-import termios
+import sys
 import threading
 import time
 import uuid
+
+try:
+    import fcntl
+    import termios
+except ImportError:  # Windows — PTY resize is unavailable
+    fcntl = None
+    termios = None
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from socketserver import ThreadingMixIn
@@ -267,6 +273,9 @@ class GatewayHandler(CloudMixin, RoutesMixin, BaseHTTPRequestHandler):
                 return
             cols = body.get("cols", 80)
             rows = body.get("rows", 24)
+            if fcntl is None or termios is None:
+                self._json_response({"error": "PTY resize not supported on this OS"}, 501)
+                return
             winsize = struct.pack("HHHH", rows, cols, 0, 0)
             fcntl.ioctl(session["master_fd"], termios.TIOCSWINSZ, winsize)
             self._json_response({"ok": True})

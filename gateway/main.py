@@ -89,6 +89,13 @@ def main():
         http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         http_thread.start()
         logger.info("  HTTP mirror: port %d (for native app)", HTTP_PORT)
+    else:
+        # chat_lite and the Windows TUI talk HTTP on 30080
+        HTTP_PORT = 30080
+        http_server = ThreadedHTTPServer(("0.0.0.0", HTTP_PORT), GatewayHandler)
+        http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        http_thread.start()
+        logger.info("  HTTP also on port %d (no TLS)", HTTP_PORT)
 
     try:
         server.serve_forever()

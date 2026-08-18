@@ -12,6 +12,7 @@ import mimetypes
 import os
 import ssl
 import subprocess
+import sys
 import time
 from urllib.parse import urljoin, urlparse
 
@@ -79,49 +80,50 @@ class RoutesMixin:
         """Return observable long-running MAUDE-related background tasks."""
         tasks = []
         try:
-            proc = subprocess.run(
-                ["ps", "-eo", "pid,ppid,etime,stat,cmd"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for line in proc.stdout.splitlines()[1:]:
-                parts = line.strip().split(None, 4)
-                if len(parts) < 5:
-                    continue
-                pid, ppid, elapsed, stat, cmd = parts
-                cmd_lower = cmd.lower()
-                if "rg -i" in cmd_lower or "ps -eo" in cmd_lower:
-                    continue
-                label = None
-                kind = None
-                if "codex exec" in cmd_lower:
-                    kind = "codex"
-                    label = "Codex is still working"
-                elif "hyperframes" in cmd_lower and ("render" in cmd_lower or "npm run" in cmd_lower):
-                    kind = "render"
-                    label = "HyperFrames is rendering"
-                elif "ffmpeg" in cmd_lower:
-                    kind = "render"
-                    label = "FFmpeg is rendering video"
-                elif "youtube" in cmd_lower and "upload" in cmd_lower:
-                    kind = "upload"
-                    label = "YouTube upload is running"
-                elif "python app/main.py" in cmd_lower and "comfy" not in cmd_lower:
-                    kind = "comfyui"
-                    label = "ComfyUI is running"
-                if label:
-                    tasks.append(
-                        {
-                            "pid": int(pid),
-                            "ppid": int(ppid),
-                            "elapsed": elapsed,
-                            "stat": stat,
-                            "kind": kind,
-                            "label": label,
-                            "cmd": cmd[:240],
-                        }
-                    )
+            if sys.platform != "win32":
+                proc = subprocess.run(
+                    ["ps", "-eo", "pid,ppid,etime,stat,cmd"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                for line in proc.stdout.splitlines()[1:]:
+                    parts = line.strip().split(None, 4)
+                    if len(parts) < 5:
+                        continue
+                    pid, ppid, elapsed, stat, cmd = parts
+                    cmd_lower = cmd.lower()
+                    if "rg -i" in cmd_lower or "ps -eo" in cmd_lower:
+                        continue
+                    label = None
+                    kind = None
+                    if "codex exec" in cmd_lower:
+                        kind = "codex"
+                        label = "Codex is still working"
+                    elif "hyperframes" in cmd_lower and ("render" in cmd_lower or "npm run" in cmd_lower):
+                        kind = "render"
+                        label = "HyperFrames is rendering"
+                    elif "ffmpeg" in cmd_lower:
+                        kind = "render"
+                        label = "FFmpeg is rendering video"
+                    elif "youtube" in cmd_lower and "upload" in cmd_lower:
+                        kind = "upload"
+                        label = "YouTube upload is running"
+                    elif "python app/main.py" in cmd_lower and "comfy" not in cmd_lower:
+                        kind = "comfyui"
+                        label = "ComfyUI is running"
+                    if label:
+                        tasks.append(
+                            {
+                                "pid": int(pid),
+                                "ppid": int(ppid),
+                                "elapsed": elapsed,
+                                "stat": stat,
+                                "kind": kind,
+                                "label": label,
+                                "cmd": cmd[:240],
+                            }
+                        )
         except Exception as e:
             self._json_response({"error": str(e)}, 500)
             return

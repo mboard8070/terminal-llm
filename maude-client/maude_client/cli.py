@@ -2,7 +2,7 @@
 """
 MAUDE Client - Local interface connecting to Spark server for inference.
 
-Connects via Tailscale to spark-e26c:30000.
+Connects via Tailscale to the MAUDE gateway (default: desktop-aveak19:30000).
 
 Run:
   maude
@@ -1363,7 +1363,7 @@ def main():
         print(color("FAILED", _WARN))
         print("\nCannot connect to server. Make sure:")
         print("  1. Tailscale is connected")
-        print(f"  2. Server is running on spark-e26c:{SERVER_LLM_PORT}")
+        print(f"  2. Server is running on {SERVER_HOST}:{SERVER_LLM_PORT}")
         print("\nThen restart this client.")
         sys.exit(1)
 

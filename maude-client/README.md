@@ -22,7 +22,7 @@ Make sure Tailscale is installed and connected on your Mac/PC:
 
 Verify connectivity:
 ```bash
-ping spark-e26c
+ping desktop-aveak19
 ```
 
 ### 2. Install the client
@@ -54,12 +54,12 @@ Edit `config.py` to customize:
 
 ```python
 # Server connection (via Tailscale)
-SERVER_HOST = "spark-e26c"
+SERVER_HOST = "desktop-aveak19"
 SERVER_LLM_PORT = 30000
 SERVER_FILE_PORT = 30000  # Same port — gateway handles both
 
 # SSH for server commands (optional)
-SERVER_SSH_HOST = "mboard76@spark-e26c"
+SERVER_SSH_HOST = "Matt@desktop-aveak19"
 
 # Client name (shown in logs)
 CLIENT_NAME = "maude-client"
@@ -131,15 +131,14 @@ CLIENT_NAME = "maude-client"
 ## Troubleshooting
 
 **Cannot connect to server:**
-- Make sure Tailscale is connected: `ping spark-e26c`
-- Make sure the server is running: `./start_server.sh` on Spark
-- Verify the gateway is up: `curl http://spark-e26c:30000/health`
+- Make sure Tailscale is connected: `ping desktop-aveak19`
+- Make sure the gateway is running on desktop-aveak19
+- Verify the gateway is up: `curl -k https://desktop-aveak19:30000/health`
 
 **File transfer fails:**
-- Check gateway health: `curl http://spark-e26c:30000/health`
-- List files to verify: `curl http://spark-e26c:30000/list`
+- Check gateway health: `curl -k https://desktop-aveak19:30000/health`
+- List files to verify: `curl -k https://desktop-aveak19:30000/list`
 - Verify paths in `config.py`
 
 **Slow responses:**
-- Normal — inference runs on server, may take a few seconds
-- Check server load: `ssh mboard76@spark-e26c htop`
+- Normal — inference runs on the gateway, may take a few seconds
