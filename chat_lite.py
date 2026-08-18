@@ -330,13 +330,30 @@ def handle_command(cmd: str, messages: list, current_model: list, conv_id: list,
         return True
 
     if command == "/model":
-        if len(parts) > 2 and parts[1] == "switch" and parts[2] in MODELS:
-            current_model[0] = parts[2]
-            console.print(f"[dim]Model: {parts[2]} ({MODELS[parts[2]]})[/dim]\n")
-        elif len(parts) > 1 and parts[1] == "switch":
-            console.print(f"[dim]Usage: /model switch <name>\nAvailable: {', '.join(MODELS.keys())}[/dim]\n")
+        raw = parts[1:]
+        if raw and raw[0].lower() in ("switch", "use", "set"):
+            raw = raw[1:]
+        name = "-".join(raw).strip() if raw else ""
+        if not name:
+            console.print(
+                f"[dim]Current: {current_model[0]} ({MODELS.get(current_model[0], current_model[0])})\n"
+                f"Switch: /model <name> or /model switch <name>\n"
+                f"Available: {', '.join(MODELS.keys())}[/dim]\n"
+            )
+            return True
+        resolved = None
+        if name in MODELS:
+            resolved = name
         else:
-            console.print(f"[dim]Usage: /model switch <name>\nAvailable: {', '.join(MODELS.keys())}[/dim]\n")
+            for alias, model_id in MODELS.items():
+                if name == model_id or name.lower() == alias.lower():
+                    resolved = alias
+                    break
+        if resolved:
+            current_model[0] = resolved
+            console.print(f"[dim]Model: {resolved} ({MODELS[resolved]})[/dim]\n")
+        else:
+            console.print(f"[dim]Unknown model '{name}'. Available: {', '.join(MODELS.keys())}[/dim]\n")
         return True
 
     if command == "/current":

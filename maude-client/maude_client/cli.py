@@ -1454,29 +1454,30 @@ def main():
                 if user_input.startswith("/model"):
                     parts = user_input.split(maxsplit=1)
                     if len(parts) == 1:
-                        # Show current model and list available
                         print(f"\nCurrent model: {current_model}")
                         try:
                             resp = requests.get(
-                                f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models", timeout=5, verify=False
+                                f"https://{SERVER_HOST}:{SERVER_LLM_PORT}/v1/models", timeout=8, verify=False
                             )
                             if resp.status_code == 200:
                                 models = [m["id"] for m in resp.json().get("data", [])]
                                 print(f"Available:      {', '.join(models)}")
                             else:
-                                print("[Could not fetch model list]")
-                        except Exception:
-                            print("[Could not fetch model list]")
+                                print(f"[Gateway returned HTTP {resp.status_code} for /v1/models]")
+                        except Exception as exc:
+                            print(f"[Could not fetch model list from {SERVER_HOST}:{SERVER_LLM_PORT}: {exc}]")
                     else:
-                        # Handle "/model switch <name>" or "/model <name>"
                         model_arg = parts[1].strip()
                         tokens = model_arg.split()
                         if tokens[0].lower() in ("switch", "use", "set") and len(tokens) > 1:
                             model_arg = "-".join(tokens[1:])
                         else:
                             model_arg = "-".join(tokens)
-                        current_model = model_arg
-                        print(f"Switched to model: {current_model}")
+                        if not model_arg:
+                            print("Usage: /model <name>   or   /model switch <name>")
+                        else:
+                            current_model = model_arg
+                            print(f"Switched to model: {current_model}")
                     continue
 
                 # Handle /update command

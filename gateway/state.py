@@ -45,6 +45,12 @@ if ENV_FILE.exists():
             _key, _val = _line.split("=", 1)
             os.environ.setdefault(_key.strip(), _val.strip())
 
+# keys.json / common env names vs the names MODEL_ROUTES expects
+if not os.environ.get("CLAUDE_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):
+    os.environ["CLAUDE_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+if not os.environ.get("CODESTRAL_API_KEY") and os.environ.get("MISTRAL_API_KEY"):
+    os.environ["CODESTRAL_API_KEY"] = os.environ["MISTRAL_API_KEY"]
+
 # ─────────────────────────────────────────────────────────────────
 # Directory and port configuration
 # ─────────────────────────────────────────────────────────────────
