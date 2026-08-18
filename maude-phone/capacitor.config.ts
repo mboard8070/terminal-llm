@@ -5,10 +5,18 @@ const config: CapacitorConfig = {
   appName: 'MAUDE',
   webDir: 'dist',
   server: {
-    // Point to the Spark gateway on the primary HTTPS port.
-    url: 'https://100.107.132.16:30000',
-    cleartext: false,
-    allowNavigation: ['100.107.132.16', '100.107.132.16:30000', '100.107.132.16:30080', '100.107.132.16:8998'],
+    // Point to the Aveak Windows gateway on the primary HTTPS port.
+    url: 'https://desktop-aveak19:30000',
+    cleartext: true,
+    allowNavigation: [
+      'desktop-aveak19',
+      'desktop-aveak19:30000',
+      'desktop-aveak19:30080',
+      'desktop-aveak19:8998',
+      '100.86.227.15',
+      '100.86.227.15:30000',
+      '100.86.227.15:30080',
+    ],
   },
   android: {
     allowMixedContent: true,
