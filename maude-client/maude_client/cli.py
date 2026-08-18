@@ -1334,7 +1334,7 @@ def print_banner():
     banner = """
     ╔═══════════════════════════════════════════════════════════════╗
     ║                     MAUDE CLIENT                               ║
-    ║         Connected to Spark Server for Inference                ║
+    ║              Multi-Unit Dispatch Engine                        ║
     ╚═══════════════════════════════════════════════════════════════╝
     """
     print(banner)
