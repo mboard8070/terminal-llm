@@ -384,7 +384,7 @@ export function useChat(conversationId: string | null = null) {
         // Build the API content — prepend image context if images are attached
         let apiContent = displayContent;
         if (hasImages) {
-          const imagePaths = imageUrls.map((u) => `/home/mboard76/nvidia-workbench/terminal-llm/shared/${u.split("/").pop()}`);
+          const imagePaths = imageUrls.map((u) => `~/nvidia-workbench/terminal-llm/shared/${u.split("/").pop()}`);
           if (imagePaths.length === 1) {
             apiContent = `[Image attached: ${imagePaths[0]} — analyze it with view_image tool]\n\n${displayContent}`;
           } else {

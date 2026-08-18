@@ -259,6 +259,9 @@ def tool_run_command(command: str) -> str:
         if is_server_cmd:
             # Run as background process, wait briefly for startup, then return
             log("  (backgrounding server command)")
+            from .paths import remap_spark_home
+
+            cmd_stripped = remap_spark_home(cmd_stripped)
             proc = subprocess.Popen(
                 cmd_stripped,
                 shell=True,
@@ -278,6 +281,9 @@ def tool_run_command(command: str) -> str:
                 return f"Server failed to start:\n{stdout}\n{stderr}".strip()
             return f"Server started in background (PID {proc.pid}). Use curl to verify it's running."
 
+        from .paths import remap_spark_home
+
+        command = remap_spark_home(command)
         result = subprocess.run(command, shell=True, cwd=str(working_dir), capture_output=True, text=True, timeout=300)
         output = ""
         if result.stdout:
