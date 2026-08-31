@@ -2,7 +2,7 @@
 """
 MAUDE Client - Local interface connecting to Spark server for inference.
 
-Connects via Tailscale to the MAUDE gateway (default: server:30000).
+Connects via Tailscale to the MAUDE gateway (default: server.tail00a82a.ts.net:30000).
 
 Run:
   maude
@@ -931,6 +931,9 @@ def _post_chat_payload(payload: dict, *, retry_without_tools: bool = True) -> re
     return response
 
 
+PACKAGE_URL = "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
+
+
 def check_server_connection() -> bool:
     """Check if the LLM server is reachable."""
     try:
@@ -938,6 +941,36 @@ def check_server_connection() -> bool:
         return response.status_code == 200
     except:
         return False
+
+
+def update_client(*, restart: bool = True) -> int:
+    """Reinstall maude-client from GitHub main. Does not need a live gateway."""
+    print("Updating MAUDE client...")
+    print(f"Using Python: {sys.executable}")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "--no-cache-dir",
+            PACKAGE_URL,
+        ],
+        capture_output=False,
+    )
+    if result.returncode != 0:
+        print("\nUpdate failed. Check the pip output above for details.")
+        return result.returncode
+    if _IS_WINDOWS:
+        print("\nUpdate complete. Close this window and start MAUDE again.")
+        return 0
+    if restart:
+        print("\nUpdate complete. Restarting...")
+        os.execv(sys.executable, [sys.executable, "-m", "maude_client"])
+    print("\nUpdate complete.")
+    return 0
 
 
 def _format_trace(data: dict) -> str:
@@ -1353,6 +1386,9 @@ def main():
         debug_windows_input()
         return
 
+    if "--update" in sys.argv or "-U" in sys.argv:
+        sys.exit(update_client(restart=False))
+
     print_banner()
 
     # Check connection
@@ -1364,8 +1400,8 @@ def main():
         print("\nCannot connect to server. Make sure:")
         print("  1. Tailscale is connected")
         print(f"  2. Server is running on {SERVER_HOST}:{SERVER_LLM_PORT}")
-        print("\nThen restart this client.")
-        sys.exit(1)
+        print("  Fallback: ping 100.66.49.48  then  MAUDE_SERVER_HOST=100.66.49.48")
+        print("\nYou can still type /update (GitHub pip install) without a live gateway.")
 
     # Initialize tool router
     global router
@@ -1482,32 +1518,9 @@ def main():
 
                 # Handle /update command
                 if user_input == "/update":
-                    print("Updating MAUDE client...")
-                    print(f"Using Python: {sys.executable}")
-                    package_url = (
-                        "https://github.com/mboard8070/terminal-llm/archive/main.tar.gz#subdirectory=maude-client"
-                    )
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            "-m",
-                            "pip",
-                            "install",
-                            "--upgrade",
-                            "--force-reinstall",
-                            "--no-cache-dir",
-                            package_url,
-                        ],
-                        capture_output=False,
-                    )
-                    if result.returncode == 0:
-                        if _IS_WINDOWS:
-                            print("\nUpdate complete. Close this window and start MAUDE again.")
-                            break
-                        print("\nUpdate complete. Restarting...")
-                        os.execv(sys.executable, [sys.executable, "-m", "maude_client"])
-                    else:
-                        print("\nUpdate failed. Check the pip output above for details.")
+                    rc = update_client(restart=not _IS_WINDOWS)
+                    if _IS_WINDOWS and rc == 0:
+                        break
                     continue
 
                 # Handle /version command
@@ -1523,7 +1536,7 @@ Commands:
   clear         - Clear conversation history
   /help         - Show this help
   /version      - Show client version (v{__version__})
-  /update       - Update client from GitHub and restart
+  /update       - Update client from GitHub and restart (also: maude --update)
   /voice deps   - Check voice dependencies
   /voice start  - Single voice interaction
   /voice talk   - Continuous voice mode

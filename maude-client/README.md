@@ -22,7 +22,7 @@ Make sure Tailscale is installed and connected on your Mac/PC:
 
 Verify connectivity:
 ```bash
-ping server
+ping server.tail00a82a.ts.net
 ```
 
 ### 2. Install the client
@@ -54,12 +54,12 @@ Edit `config.py` to customize:
 
 ```python
 # Server connection (via Tailscale)
-SERVER_HOST = "server"
+SERVER_HOST = "server.tail00a82a.ts.net"
 SERVER_LLM_PORT = 30000
 SERVER_FILE_PORT = 30000  # Same port — gateway handles both
 
 # SSH for server commands (optional)
-SERVER_SSH_HOST = "mboard8070@server"
+SERVER_SSH_HOST = "mboard8070@server.tail00a82a.ts.net"
 
 # Client name (shown in logs)
 CLIENT_NAME = "maude-client"
@@ -131,13 +131,13 @@ CLIENT_NAME = "maude-client"
 ## Troubleshooting
 
 **Cannot connect to server:**
-- Make sure Tailscale is connected: `ping server`
+- Make sure Tailscale is connected: `ping server.tail00a82a.ts.net`
 - Make sure the gateway is running on `server` (`100.66.49.48`)
-- Verify the gateway is up: `curl -k https://server:30000/health`
+- Verify the gateway is up: `curl -k https://server.tail00a82a.ts.net:30000/health`
 
 **File transfer fails:**
-- Check gateway health: `curl -k https://server:30000/health`
-- List files to verify: `curl -k https://server:30000/list`
+- Check gateway health: `curl -k https://server.tail00a82a.ts.net:30000/health`
+- List files to verify: `curl -k https://server.tail00a82a.ts.net:30000/list`
 - Verify paths in `config.py`
 
 **Slow responses:**

@@ -8,10 +8,10 @@ Override with MAUDE_SERVER_HOST / MAUDE_SERVER_PORT if needed.
 import os
 
 # Server connection (via Tailscale)
-SERVER_HOST = os.environ.get("MAUDE_SERVER_HOST", "server")
+SERVER_HOST = os.environ.get("MAUDE_SERVER_HOST", "server.tail00a82a.ts.net")
 SERVER_LLM_PORT = int(os.environ.get("MAUDE_SERVER_PORT", "30000"))
 SERVER_FILE_PORT = int(os.environ.get("MAUDE_FILE_PORT", str(SERVER_LLM_PORT)))
-SERVER_SSH_HOST = os.environ.get("MAUDE_SSH_HOST", "mboard8070@server")
+SERVER_SSH_HOST = os.environ.get("MAUDE_SSH_HOST", "mboard8070@server.tail00a82a.ts.net")
 
 # File transfer settings
 SERVER_WORK_DIR = "~/nvidia-workbench/terminal-llm"
