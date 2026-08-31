@@ -70,7 +70,7 @@ _CLOUD_MODELS = {
 }
 
 # Default model
-DEFAULT_MODEL = "nemotron-super"
+DEFAULT_MODEL = os.getenv("MAUDE_MODEL", "nemotron-super")
 
 
 def create_nvidia_client():

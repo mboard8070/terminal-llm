@@ -8,10 +8,10 @@ Override with MAUDE_SERVER_HOST / MAUDE_SERVER_PORT if needed.
 import os
 
 # Server connection (via Tailscale)
-SERVER_HOST = os.environ.get("MAUDE_SERVER_HOST", "desktop-aveak19")
+SERVER_HOST = os.environ.get("MAUDE_SERVER_HOST", "server")
 SERVER_LLM_PORT = int(os.environ.get("MAUDE_SERVER_PORT", "30000"))
 SERVER_FILE_PORT = int(os.environ.get("MAUDE_FILE_PORT", str(SERVER_LLM_PORT)))
-SERVER_SSH_HOST = os.environ.get("MAUDE_SSH_HOST", "Matt@desktop-aveak19")
+SERVER_SSH_HOST = os.environ.get("MAUDE_SSH_HOST", "mboard8070@server")
 
 # File transfer settings
 SERVER_WORK_DIR = "~/nvidia-workbench/terminal-llm"
@@ -26,7 +26,7 @@ SYNC_INTERVAL = 30  # seconds, same as heartbeat
 FILE_SERVER_URL = f"https://{SERVER_HOST}:{SERVER_FILE_PORT}"
 
 # Model settings (must match server)
-MODEL_NAME = "nemotron-super"
+MODEL_NAME = os.environ.get("MAUDE_MODEL", "grok-4.6")
 CONTEXT_SIZE = 32768
 TEMPERATURE = 0.7
 

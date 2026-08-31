@@ -67,9 +67,9 @@ if [ ! -f ".env.client" ]; then
 # MAUDE Client Configuration
 # Points to Spark for LLM inference via Tailscale
 
-# Spark LLM Server (via Tailscale)
-LLM_SERVER_URL=http://spark-e26c:30000/v1
-OLLAMA_URL=http://spark-e26c:11434/v1
+# Ubuntu MAUDE server (via Tailscale)
+LLM_SERVER_URL=http://server:30080/v1
+OLLAMA_URL=http://server:11434/v1
 
 # Telegram Bot Token (get from @BotFather)
 TELEGRAM_BOT_TOKEN=
@@ -119,7 +119,7 @@ echo "Setup complete!"
 echo ""
 echo "Next steps:"
 echo "  1. Edit .env.client and add your TELEGRAM_BOT_TOKEN"
-echo "  2. Make sure Spark is running (LLM server on port 30000)"
+echo "  2. Make sure the MAUDE gateway is running on server:30000"
 echo "  3. Run MAUDE:"
 if [[ "$OS" == "windows" ]]; then
     echo "     run_maude_client.bat"
@@ -127,6 +127,6 @@ else
     echo "     ./run_maude_client.sh"
 fi
 echo ""
-echo "Spark address: http://spark-e26c:30000/v1"
-echo "  (or use IP: http://100.107.132.16:30000/v1)"
+echo "Server address: https://server:30000"
+echo "  (or use IP: https://100.66.49.48:30000)"
 echo ""

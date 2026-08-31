@@ -4,9 +4,9 @@
 
 cd "$(dirname "$0")"
 
-# Point to Spark's LLM server via Tailscale
-export LLM_SERVER_URL="${LLM_SERVER_URL:-http://spark-e26c:30000/v1}"
-export VISION_SERVER_URL="${VISION_SERVER_URL:-http://spark-e26c:11434/v1}"
+# Point to the Ubuntu MAUDE server via Tailscale
+export LLM_SERVER_URL="${LLM_SERVER_URL:-http://server:30080/v1}"
+export VISION_SERVER_URL="${VISION_SERVER_URL:-http://server:11434/v1}"
 
 # ComfyUI on mattwell (for video generation)
 export COMFYUI_HOST="${COMFYUI_HOST:-mattwell}"
@@ -21,14 +21,14 @@ echo "LLM Server: $LLM_SERVER_URL"
 echo "Vision Server: $VISION_SERVER_URL"
 echo ""
 
-# Check if we can reach Spark
+# Check if we can reach the MAUDE gateway
 if curl -s --connect-timeout 2 "$LLM_SERVER_URL/models" > /dev/null 2>&1; then
-    echo "Connected to Spark LLM server"
+    echo "Connected to MAUDE gateway"
 else
-    echo "WARNING: Cannot reach Spark at $LLM_SERVER_URL"
+    echo "WARNING: Cannot reach MAUDE at $LLM_SERVER_URL"
     echo "Make sure:"
     echo "  1. Tailscale is connected"
-    echo "  2. LLM server is running on Spark"
+    echo "  2. The gateway is running on server"
     echo ""
 fi
 

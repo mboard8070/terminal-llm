@@ -794,6 +794,9 @@ AVAILABLE_MODELS = {
     "gemma": "gemma-4-31b",
     "claude": "claude-opus-4-20250514",
     "sonnet": "claude-sonnet-4-20250514",
+    "grok": "grok-4.6",
+    "grok4": "grok-4.6",
+    "grok-4.6": "grok-4.6",
 }
 
 # Cloud models route through the gateway's HTTP mirror (same port as local).
@@ -813,6 +816,7 @@ _CLOUD_MODELS = {
     "gemma-4-31b",
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
+    "grok-4.6",
 }
 
 # Resolve short model name (e.g. "mistral") to full ID (e.g. "mistral-large-latest")

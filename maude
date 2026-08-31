@@ -9,9 +9,9 @@
 #   maude restart      Bounce all services
 #   maude log [name]   Tail service logs (default: gateway)
 
-DIR=/home/mboard76/nvidia-workbench/terminal-llm
+DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV="$DIR/venv/bin/python"
-SERVICES=(nemo gateway voice fileserver watcher)
+SERVICES=(gateway)
 
 case "${1:-}" in
     stop)

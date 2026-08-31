@@ -56,9 +56,12 @@ MODELS = {
     "sonnet": "claude-sonnet-4-20250514",
     "grok": "grok-4.6",
     "grok4": "grok-4.6",
+    "grok-4.6": "grok-4.6",
 }
 
-DEFAULT_MODEL = "nemotron-super"
+DEFAULT_MODEL = os.environ.get("MAUDE_MODEL", "nemotron-super")
+if DEFAULT_MODEL not in MODELS:
+    MODELS[DEFAULT_MODEL] = DEFAULT_MODEL
 
 # ── Globals ───────────────────────────────────────────────────────────────
 

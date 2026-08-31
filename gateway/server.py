@@ -433,7 +433,7 @@ small { color:#8b949e; }
             self._serve_plain_chat("No message entered.")
             return
         req = {
-            "model": "nemotron-super",
+            "model": os.environ.get("MAUDE_MODEL", "nemotron-super"),
             "messages": [
                 {"role": "system", "content": "You are MAUDE. Be concise and helpful."},
                 {"role": "user", "content": message},
@@ -477,7 +477,7 @@ small { color:#8b949e; }
             except (json.JSONDecodeError, ValueError):
                 req = {}
 
-        model_name = req.get("model", "nemotron-super")
+        model_name = req.get("model", os.environ.get("MAUDE_MODEL", "nemotron-super"))
         model_absent = "model" not in req
         resolved_name, route = get_model_route(model_name)
         logger.info(

@@ -1,13 +1,13 @@
 # MAUDE Client
 
-Local client for MAUDE that connects to the Spark server for LLM inference via Tailscale.
+Local client for MAUDE that connects to the Ubuntu server for LLM inference via Tailscale.
 
 ```
 ┌─────────────────────────┐              ┌─────────────────────────────┐
-│   Your Mac/PC           │              │      Spark Server           │
+│   Your Mac/PC           │              │      Ubuntu server          │
 │                         │  Tailscale   │                             │
 │  MAUDE Client ──────────┼──────────────┼──► Gateway (:30000)         │
-│  • Local file ops       │              │    ├─► Nemotron (LLM)       │
+│  • Local file ops       │              │    ├─► Grok / OpenRouter    │
 │  • Server file transfer │              │    ├─► /upload, /download   │
 │  • Server commands      │              │    └─► /list, /shared       │
 └─────────────────────────┘              └─────────────────────────────┘
@@ -22,7 +22,7 @@ Make sure Tailscale is installed and connected on your Mac/PC:
 
 Verify connectivity:
 ```bash
-ping desktop-aveak19
+ping server
 ```
 
 ### 2. Install the client
@@ -54,12 +54,12 @@ Edit `config.py` to customize:
 
 ```python
 # Server connection (via Tailscale)
-SERVER_HOST = "desktop-aveak19"
+SERVER_HOST = "server"
 SERVER_LLM_PORT = 30000
 SERVER_FILE_PORT = 30000  # Same port — gateway handles both
 
 # SSH for server commands (optional)
-SERVER_SSH_HOST = "Matt@desktop-aveak19"
+SERVER_SSH_HOST = "mboard8070@server"
 
 # Client name (shown in logs)
 CLIENT_NAME = "maude-client"
@@ -131,13 +131,13 @@ CLIENT_NAME = "maude-client"
 ## Troubleshooting
 
 **Cannot connect to server:**
-- Make sure Tailscale is connected: `ping desktop-aveak19`
-- Make sure the gateway is running on desktop-aveak19
-- Verify the gateway is up: `curl -k https://desktop-aveak19:30000/health`
+- Make sure Tailscale is connected: `ping server`
+- Make sure the gateway is running on `server` (`100.66.49.48`)
+- Verify the gateway is up: `curl -k https://server:30000/health`
 
 **File transfer fails:**
-- Check gateway health: `curl -k https://desktop-aveak19:30000/health`
-- List files to verify: `curl -k https://desktop-aveak19:30000/list`
+- Check gateway health: `curl -k https://server:30000/health`
+- List files to verify: `curl -k https://server:30000/list`
 - Verify paths in `config.py`
 
 **Slow responses:**

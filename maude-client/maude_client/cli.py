@@ -2,7 +2,7 @@
 """
 MAUDE Client - Local interface connecting to Spark server for inference.
 
-Connects via Tailscale to the MAUDE gateway (default: desktop-aveak19:30000).
+Connects via Tailscale to the MAUDE gateway (default: server:30000).
 
 Run:
   maude
