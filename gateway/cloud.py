@@ -1208,7 +1208,7 @@ If the tool returns an OAuth or credential error, report that exact tool result.
             return "Running a local command"
         if name in {"web_search", "web_browse", "web_image_search"}:
             return f"Researching: {query[:70]}" if query else "Researching online"
-        if name in {"generate_image", "generate_image_flux2"}:
+        if name in {"generate_image", "generate_image_flux2", "generate_image_muse"}:
             return f"Creating image asset: {prompt[:70]}" if prompt else "Creating image asset"
         if name == "youtube_upload":
             return "Uploading the video to YouTube"

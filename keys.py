@@ -170,9 +170,7 @@ def test_provider(provider_name: str) -> str:
             )
             return f"✓ {provider_name} ({config.name}) connected successfully"
 
-        elif (
-            config.provider == Provider.OPENAI or config.provider == Provider.XAI or config.provider == Provider.MISTRAL
-        ):
+        elif config.provider in (Provider.OPENAI, Provider.XAI, Provider.MISTRAL, Provider.META):
             from openai import OpenAI
 
             client = OpenAI(api_key=api_key, base_url=config.base_url)

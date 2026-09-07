@@ -50,6 +50,8 @@ if not os.environ.get("CLAUDE_API_KEY") and os.environ.get("ANTHROPIC_API_KEY"):
     os.environ["CLAUDE_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
 if not os.environ.get("CODESTRAL_API_KEY") and os.environ.get("MISTRAL_API_KEY"):
     os.environ["CODESTRAL_API_KEY"] = os.environ["MISTRAL_API_KEY"]
+if not os.environ.get("MODEL_API_KEY") and os.environ.get("META_API_KEY"):
+    os.environ["MODEL_API_KEY"] = os.environ["META_API_KEY"]
 
 # ─────────────────────────────────────────────────────────────────
 # Directory and port configuration
@@ -60,7 +62,9 @@ TRANSFERS_DIR = Path.home() / "nvidia-workbench" / "terminal-llm" / "transfers"
 PWA_DIR = _PROJECT_ROOT / "maude-phone" / "dist"
 LLM_PORT = 30010  # llama-server (Nemotron) runs here internally
 GATEWAY_PORT = 30000  # clients connect here
+HTTP_PORT = 30080  # cleartext mirror for Safari / native apps
 VOICE_PORT = 8998  # Voice server
+PUBLIC_GATEWAY_HOST = os.environ.get("MAUDE_PUBLIC_HOST", "server.tail00a82a.ts.net")
 
 CONVERSATIONS_DIR = _PROJECT_ROOT / "data" / "conversations"
 
@@ -193,6 +197,13 @@ MODEL_ROUTES = {
         "api_key_env": "CLAUDE_API_KEY",
         "max_context": 200000,
     },
+    # Muse Spark 1.3 — Meta Model API (OpenAI-compatible chat completions)
+    "muse-spark-1.3": {
+        "provider": "meta",
+        "base_url": "https://api.meta.ai",
+        "api_key_env": "MODEL_API_KEY",
+        "max_context": 1048576,
+    },
 }
 
 # Aliases for convenience
@@ -218,6 +229,9 @@ MODEL_ALIASES = {
     "grok": "grok-4.6",
     "grok4": "grok-4.6",
     "grok-4.5": "grok-4.6",
+    "muse": "muse-spark-1.3",
+    "spark": "muse-spark-1.3",
+    "muse-spark": "muse-spark-1.3",
 }
 
 
@@ -273,7 +287,7 @@ TOOL_ADDENDUM = (
     "cannot proceed without info you have no way to obtain (e.g. a password). "
     "'Should I proceed?' and 'Do you want me to...?' are almost never appropriate — just do the work. "
     "\n\nIf the user has attached an image, use the view_image tool to analyze it before responding. "
-    "The view_image tool uses your own native multimodal vision when available (Claude, Mistral Large), "
+    "The view_image tool uses your own native multimodal vision when available (Claude, Mistral Large, Muse Spark), "
     "falling back to local LLaVA otherwise. "
     "IMPORTANT: When a user sends a photo from the phone app, the image is ALREADY uploaded "
     "and saved on this server in /home/mboard76/nvidia-workbench/terminal-llm/shared/. "
@@ -296,7 +310,9 @@ TOOL_ADDENDUM = (
     "docs) to complete the task. Do NOT web search as a first step. For tasks like scheduling, "
     "posting, file operations, coding, or using existing tools — just do the task directly. "
     "Do NOT say you cannot search the web — you CAN when relevant, but don't use it reflexively."
-    "\n\nIMAGE DISPLAY: When you use generate_image, share_file, or web_image_search and want "
+    "\n\nIMAGE GENERATION: Default to generate_image (local Flux / ComfyUI). "
+    "If the user asks for Muse Image or Meta image generation, use generate_image_muse. "
+    "\n\nIMAGE DISPLAY: When you use generate_image, generate_image_muse, share_file, or web_image_search and want "
     "to display images inline, include the markdown ![description](url) in your response. "
     "For generated/shared images use ![description](/download/filename.png). "
     "For web images use the full URL from the search results."

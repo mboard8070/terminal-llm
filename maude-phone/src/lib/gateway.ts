@@ -1,4 +1,4 @@
-const FALLBACK_GATEWAY_URL = "https://100.107.132.16:30000";
+const FALLBACK_GATEWAY_URL = "https://server.tail00a82a.ts.net:30000";
 
 function isLocalAppOrigin(): boolean {
   const loc = window.location;

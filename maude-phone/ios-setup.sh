@@ -62,7 +62,16 @@ if [ -f "$PLIST" ]; then
 \t\t<true/>\
 \t\t<key>NSExceptionDomains</key>\
 \t\t<dict>\
-\t\t\t<key>100.107.132.16</key>\
+\t\t\t<key>server.tail00a82a.ts.net</key>\
+\t\t\t<dict>\
+\t\t\t\t<key>NSExceptionAllowsInsecureHTTPLoads</key>\
+\t\t\t\t<true/>\
+\t\t\t\t<key>NSTemporaryExceptionAllowsInsecureHTTPSLoads</key>\
+\t\t\t\t<true/>\
+\t\t\t\t<key>NSIncludesSubdomains</key>\
+\t\t\t\t<true/>\
+\t\t\t</dict>\
+\t\t\t<key>100.66.49.48</key>\
 \t\t\t<dict>\
 \t\t\t\t<key>NSExceptionAllowsInsecureHTTPLoads</key>\
 \t\t\t\t<true/>\

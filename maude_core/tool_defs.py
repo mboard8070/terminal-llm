@@ -181,6 +181,23 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "generate_image_muse",
+            "description": "Generate an image using Meta Muse Image (cloud, $0.01/image). Use when the user asks for Muse Image / Meta image gen, or wants agentic image generation that can search visual references. Saves to shared folder. Use markdown ![desc](/download/filename.png) to display.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Text description of the image to generate"},
+                    "width": {"type": "integer", "description": "Aspect-ratio width hint (default 1024)"},
+                    "height": {"type": "integer", "description": "Aspect-ratio height hint (default 1024)"},
+                    "output_format": {"type": "string", "enum": ["png", "webp", "jpeg"], "description": "Output format. Default: png"},
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "generate_3d",
             "description": "Generate a 3D GLB model from an image using TRELLIS 2 (local, free) or Tripo (cloud, better topology). Returns file path to the GLB.",
             "parameters": {

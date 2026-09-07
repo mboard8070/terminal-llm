@@ -304,6 +304,101 @@ def tool_generate_image_flux2(
     return "Timeout waiting for Flux 2 generation (>5 min)."
 
 
+def tool_generate_image_muse(
+    prompt: str,
+    width: int = 1024,
+    height: int = 1024,
+    output_format: str = "png",
+) -> str:
+    """Generate an image with Meta Muse Image via Model API."""
+    import base64
+    import time as _time
+
+    api_key = os.environ.get("MODEL_API_KEY") or os.environ.get("META_API_KEY") or ""
+    if not api_key:
+        return (
+            "Error: MODEL_API_KEY is not set. Create a Meta Model API key at "
+            "https://ai.developer.meta.com/ and add MODEL_API_KEY to variables.env."
+        )
+
+    fmt = (output_format or "png").lower()
+    if fmt not in {"png", "webp", "jpeg", "jpg"}:
+        fmt = "png"
+    if fmt == "jpg":
+        fmt = "jpeg"
+
+    payload = {
+        "model": "muse-image-1.0",
+        "prompt": prompt,
+        "n": 1,
+        "size": f"{int(width)}x{int(height)}",
+        "response_format": "b64_json",
+        "output_format": fmt,
+    }
+    body = json.dumps(payload).encode()
+    log(f"Muse Image generate: {width}x{height} fmt={fmt}")
+
+    conn = http.client.HTTPSConnection("api.meta.ai", 443, timeout=180)
+    try:
+        conn.request(
+            "POST",
+            "/v1/images/generations",
+            body=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+        status = resp.status
+    except Exception as e:
+        return f"Error calling Muse Image: {e}"
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    try:
+        data = json.loads(raw.decode(errors="replace"))
+    except Exception:
+        return f"Muse Image returned non-JSON (HTTP {status}): {raw[:300]!r}"
+
+    if status >= 400:
+        err = data.get("error") if isinstance(data, dict) else data
+        if isinstance(err, dict):
+            return f"Muse Image error: {err.get('message') or err}"
+        return f"Muse Image error (HTTP {status}): {err or data}"
+
+    b64 = ""
+    items = data.get("data") if isinstance(data, dict) else None
+    if isinstance(items, list) and items:
+        b64 = items[0].get("b64_json") or ""
+    if not b64:
+        return f"Muse Image returned no image: {data}"
+
+    try:
+        image_bytes = base64.b64decode(b64)
+    except Exception as e:
+        return f"Muse Image returned invalid base64: {e}"
+
+    ext = "jpg" if fmt == "jpeg" else fmt
+    dest_name = f"muse_{int(_time.time())}.{ext}"
+    shared_dir = Path.home() / "nvidia-workbench" / "terminal-llm" / "shared"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    dest = shared_dir / dest_name
+    dest.write_bytes(image_bytes)
+    log(f"Muse Image saved: {dest}")
+    return (
+        "Image generated successfully!\n"
+        "Model: muse-image-1.0\n"
+        f"File: {dest}\n"
+        f"Display with: ![{prompt[:50]}](/download/{dest_name})"
+    )
+
+
 # ── Registry wrapper ──────────────────────────────────────────
 
 
@@ -326,4 +421,14 @@ def _dispatch_generate_image_flux2(args):
         args.get("model", "pro"),
         args.get("aspect_ratio", "1:1"),
         args.get("seed", -1),
+    )
+
+
+@register_tool("generate_image_muse")
+def _dispatch_generate_image_muse(args):
+    return tool_generate_image_muse(
+        args.get("prompt", ""),
+        args.get("width", 1024),
+        args.get("height", 1024),
+        args.get("output_format", "png"),
     )

@@ -278,6 +278,9 @@ const MODEL_LABELS: Record<string, string> = {
   "a3b": "Nemotron A3B",
   "gemma-4-31b": "Gemma 4",
   "llava": "LLaVA",
+  "muse-spark": "Muse Spark",
+  "muse-spark-1.3": "Muse Spark",
+  "muse": "Muse Spark",
 };
 
 export const MessageBubble: FC<Props> = ({ message, animate }) => {

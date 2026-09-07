@@ -36,6 +36,7 @@ _TOOL_DEPS = {
     "web_view": ["playwright"],
     "view_image": [],  # needs LLaVA reachable, checked via service
     "generate_image": [],  # needs ComfyUI reachable, checked via service
+    "generate_image_muse": [],  # needs MODEL_API_KEY, checked at call time
     "gmail_list": ["google-api-python-client", "google-auth-oauthlib"],
     "gmail_read": ["google-api-python-client", "google-auth-oauthlib"],
     "gmail_send": ["google-api-python-client", "google-auth-oauthlib"],

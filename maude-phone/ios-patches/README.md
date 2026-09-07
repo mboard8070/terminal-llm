@@ -4,9 +4,11 @@
 
 The easiest way to run MAUDE on your iPhone. No Xcode, no signing, no 7-day expiry.
 
-1. Open **Safari** on your iPhone
-2. Navigate to `https://100.107.132.16:30000`
-3. Accept the self-signed certificate warning
+1. Connect the iPhone to Tailscale
+2. Open **Safari** on your iPhone
+3. Navigate to `http://server.tail00a82a.ts.net:30080` (no certificate prompt)
+   - HTTPS alternative: `https://server.tail00a82a.ts.net:30000` (accept the warning)
+   - Direct IP if MagicDNS fails: `http://100.66.49.48:30080`
 4. Tap the **Share** button (square with arrow)
 5. Tap **"Add to Home Screen"**
 6. Tap **Add**
@@ -95,6 +97,7 @@ Then manually:
 |-------|-----|
 | "Untrusted Developer" on iPhone | Settings → General → VPN & Device Management → Trust your profile |
 | Build fails with signing error | Change Bundle Identifier to a unique value |
+| Safari: "not connected to the Internet" | Tailscale is off, MagicDNS failed, or the bookmark still points at an old IP. Open `http://server.tail00a82a.ts.net:30080` |
 | Can't connect to Spark | Check Tailscale is connected on both devices |
-| White screen after launch | Check server.url in capacitor.config.ts matches your Spark IP |
+| White screen after launch | Check server.url in capacitor.config.ts matches the current MagicDNS name |
 | "App is no longer available" | Re-deploy from Xcode (7-day expiry) |

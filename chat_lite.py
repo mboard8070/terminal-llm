@@ -57,6 +57,10 @@ MODELS = {
     "grok": "grok-4.6",
     "grok4": "grok-4.6",
     "grok-4.6": "grok-4.6",
+    "muse": "muse-spark-1.3",
+    "spark": "muse-spark-1.3",
+    "muse-spark": "muse-spark-1.3",
+    "muse-spark-1.3": "muse-spark-1.3",
 }
 
 DEFAULT_MODEL = os.environ.get("MAUDE_MODEL", "nemotron-super")

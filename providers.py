@@ -1,7 +1,7 @@
 """
 Cloud/Frontier Model Provider Configurations for MAUDE.
 
-Supports: Anthropic (Claude), OpenAI, Google (Gemini), xAI (Grok), Mistral
+Supports: Anthropic (Claude), OpenAI, Google (Gemini), xAI (Grok), Mistral, Meta (Muse)
 """
 
 import os
@@ -18,6 +18,7 @@ class Provider(Enum):
     GOOGLE = "google"
     XAI = "xai"
     MISTRAL = "mistral"
+    META = "meta"
 
 
 @dataclass
@@ -161,6 +162,20 @@ PROVIDERS: dict[str, ProviderConfig] = {
         supports_tools=True,
         cost_per_1k_input=0.0004,
         cost_per_1k_output=0.002,
+    ),
+    # ─────────────────────────────────────────────────────────────────
+    # META (Muse)
+    # ─────────────────────────────────────────────────────────────────
+    "meta": ProviderConfig(
+        name="Muse Spark 1.3",
+        provider=Provider.META,
+        api_key_env="MODEL_API_KEY",
+        base_url="https://api.meta.ai/v1",
+        default_model="muse-spark-1.3",
+        supports_vision=True,
+        supports_tools=True,
+        cost_per_1k_input=0.00125,
+        cost_per_1k_output=0.00425,
     ),
     "devstral-small": ProviderConfig(
         name="Devstral Small",

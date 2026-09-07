@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { loadMessages, loadMessagesFromServer, saveMessages } from "./storage";
 import { uuid } from "./uuid";
 import { getGatewayUrl } from "../../../lib/gateway";
+import { normalizeModelId } from "../../../lib/models";
 import {
   prepareHistoryForGateway,
   phoneSessionId,
@@ -10,20 +11,6 @@ import {
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
               (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
-const MODEL_ALIASES: Record<string, string> = {
-  "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
-  "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
-  "nemotron-nano": "nemotron-a3b",
-  "a3b": "nemotron-a3b",
-  "codex-cli": "codex",
-};
-
-function normalizeModelId(model: string | null | undefined): string {
-  const value = (model || "").trim();
-  if (!value || value === "claude-opus-4-20250514") return "nemotron-super";
-  return MODEL_ALIASES[value] || value;
-}
 
 // Cached location — updated every 5 minutes or on first use
 let cachedLocation: { lat: number; lng: number; accuracy: number; ts: number } | null = null;
@@ -116,7 +103,7 @@ export interface ChatMessage {
   toolSteps?: ToolStep[];
 }
 
-const MAUDE_SYSTEM_PROMPT = `You are MAUDE — a local AI assistant running on Matt's DGX Spark, handling tasks that benefit from local execution, privacy, or when cloud access isn't available.
+const MAUDE_SYSTEM_PROMPT = `You are MAUDE — an AI assistant running on Matt's server, handling tasks that benefit from local execution, privacy, or when cloud access isn't available.
 
 MAUDE is modeled after FRIDAY (Iron Man): capable, efficient, with a subtle Scottish directness. You're not chatty, but you're not cold either. You get things done.
 

@@ -26,6 +26,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!maude-phone/src/lib/
+!maude-phone/src/lib/**
 lib64/
 parts/
 sdist/

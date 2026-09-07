@@ -18,6 +18,7 @@ VISION_CAPABLE_MODELS = {
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
     "mistral-large-latest",
+    "muse-spark-1.3",
 }
 
 # Provider routing for vision-capable models (base_url, api_key_env, provider)
@@ -36,6 +37,11 @@ VISION_MODEL_ROUTES = {
         "provider": "mistral",
         "base_url": "https://api.mistral.ai/v1",
         "api_key_env": "MISTRAL_API_KEY",
+    },
+    "muse-spark-1.3": {
+        "provider": "meta",
+        "base_url": "https://api.meta.ai/v1",
+        "api_key_env": "MODEL_API_KEY",
     },
 }
 

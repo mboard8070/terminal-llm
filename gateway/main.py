@@ -13,8 +13,10 @@ from pathlib import Path
 from .server import GatewayHandler, ThreadedHTTPServer
 from .state import (
     GATEWAY_PORT,
+    HTTP_PORT,
     LLM_PORT,
     MODEL_ROUTES,
+    PUBLIC_GATEWAY_HOST,
     PWA_DIR,
     SHARED_DIR,
     TRANSFERS_DIR,
@@ -41,6 +43,13 @@ def main():
     logger.info("  Shared     : %s", SHARED_DIR)
     logger.info("  Transfers  : %s", TRANSFERS_DIR)
     logger.info("  Models     : %s", ", ".join(MODEL_ROUTES.keys()))
+    logger.info("  Phone HTTP : http://%s:%d/", PUBLIC_GATEWAY_HOST, HTTP_PORT)
+    logger.info("  Phone HTTPS: https://%s:%d/", PUBLIC_GATEWAY_HOST, GATEWAY_PORT)
+    if not (PWA_DIR / "index.html").exists():
+        logger.error(
+            "  PWA missing : %s — Safari/phone will 404. Build with: cd maude-phone && npm run build",
+            PWA_DIR / "index.html",
+        )
 
     # Startup health check
     try:
@@ -83,15 +92,13 @@ def main():
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
         logger.info("  SSL cert   : %s", CERT_DIR / "cert.pem")
 
-        # Also start an HTTP server for the native Android app
-        HTTP_PORT = 30080
+        # Also start an HTTP server for Safari / native apps (no cert prompt)
         http_server = ThreadedHTTPServer(("0.0.0.0", HTTP_PORT), GatewayHandler)
         http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         http_thread.start()
         logger.info("  HTTP mirror: port %d (for native app)", HTTP_PORT)
     else:
         # chat_lite and the Windows TUI talk HTTP on 30080
-        HTTP_PORT = 30080
         http_server = ThreadedHTTPServer(("0.0.0.0", HTTP_PORT), GatewayHandler)
         http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
         http_thread.start()

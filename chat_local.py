@@ -797,6 +797,10 @@ AVAILABLE_MODELS = {
     "grok": "grok-4.6",
     "grok4": "grok-4.6",
     "grok-4.6": "grok-4.6",
+    "muse": "muse-spark-1.3",
+    "spark": "muse-spark-1.3",
+    "muse-spark": "muse-spark-1.3",
+    "muse-spark-1.3": "muse-spark-1.3",
 }
 
 # Cloud models route through the gateway's HTTP mirror (same port as local).
@@ -817,6 +821,7 @@ _CLOUD_MODELS = {
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
     "grok-4.6",
+    "muse-spark-1.3",
 }
 
 # Resolve short model name (e.g. "mistral") to full ID (e.g. "mistral-large-latest")
@@ -894,7 +899,7 @@ def handle_command(cmd: str) -> str:
 
 /help              - Show this help
 /model             - Show current model configuration
-/model switch NAME - Switch model (nemotron, mistral, codestral, devstral, claude, sonnet)
+/model switch NAME - Switch model (muse, grok, nemotron-super, mistral, ...)
 /copy         - Copy last response to file (~/.config/maude/last_response.txt)
 /copymode     - Show how to copy text in tmux
 /voice start  - Single voice listen/respond
@@ -916,7 +921,7 @@ Say "quit" to exit."""
         if len(parts) >= 3 and parts[1].lower() == "switch":
             return _switch_model(parts[2])
         elif len(parts) >= 2 and parts[1].lower() == "switch":
-            return "Usage: /model switch <name>\nAvailable: nemotron, mistral, codestral, devstral, devstral-small, devstral-medium, openai, codex, claude, sonnet"
+            return "Usage: /model switch <name>\nAvailable: " + ", ".join(AVAILABLE_MODELS.keys())
         from frontier import list_available_providers
 
         frontier_providers = list_available_providers()
@@ -928,14 +933,15 @@ Server:       {LOCAL_URL}
 Context:      {NUM_CTX} tokens
 
 Available models:
+  muse / spark        Muse Spark 1.3 (Meta, cloud)
+  grok                Grok 4.6 (local CLI)
+  nemotron-super      Nemotron Super (OpenRouter)
   nemotron            local (llama-server)
   mistral             Mistral Large (cloud, vision)
   codestral           Codestral (cloud, code)
   devstral            Devstral 2 (cloud, code agent)
-  devstral-small      Devstral Small (cloud, code light)
-  devstral-medium     Devstral Medium (cloud, code mid)
   openai              OpenAI (cloud)
-  codex               OpenAI/Codex route (cloud, code)
+  codex               Codex CLI (cloud, code)
   claude              Claude Opus (cloud, vision)
   sonnet              Claude Sonnet (cloud, vision)
 

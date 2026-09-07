@@ -4,7 +4,7 @@
 
 1. Connect phone to Tailscale VPN
 2. Open Samsung Internet browser
-3. Navigate to `http://spark-e26c:30000/`
+3. Navigate to `http://server.tail00a82a.ts.net:30080/`
 4. Tap browser menu (three dots) → "Add page to" → "Home screen"
 5. MAUDE launches in standalone mode (no browser chrome)
 6. In MAUDE Settings, select "80s Green CRT" or "80s Amber CRT" theme

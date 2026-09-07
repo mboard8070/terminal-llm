@@ -1,6 +1,7 @@
 import { FC, useState, useEffect } from "react";
 import { getGatewayUrl } from "../../lib/gateway";
 import { resetAppCacheAndReload } from "../../lib/cacheReset";
+import { MODEL_ALIASES, SELECTABLE_MODELS, normalizeModelId } from "../../lib/models";
 
 interface ServiceStatus { status: string; port: number; }
 interface HealthStatus {
@@ -34,23 +35,38 @@ export const Settings: FC = () => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [defaultModel, setDefaultModel] = useState(() => {
-    const stored = localStorage.getItem("maude-default-model");
-    return !stored || stored === "mistral-large-latest" ? "nemotron-super" : stored;
+    const model = normalizeModelId(localStorage.getItem("maude-default-model"));
+    localStorage.setItem("maude-default-model", model);
+    return model;
   });
   const [defaultVoice, setDefaultVoice] = useState(() => localStorage.getItem("maude-default-voice") || "NATF2.pt");
   const [theme, setTheme] = useState(() => localStorage.getItem("maude-theme") || "dark");
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState("");
 
-  // Gateway reachable = Spark is connected (regardless of whether sub-services are up)
-  const sparkConnected = health !== null;
+  // Gateway reachable = this server is connected (regardless of whether sub-services are up)
+  const serverConnected = health !== null;
   const gatewayPort = health?.gateway_port ?? (new URL(getGatewayUrl()).port || "30080");
   const llmService = health?.services?.llama_server;
   const voiceService = health?.services?.voice_server;
 
   useEffect(() => {
     fetch(`${getGatewayUrl()}/health`).then((r) => r.json()).then(setHealth).catch(() => setHealth(null));
-    fetch(`${getGatewayUrl()}/models`).then((r) => r.json()).then((d) => setModels(d.models || [])).catch(() => setModels([]));
+    fetch(`${getGatewayUrl()}/models`)
+      .then((r) => r.json())
+      .then((d) => {
+        const byId = new Map<string, boolean>((d.models || []).map((m: ModelInfo) => [m.id, m.available]));
+        setModels(
+          SELECTABLE_MODELS.map((m) => {
+            const aliases = Object.entries(MODEL_ALIASES)
+              .filter(([, id]) => id === m.id)
+              .map(([alias]) => alias);
+            const available = [m.id, ...aliases].some((id) => byId.get(id) === true) || ([m.id, ...aliases].every((id) => !byId.has(id)));
+            return { id: m.id, provider: m.provider, available };
+          }),
+        );
+      })
+      .catch(() => setModels(SELECTABLE_MODELS.map((m) => ({ id: m.id, provider: m.provider, available: true }))));
   }, []);
 
   const saveModel = (m: string) => { setDefaultModel(m); localStorage.setItem("maude-default-model", m); };
@@ -87,13 +103,13 @@ export const Settings: FC = () => {
         <section>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-maude-muted">Connection</h2>
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Spark Status</span>
-              <span className={`flex items-center gap-1.5 text-sm ${sparkConnected ? "text-green-400" : "text-red-400"}`}>
-                <span className={`h-2 w-2 rounded-full ${sparkConnected ? "bg-green-400" : "bg-red-400"}`} />
-                {sparkConnected ? "Connected" : "Offline"}
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Server Status</span>
+              <span className={`flex items-center gap-1.5 text-sm ${serverConnected ? "text-green-400" : "text-red-400"}`}>
+                <span className={`h-2 w-2 rounded-full ${serverConnected ? "bg-green-400" : "bg-red-400"}`} />
+                {serverConnected ? "Active" : "Offline"}
               </span>
             </div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className={`font-mono text-sm ${sparkConnected ? "text-green-400" : "text-maude-muted"}`}>{sparkConnected ? `${gatewayPort} (up)` : "\u2014"}</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Gateway</span><span className={`font-mono text-sm ${serverConnected ? "text-green-400" : "text-maude-muted"}`}>{serverConnected ? `${gatewayPort} (up)` : "\u2014"}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">LLM</span><span className={`font-mono text-sm ${llm.color}`}>{llm.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice Server</span><span className={`font-mono text-sm ${ppx.color}`}>{ppx.text}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Tailscale</span><span className="text-sm text-green-400">Active</span></div>
@@ -164,9 +180,9 @@ export const Settings: FC = () => {
           <div className="space-y-2 rounded-xl bg-maude-surface p-4">
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Version</span><span className="text-sm text-maude-muted">{__MAUDE_APP_VERSION__}</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Build</span><span className="text-right font-mono text-[11px] text-maude-muted">{new Date(__MAUDE_BUILD_TIME__).toLocaleString()}</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Mistral + Codestral + Claude</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Engine</span><span className="text-sm text-maude-muted">Nemotron Super + Mistral + Muse + Grok + Codex</span></div>
             <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Voice</span><span className="text-sm text-maude-muted">MAUDE Voice ({(localStorage.getItem("maude-default-voice") || "NATF2.pt").replace(".pt", "")})</span></div>
-            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Hub</span><span className="text-sm font-mono">DGX Spark</span></div>
+            <div className="flex items-center justify-between"><span className="text-sm text-maude-text">Hub</span><span className="text-sm font-mono">server</span></div>
             <div className="pt-2 text-center text-xs text-maude-muted"><span className="fire-gradient font-bold">MAUDE</span> — Multi-Agent Unified Dispatch Engine</div>
           </div>
         </section>

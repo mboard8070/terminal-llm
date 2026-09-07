@@ -546,7 +546,7 @@ small { color:#8b949e; }
         client_sent_tools = bool(req.get("tools"))
         plain_api = bool(req.get("response_format"))
         if TOOL_SUPPORT and not client_sent_tools and not plain_api:
-            if route["provider"] in ("mistral", "openrouter"):
+            if route["provider"] in ("mistral", "openrouter", "meta"):
                 req["_route_trace"]["tool_mode"] = "server"
                 self._cloud_model_with_tools(req, route, resolved_name)
                 return
@@ -557,6 +557,8 @@ small { color:#8b949e; }
 
         # Inject location into system prompt before stripping from body
         req["model"] = resolved_name
+        req.pop("_route_trace", None)
+        req.pop("session_id", None)
         location = req.pop("location", None)
         if location and isinstance(location, dict):
             lat = location.get("lat")

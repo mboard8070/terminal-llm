@@ -5,10 +5,20 @@ const config: CapacitorConfig = {
   appName: 'MAUDE',
   webDir: 'dist',
   server: {
-    // Point to the Spark gateway on the primary HTTPS port.
-    url: 'https://100.107.132.16:30000',
-    cleartext: false,
-    allowNavigation: ['100.107.132.16', '100.107.132.16:30000', '100.107.132.16:30080', '100.107.132.16:8998'],
+    // MagicDNS stays valid if the Tailscale IP changes. HTTP :30080 is the
+    // Safari/PWA path (no cert prompt). Native app still loads HTTPS :30000.
+    url: 'https://server.tail00a82a.ts.net:30000',
+    cleartext: true,
+    allowNavigation: [
+      'server.tail00a82a.ts.net',
+      'server.tail00a82a.ts.net:30000',
+      'server.tail00a82a.ts.net:30080',
+      'server.tail00a82a.ts.net:8998',
+      '100.66.49.48',
+      '100.66.49.48:30000',
+      '100.66.49.48:30080',
+      '100.66.49.48:8998',
+    ],
   },
   android: {
     allowMixedContent: true,

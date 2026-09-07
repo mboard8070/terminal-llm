@@ -152,6 +152,7 @@ _TOOL_GROUPS = {
         ],
         "tools": {
             "generate_image",
+            "generate_image_muse",
             "view_image",
             "web_image_search",
             "generate_3d",
@@ -179,8 +180,10 @@ _TOOL_GROUPS = {
             "render",
             "lora",
             "stillion",
+            "muse image",
+            "muse-image",
         ],
-        "tools": {"generate_image", "share_file"},
+        "tools": {"generate_image", "generate_image_muse", "share_file"},
         "tier": "session",
         "description": "Generate images with Flux / ComfyUI",
         "activates": "media",
@@ -1008,6 +1011,8 @@ def select_active_tool_names(
     # Flux 2 is cloud/paid — only when explicitly requested
     if "flux 2" in msg_lower or "flux2" in msg_lower:
         active_names.add("generate_image_flux2")
+    if "muse image" in msg_lower or "muse-image" in msg_lower:
+        active_names.add("generate_image_muse")
 
     return active_names
 

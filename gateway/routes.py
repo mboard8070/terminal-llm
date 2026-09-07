@@ -19,9 +19,11 @@ from urllib.parse import urljoin, urlparse
 from .state import (
     CONVERSATIONS_DIR,
     GATEWAY_PORT,
+    HTTP_PORT,
     LLM_PORT,
     MODEL_ALIASES,
     MODEL_ROUTES,
+    PUBLIC_GATEWAY_HOST,
     PWA_DIR,
     SHARED_DIR,
     TOOL_SUPPORT,
@@ -320,6 +322,42 @@ class RoutesMixin:
         self.end_headers()
         self.wfile.write(html)
 
+    def _serve_missing_pwa_page(self):
+        """Explain a missing phone build instead of returning JSON 404."""
+        http_url = f"http://{PUBLIC_GATEWAY_HOST}:{HTTP_PORT}/"
+        https_url = f"https://{PUBLIC_GATEWAY_HOST}:{GATEWAY_PORT}/"
+        html = f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MAUDE phone app not built</title>
+  <style>
+    body {{ background:#0d1117; color:#e6edf3; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; padding:32px; line-height:1.5; }}
+    code {{ background:#161b22; padding:2px 6px; border-radius:4px; }}
+    a {{ color:#58a6ff; }}
+  </style>
+</head>
+<body>
+  <h1>MAUDE phone app is not built</h1>
+  <p>The gateway is up, but <code>maude-phone/dist</code> is missing. Safari cannot load the mobile UI until it is built on the server:</p>
+  <p><code>cd maude-phone && npm install && npm run build</code></p>
+  <p>Then open:</p>
+  <ul>
+    <li><a href="{http_url}">{http_url}</a> (Safari, no certificate prompt)</li>
+    <li><a href="{https_url}">{https_url}</a></li>
+  </ul>
+</body>
+</html>
+""".encode()
+        self.send_response(503)
+        self._add_cors()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(html)))
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.end_headers()
+        self.wfile.write(html)
+
     def _serve_static(self, path):
         """Serve PWA static files from dist/."""
         if path == "/" or path == "/app" or path == "/app/":
@@ -335,6 +373,9 @@ class RoutesMixin:
             filepath = PWA_DIR / "index.html"
 
         if not filepath.exists():
+            if path.endswith("index.html") or "." not in filepath.name:
+                self._serve_missing_pwa_page()
+                return
             self._json_response({"error": "Not found"}, 404)
             return
 

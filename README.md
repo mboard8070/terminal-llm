@@ -117,6 +117,8 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 | `devstral-medium` | `devstral-medium-latest` | Mistral API | Mid-tier code-agent model |
 | `openai` | `MAUDE_OPENAI_MODEL` or `gpt-4o` | OpenAI API | Optional OpenAI route |
 | `codex` | `codex-cli` | Local Codex CLI | Coding tasks through the locally authenticated Codex CLI |
+| `muse` / `spark` / `muse-spark` | `muse-spark-1.3` | Meta Model API | Muse Spark 1.3 chat (vision + tools) |
+| `grok` / `grok-4.6` | `grok-4.6` | Local Grok CLI | Grok via SuperGrok OAuth |
 | `claude` | `claude-opus-4-20250514` | Anthropic API | Deep reasoning and vision |
 | `sonnet` | `claude-sonnet-4-20250514` | Anthropic API | Fast Claude route with vision |
 | `hermes` / `hermes3` | `hermes` | Local llama-server, port 30011 | Local Hermes 3 route |
@@ -124,7 +126,7 @@ Capacitor PWA with camera integration for photo analysis, typewriter message ani
 | `vision` / `llava` | `llava` | Local llama-server | Local vision route |
 | vision fallback | `nvidia/nemotron-nano-12b-v2-vl:free` | OpenRouter | Free fallback used when native vision is unavailable |
 
-Switch models at runtime with `/model switch mistral`, `/model switch claude`, `/model switch codex`, or `/model switch nemotron`.
+Switch models at runtime with `/model switch muse`, `/model switch grok`, `/model switch mistral`, `/model switch claude`, `/model switch codex`, or `/model switch nemotron`.
 
 ## Clients
 

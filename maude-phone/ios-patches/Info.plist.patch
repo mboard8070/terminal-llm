@@ -25,7 +25,16 @@
     <true/>
     <key>NSExceptionDomains</key>
     <dict>
-        <key>100.107.132.16</key>
+        <key>server.tail00a82a.ts.net</key>
+        <dict>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <true/>
+            <key>NSTemporaryExceptionAllowsInsecureHTTPSLoads</key>
+            <true/>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+        </dict>
+        <key>100.66.49.48</key>
         <dict>
             <key>NSExceptionAllowsInsecureHTTPLoads</key>
             <true/>

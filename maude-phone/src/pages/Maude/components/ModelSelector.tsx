@@ -1,4 +1,5 @@
 import { FC, useState } from "react";
+import { SELECTABLE_MODELS, normalizeModelId } from "../../../lib/models";
 
 interface Props {
   currentModel: string;
@@ -7,37 +8,10 @@ interface Props {
   onToggleAutoRoute: (val: boolean) => void;
 }
 
-const MODELS = [
-  { id: "claude-opus-4-20250514", label: "Claude Opus", desc: "Smartest" },
-  { id: "claude-sonnet-4-20250514", label: "Claude Sonnet", desc: "Fast" },
-  { id: "mistral-large-latest", label: "Mistral Large", desc: "General" },
-  { id: "codestral-latest", label: "Codestral", desc: "Code" },
-  { id: "codex", label: "Codex", desc: "CLI" },
-  { id: "devstral-2512", label: "Devstral", desc: "Code Agent" },
-  { id: "devstral-small-latest", label: "Devstral Small", desc: "Code Light" },
-  { id: "devstral-medium-latest", label: "Devstral Medium", desc: "Code Mid" },
-  { id: "nemotron", label: "Nemotron", desc: "Local" },
-  { id: "nemotron-super", label: "Nemotron Super", desc: "OpenRouter 120B" },
-  { id: "nemotron-a3b", label: "Nemotron A3B", desc: "OpenRouter 30B" },
-  { id: "gemma-4-31b", label: "Gemma 4", desc: "Local 31B" },
-  { id: "llava", label: "LLaVA", desc: "Vision" },
-  { id: "grok", label: "Grok", desc: "X Premium CLI" },
-];
-
-const MODEL_ALIASES: Record<string, string> = {
-  "nvidia/nemotron-3-super-120b-a12b:free": "nemotron-super",
-  "nvidia/nemotron-3-nano-30b-a3b": "nemotron-a3b",
-  "nemotron-nano": "nemotron-a3b",
-  "a3b": "nemotron-a3b",
-  "codex-cli": "codex",
-  "grok-4.5": "grok",
-  "grok4": "grok",
-};
-
 export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, onToggleAutoRoute }) => {
   const [open, setOpen] = useState(false);
-  const normalizedCurrentModel = MODEL_ALIASES[currentModel] || currentModel;
-  const current = MODELS.find((m) => m.id === normalizedCurrentModel) || MODELS[0];
+  const normalizedCurrentModel = normalizeModelId(currentModel);
+  const current = SELECTABLE_MODELS.find((m) => m.id === normalizedCurrentModel) || SELECTABLE_MODELS[0];
 
   return (
     <div className="relative">
@@ -48,7 +22,7 @@ export const ModelSelector: FC<Props> = ({ currentModel, onSelect, autoRoute, on
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border border-maude-border bg-maude-surface p-2 shadow-xl">
-          {MODELS.map((m) => (
+          {SELECTABLE_MODELS.map((m) => (
             <button key={m.id} onClick={() => { onSelect(m.id); setOpen(false); }}
               className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${m.id === normalizedCurrentModel ? "bg-maude-bg text-maude-accent" : "text-maude-text hover:bg-maude-bg"}`}>
               <span>{m.label}</span>
